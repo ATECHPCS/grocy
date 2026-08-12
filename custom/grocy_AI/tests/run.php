@@ -57,7 +57,7 @@ $service = new GrocyAiService(function (string $url, array $headers, int $timeou
 				'size' => '12 oz'
 			],
 			'images' => [
-				['url' => 'https://images.example/front.png', 'source' => 'openfoodfacts', 'score' => 99],
+				['url' => 'https://images.example/front.png', 'download_token' => 'abcdefghijklmnopqrstuvwx', 'source' => 'openfoodfacts', 'score' => 99],
 				['url' => 'javascript:alert(1)', 'source' => 'unsafe'],
 				['url' => 'not a URL', 'source' => 'invalid']
 			],
@@ -74,6 +74,7 @@ check($captured['timeout'] === 17, 'The configured timeout is used');
 check($result['upc'] === '012345678905', 'The requested UPC is authoritative in the response');
 check($result['product']['name'] === 'Test Product', 'Product metadata is normalized');
 check(count($result['images']) === 1, 'Unsafe and invalid image URLs are removed');
+check($result['images'][0]['download_token'] === 'abcdefghijklmnopqrstuvwx', 'Opaque image tokens are preserved');
 check($result['sources'] === ['openfoodfacts', 'searxng'], 'Sources are de-duplicated');
 
 $malformedImagesService = new GrocyAiService(fn(): array => [
@@ -84,7 +85,20 @@ check($malformedImagesService->EnrichByUpc('012345678905')['images'] === [], 'Ma
 
 $statusJson = json_encode($service->GetStatus(), JSON_THROW_ON_ERROR);
 check(!str_contains($statusJson, GROCY_AI_SERVICE_API_KEY), 'Status never exposes the API key');
-check($service->GetStatus()['mode'] === 'read-only', 'Phase 1 reports read-only mode');
+check($service->GetStatus()['mode'] === 'review-before-save', 'Phase 1 reports review-before-save mode');
+
+$imageBody = "\x89PNG\r\n\x1a\n" . str_repeat('x', 2500);
+$imageService = new GrocyAiService(function (string $url, array $headers) use ($imageBody): array
+{
+	return ['status' => 200, 'body' => $imageBody, 'content_type' => 'image/png'];
+});
+$image = $imageService->FetchImage('abcdefghijklmnopqrstuvwx');
+check($image['body'] === $imageBody, 'A selected image is returned without modification');
+check($image['content_type'] === 'image/png', 'A supported image content type is preserved');
+expectException(fn() => $imageService->FetchImage('../internal'), InvalidArgumentException::class, 'Invalid image handles are rejected');
+
+$htmlService = new GrocyAiService(fn(): array => ['status' => 200, 'body' => str_repeat('x', 2500), 'content_type' => 'text/html']);
+expectException(fn() => $htmlService->FetchImage('abcdefghijklmnopqrstuvwx'), RuntimeException::class, 'Non-image downloads are rejected');
 
 $badJsonService = new GrocyAiService(fn(): array => ['status' => 200, 'body' => '{']);
 expectException(fn() => $badJsonService->EnrichByUpc('012345678905'), RuntimeException::class, 'Invalid companion JSON is rejected');

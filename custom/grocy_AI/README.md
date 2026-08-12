@@ -8,9 +8,10 @@ Phase 1 provides:
 
 - a feature-flagged module bootstrap;
 - authenticated status and UPC-enrichment API routes;
-- a read-only product-form search panel;
+- a product-form search panel with explicit, review-before-save controls;
 - previews of metadata and real package-image candidates;
-- no database, product, image, or stock writes.
+- user-controlled “apply suggested name” and “use as product picture” actions;
+- no automatic database, product, image, or stock writes.
 
 The companion service may combine structured sources such as Open Food Facts with exact-product image discovery through the local SearXNG instance. Search results are candidates for human review, never proof of an exact UPC match by themselves.
 
@@ -42,6 +43,7 @@ For the current LAN deployment, the companion service URL is
 
 - `GET /api/grocy-ai/status`
 - `GET /api/grocy-ai/products/enrich/upc/{upc}`
+- `GET /api/grocy-ai/images/{selection-token}`
 
 Both routes use Grocy authentication. UPC enrichment also requires the `MASTER_DATA_EDIT` permission.
 
@@ -69,6 +71,7 @@ Expected response:
   "images": [
     {
       "url": "https://images.example/product-front.png",
+      "download_token": "short-lived-opaque-handle",
       "source": "openfoodfacts",
       "score": 100,
       "match_confidence": 1
@@ -79,7 +82,7 @@ Expected response:
 }
 ```
 
-Only `http` and `https` image URLs are returned to the browser. The UI renders values as text and does not auto-apply any result.
+Only `http` and `https` image URLs are returned to the browser. Image downloads use short-lived opaque handles, so the browser cannot turn either server into an arbitrary URL fetcher. The UI renders values as text and applies nothing without a button click; the chosen values are persisted only through Grocy's normal Save action.
 
 Run the standalone module checks with:
 
@@ -89,4 +92,4 @@ php custom/grocy_AI/tests/run.php
 
 ## Next phase
 
-The companion Python service must expose the endpoint above using its existing UPC and SearXNG capabilities. A later Grocy phase can add explicit, audited “apply fields” and “download selected image” actions after the read-only workflow is verified.
+Add an optional create-product barcode handoff and broader structured field mappings after the review-before-save workflow is verified on desktop and mobile.

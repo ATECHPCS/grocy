@@ -22,7 +22,7 @@ class GrocyAiService
 			'enabled' => defined('GROCY_FEATURE_FLAG_GROCY_AI') && GROCY_FEATURE_FLAG_GROCY_AI,
 			'service_configured' => $this->GetServiceUrl() !== '',
 			'api_key_configured' => $this->GetApiKey() !== '',
-			'mode' => 'read-only',
+			'mode' => 'review-before-save',
 			'contract' => 'v1'
 		];
 	}
@@ -77,6 +77,54 @@ class GrocyAiService
 		return $this->NormalizeResponse($upc, $data);
 	}
 
+	public function FetchImage(string $token): array
+	{
+		if (!preg_match('/^[A-Za-z0-9_-]{20,200}$/', $token))
+		{
+			throw new \InvalidArgumentException('Invalid image selection');
+		}
+
+		$serviceUrl = $this->GetServiceUrl();
+		if ($serviceUrl === '')
+		{
+			throw new \LogicException('The grocy_AI companion service is not configured');
+		}
+
+		$url = rtrim($serviceUrl, '/') . '/v1/products/images/' . rawurlencode($token);
+		$headers = [
+			'Accept' => 'image/png,image/jpeg,image/webp',
+			'User-Agent' => 'grocy_AI/1'
+		];
+		$apiKey = $this->GetApiKey();
+		if ($apiKey !== '')
+		{
+			$headers['X-API-Key'] = $apiKey;
+		}
+
+		$result = $this->Request($url, $headers);
+		if ($result['status'] < 200 || $result['status'] >= 300)
+		{
+			throw new \RuntimeException('The selected image is unavailable; search again');
+		}
+
+		$contentType = strtolower(trim(explode(';', (string)($result['content_type'] ?? ''))[0]));
+		if (!in_array($contentType, ['image/jpeg', 'image/png', 'image/webp'], true))
+		{
+			throw new \RuntimeException('The selected file is not a supported product image');
+		}
+		$body = (string)$result['body'];
+		if (strlen($body) < 2000 || strlen($body) > 3000000)
+		{
+			throw new \RuntimeException('The selected product image has an invalid size');
+		}
+		if (!self::HasImageSignature($body, $contentType))
+		{
+			throw new \RuntimeException('The selected product image has an invalid format');
+		}
+
+		return ['body' => $body, 'content_type' => $contentType];
+	}
+
 	public static function NormalizeUpc(string $barcode): string
 	{
 		$upc = str_replace([' ', '-'], '', trim($barcode));
@@ -115,7 +163,8 @@ class GrocyAiService
 
 			return [
 				'status' => $response->getStatusCode(),
-				'body' => (string)$response->getBody()
+				'body' => (string)$response->getBody(),
+				'content_type' => $response->getHeaderLine('Content-Type')
 			];
 		}
 		catch (\Throwable $ex)
@@ -144,6 +193,7 @@ class GrocyAiService
 
 			$images[] = [
 				'url' => $image['url'],
+				'download_token' => self::ImageToken($image['download_token'] ?? ''),
 				'source' => self::ScalarString($image['source'] ?? ''),
 				'score' => is_numeric($image['score'] ?? null) ? (float)$image['score'] : null,
 				'match_confidence' => is_numeric($image['match_confidence'] ?? null) ? (float)$image['match_confidence'] : null
@@ -167,6 +217,29 @@ class GrocyAiService
 	private static function ScalarString($value): string
 	{
 		return is_scalar($value) ? trim((string)$value) : '';
+	}
+
+	private static function ImageToken($value): string
+	{
+		$value = self::ScalarString($value);
+		return preg_match('/^[A-Za-z0-9_-]{20,200}$/', $value) ? $value : '';
+	}
+
+	private static function HasImageSignature(string $body, string $contentType): bool
+	{
+		if ($contentType === 'image/png')
+		{
+			return str_starts_with($body, "\x89PNG\r\n\x1a\n");
+		}
+		if ($contentType === 'image/jpeg')
+		{
+			return str_starts_with($body, "\xFF\xD8\xFF");
+		}
+		if ($contentType === 'image/webp')
+		{
+			return strlen($body) >= 12 && str_starts_with($body, 'RIFF') && substr($body, 8, 4) === 'WEBP';
+		}
+		return false;
 	}
 
 	private static function StringList($values): array

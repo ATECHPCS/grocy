@@ -11,4 +11,5 @@ $app->group('/api/grocy-ai', function (RouteCollectorProxy $group)
 {
 	$group->get('/status', [GrocyAiApiController::class, 'Status']);
 	$group->get('/products/enrich/upc/{upc}', [GrocyAiApiController::class, 'EnrichByUpc']);
+	$group->get('/images/{token}', [GrocyAiApiController::class, 'FetchImage']);
 })->add(JsonMiddleware::class);
