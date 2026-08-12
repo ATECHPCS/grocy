@@ -109,23 +109,71 @@
 
 ## Traceability
 
-Roadmap creation will map every v1 requirement to exactly one phase.
-
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| MOB-01..MOB-08 | TBD | Pending |
-| ENR-01..ENR-09 | TBD | Pending |
-| TAX-01..TAX-07 | TBD | Pending |
-| CONV-01..CONV-09 | TBD | Pending |
-| BULK-01..BULK-10 | TBD | Pending |
-| DATA-01..DATA-07 | TBD | Pending |
-| REL-01..REL-07 | TBD | Pending |
+| MOB-01 | Phase 1 | Pending |
+| MOB-02 | Phase 1 | Pending |
+| MOB-03 | Phase 1 | Pending |
+| MOB-04 | Phase 1 | Pending |
+| MOB-05 | Phase 1 | Pending |
+| MOB-06 | Phase 1 | Pending |
+| MOB-07 | Phase 1 | Pending |
+| MOB-08 | Phase 1 | Pending |
+| ENR-01 | Phase 2 | Pending |
+| ENR-02 | Phase 2 | Pending |
+| ENR-03 | Phase 2 | Pending |
+| ENR-04 | Phase 2 | Pending |
+| ENR-05 | Phase 2 | Pending |
+| ENR-06 | Phase 2 | Pending |
+| ENR-07 | Phase 2 | Pending |
+| ENR-08 | Phase 2 | Pending |
+| ENR-09 | Phase 2 | Pending |
+| TAX-01 | Phase 3 | Pending |
+| TAX-02 | Phase 3 | Pending |
+| TAX-03 | Phase 3 | Pending |
+| TAX-04 | Phase 3 | Pending |
+| TAX-05 | Phase 3 | Pending |
+| TAX-06 | Phase 3 | Pending |
+| TAX-07 | Phase 3 | Pending |
+| CONV-01 | Phase 4 | Pending |
+| CONV-02 | Phase 4 | Pending |
+| CONV-03 | Phase 4 | Pending |
+| CONV-04 | Phase 4 | Pending |
+| CONV-05 | Phase 4 | Pending |
+| CONV-06 | Phase 4 | Pending |
+| CONV-07 | Phase 4 | Pending |
+| CONV-08 | Phase 4 | Pending |
+| CONV-09 | Phase 4 | Pending |
+| BULK-01 | Phase 5 | Pending |
+| BULK-02 | Phase 5 | Pending |
+| BULK-03 | Phase 5 | Pending |
+| BULK-04 | Phase 5 | Pending |
+| BULK-05 | Phase 5 | Pending |
+| BULK-06 | Phase 5 | Pending |
+| BULK-07 | Phase 5 | Pending |
+| BULK-08 | Phase 5 | Pending |
+| BULK-09 | Phase 5 | Pending |
+| BULK-10 | Phase 5 | Pending |
+| DATA-01 | Phase 6 | Pending |
+| DATA-02 | Phase 6 | Pending |
+| DATA-03 | Phase 6 | Pending |
+| DATA-04 | Phase 6 | Pending |
+| DATA-05 | Phase 6 | Pending |
+| DATA-06 | Phase 6 | Pending |
+| DATA-07 | Phase 6 | Pending |
+| REL-01 | Phase 7 | Pending |
+| REL-02 | Phase 7 | Pending |
+| REL-03 | Phase 7 | Pending |
+| REL-04 | Phase 7 | Pending |
+| REL-05 | Phase 7 | Pending |
+| REL-06 | Phase 7 | Pending |
+| REL-07 | Phase 7 | Pending |
 
 **Coverage:**
 - v1 requirements: 57 total
-- Mapped to phases: 0
-- Unmapped: 57 ⚠️ (roadmap pending)
+- Mapped to phases: 57
+- Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-08-12*
-*Last updated: 2026-08-12 after initial definition*
+*Last updated: 2026-08-12 after roadmap creation*
