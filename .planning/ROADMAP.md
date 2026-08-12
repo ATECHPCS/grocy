@@ -34,7 +34,17 @@ This milestone turns the deployed product-enrichment baseline into a dependable,
   3. Operator can follow one privacy-safe trace across browser, Grocy, companion, and provider stages, and the user can copy a redacted diagnostic report containing versions, stage outcomes, and timings.
   4. User can continue normal product and inventory work when the companion or any metadata, search, or image provider is unavailable.
   5. Maintainer can verify explicit LAN latency budgets and degraded-path behavior through automated mobile-browser coverage and a recorded physical-phone acceptance pass.
-**Plans**: TBD
+**Plans**: 8 plans
+
+Plans:
+- [ ] 01-01-PLAN.md — Verify and authorize the official Playwright test package.
+- [ ] 01-02-PLAN.md — Create the isolated mobile harness and failing happy-path E2E contract.
+- [ ] 01-03-PLAN.md — Deliver the thin phone validation-to-preview enrichment happy path.
+- [ ] 01-04-PLAN.md — Add bounded companion provider outcomes, tracing, and timings in grocy-mcp.
+- [ ] 01-05-PLAN.md — Add Grocy's authenticated redacted diagnostic and timeout boundary.
+- [ ] 01-06-PLAN.md — Complete race-safe states, diagnostics copy, and degraded-path preservation.
+- [ ] 01-07-PLAN.md — Add mobile/a11y, latency-evidence, and dual-branch release gates.
+- [ ] 01-08-PLAN.md — Prove stable deployment, physical-phone budgets, and normal-Save DB spine.
 **UI hint:** yes
 
 ### Phase 2: Enrichment Contract, Barcode Handoff & Secure Media
