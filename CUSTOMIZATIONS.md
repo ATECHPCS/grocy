@@ -23,6 +23,7 @@ The small upstream integration surface is:
 - `config-dist.php`: feature flag and companion-service settings.
 - `routes.php`: conditional custom route registration.
 - `views/productform.blade.php`: conditional product-enrichment panel and assets.
+- `version.json` at image build time: customization marker that invalidates Grocy's persisted route/view cache.
 
 The module implementation and contract are documented in [`custom/grocy_AI/README.md`](custom/grocy_AI/README.md).
 
