@@ -1,0 +1,12 @@
+# Keep the runtime and bundled dependencies aligned with the stable Grocy
+# release this branch is based on. Only the documented ATECHPCS integration
+# surface is overlaid, leaving LinuxServer's runtime setup intact.
+FROM lscr.io/linuxserver/grocy:v4.6.0-ls334
+
+COPY config-dist.php routes.php /app/www/
+COPY views/productform.blade.php /app/www/views/productform.blade.php
+COPY custom/grocy_AI /app/www/custom/grocy_AI
+COPY public/custom/grocy_AI /app/www/public/custom/grocy_AI
+
+LABEL org.opencontainers.image.source="https://github.com/ATECHPCS/grocy" \
+      org.opencontainers.image.description="ATECHPCS Grocy 4.6 with grocy_AI"

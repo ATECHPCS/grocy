@@ -4,9 +4,11 @@ This fork keeps ATECHPCS-specific behavior isolated so upstream Grocy updates re
 
 ## Branch model
 
-- `master` follows `grocy/grocy`.
-- `atech-main` is the deployable ATECHPCS branch.
-- Upstream releases are merged into `atech-main` with merge commits so conflicts and local changes remain visible.
+- `master` follows the upstream development branch.
+- `release` follows the latest stable upstream release.
+- `atech-main` carries the customization against upstream development for early compatibility testing.
+- `atech-release` is the deployable ATECHPCS branch and stays based on `release`.
+- New custom commits are applied to both ATECHPCS branches. Stable upstream releases are merged into `atech-release` with merge commits so conflicts and local changes remain visible.
 - Custom code belongs under `custom/` whenever possible. Every edit outside that directory must be recorded below.
 
 ## grocy_AI
@@ -23,6 +25,8 @@ The small upstream integration surface is:
 - `views/productform.blade.php`: conditional product-enrichment panel and assets.
 
 The module implementation and contract are documented in [`custom/grocy_AI/README.md`](custom/grocy_AI/README.md).
+
+The production container is built with `Dockerfile.atech`. It pins the matching LinuxServer Grocy 4.6 runtime and overlays only the integration surface listed above.
 
 ## Unused Grocy features
 

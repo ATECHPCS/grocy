@@ -34,6 +34,10 @@ The generated constants/environment names are:
 
 Do not commit the API key. The status route only reports whether one is configured.
 
+For the current LAN deployment, the companion service URL is
+`http://10.10.0.156:3061`; use one of the connector's existing inbound
+`MCP_API_KEYS` values as `GROCY_AI_SERVICE_API_KEY`.
+
 ## Grocy routes
 
 - `GET /api/grocy-ai/status`
