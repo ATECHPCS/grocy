@@ -1,0 +1,34 @@
+.grocy-ai-card {
+	border-left: .25rem solid var(--primary);
+}
+
+.grocy-ai-summary {
+	display: grid;
+	gap: .25rem;
+}
+
+.grocy-ai-images {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+	gap: .75rem;
+}
+
+.grocy-ai-image-candidate {
+	display: flex;
+	flex-direction: column;
+	gap: .35rem;
+	min-width: 0;
+}
+
+.grocy-ai-image-candidate img {
+	width: 100%;
+	height: 120px;
+	object-fit: contain;
+	background: #fff;
+}
+
+.grocy-ai-image-source {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
