@@ -136,12 +136,13 @@ Setting('TPRINTER_CONNECTOR', '/dev/usb/lp0'); // Printer device (does only matt
 Setting('FEATURE_FLAG_STOCK', true);
 Setting('FEATURE_FLAG_SHOPPINGLIST', true);
 Setting('FEATURE_FLAG_RECIPES', true);
-Setting('FEATURE_FLAG_CHORES', true);
+Setting('FEATURE_FLAG_CHORES', false); // Disabled by default in the ATECHPCS fork
 Setting('FEATURE_FLAG_TASKS', true);
-Setting('FEATURE_FLAG_BATTERIES', true);
+Setting('FEATURE_FLAG_BATTERIES', false); // Disabled by default in the ATECHPCS fork
 Setting('FEATURE_FLAG_EQUIPMENT', true);
 Setting('FEATURE_FLAG_CALENDAR', true);
 Setting('FEATURE_FLAG_LABEL_PRINTER', false);
+Setting('FEATURE_FLAG_GROCY_AI', false); // ATECHPCS custom module, see custom/grocy_AI/README.md
 
 // Sub feature flags
 Setting('FEATURE_FLAG_STOCK_PRICE_TRACKING', true);
@@ -158,6 +159,13 @@ Setting('FEATURE_FLAG_THERMAL_PRINTER', false);
 // Feature settings
 Setting('FEATURE_FLAG_DISABLE_BROWSER_BARCODE_CAMERA_SCANNING', false); // Set this to true if you want to disable the ability to scan a barcode via the device camera (Browser API)
 Setting('FEATURE_FLAG_AUTO_TORCH_ON_WITH_CAMERA', true); // Enables the torch automatically (if the device has one)
+
+// grocy_AI integration
+// The companion service performs UPC metadata and real product image discovery.
+// Keep the API key outside of source control and provide it through GROCY_AI_SERVICE_API_KEY.
+Setting('AI_SERVICE_URL', '');
+Setting('AI_SERVICE_API_KEY', '');
+Setting('AI_REQUEST_TIMEOUT_SECONDS', 20);
 
 
 // Default user settings

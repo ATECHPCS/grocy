@@ -267,6 +267,11 @@ $app->group('/api', function (RouteCollectorProxy $group)
 	$group->get('/calendar/ical/sharing-link', [CalendarApiController::class, 'IcalSharingLink']);
 })->add(new CorsMiddleware($container, $app->getResponseFactory()))->add(new JsonMiddleware($container, $app->getResponseFactory()));
 
+if (GROCY_FEATURE_FLAG_GROCY_AI)
+{
+	require_once __DIR__ . '/custom/grocy_AI/routes.php';
+}
+
 
 // For CORS preflight OPTIONS requests
 $app->options('/api/{routes:.+}', function (Request $request, Response $response): Response

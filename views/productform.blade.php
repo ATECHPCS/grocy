@@ -2,6 +2,16 @@
 
 @extends('layout.default')
 
+@if(GROCY_FEATURE_FLAG_GROCY_AI)
+@push('pageStyles')
+<link rel="stylesheet"
+	href="{{ $U('/custom/grocy_AI/grocy-ai.css?v=', true) }}{{ $version }}">
+@endpush
+@push('pageScripts')
+<script src="{{ $U('/custom/grocy_AI/product-enrichment.js?v=', true) }}{{ $version }}"></script>
+@endpush
+@endif
+
 @if($mode == 'edit')
 @section('title', $__t('Edit product'))
 @else
@@ -909,7 +919,56 @@
 			</div>
 		</div>
 
-		<div class="row @if($mode == 'edit') mt-5 @endif">
+		@if(GROCY_FEATURE_FLAG_GROCY_AI)
+		@php
+		$grocyAiBarcode = '';
+		if ($mode === 'edit')
+		{
+			foreach ($barcodes as $grocyAiProductBarcode)
+			{
+				if ($grocyAiProductBarcode->product_id == $product->id)
+				{
+					$grocyAiBarcode = $grocyAiProductBarcode->barcode;
+					break;
+				}
+			}
+		}
+		@endphp
+		<div class="row @if($mode == 'edit') mt-5 @endif permission-MASTER_DATA_EDIT"
+			id="grocy-ai-product-enrichment">
+			<div class="col">
+				<div class="card grocy-ai-card">
+					<div class="card-body">
+						<h4 class="card-title">grocy_AI product enrichment</h4>
+						<p class="text-muted">Search product metadata and real package images by UPC. Results are previews and are not saved automatically.</p>
+						<div class="input-group">
+							<input type="text"
+								class="form-control"
+								id="grocy-ai-upc"
+								inputmode="numeric"
+								autocomplete="off"
+								placeholder="UPC / EAN / GTIN"
+								value="{{ $grocyAiBarcode }}">
+							<div class="input-group-append">
+								<button class="btn btn-outline-primary"
+									type="button"
+									id="grocy-ai-search-button">
+									<i class="fa-solid fa-magnifying-glass"></i> Search
+								</button>
+							</div>
+						</div>
+						<div class="invalid-feedback d-block d-none"
+							id="grocy-ai-error"></div>
+						<div class="mt-3 d-none"
+							id="grocy-ai-results"
+							aria-live="polite"></div>
+					</div>
+				</div>
+			</div>
+		</div>
+		@endif
+
+		<div class="row @if($mode == 'edit' && !GROCY_FEATURE_FLAG_GROCY_AI) mt-5 @endif">
 			<div class="col">
 				<div class="title-related-links">
 					<h4>
