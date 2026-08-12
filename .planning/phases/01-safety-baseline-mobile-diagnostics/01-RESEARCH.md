@@ -489,19 +489,17 @@ Do not assert that an `online` event triggers a request; assert that Retry remai
 |---|-------|---------|---------------|
 | A1 | `@playwright/test` 1.62.1 is safe to install after human verification; slopcheck could not establish legitimacy. | Standard Stack / Package Audit | A compromised or inappropriate dev dependency could be installed; planner must gate before install. |
 | A2 | Twenty successful physical samples per performance path are the smallest useful local p50/p95 baseline. | Validation Architecture | A stricter organizational sampling policy could require more runs; no such policy exists in project decisions. |
-| A3 | A new `custom/grocy_AI/module-version.json` is the smallest durable source for the module version in copied diagnostics. | Architecture Patterns | The implementer may find an existing stable marker can safely serve both branches; the report still needs a consistent value. |
+| A3 | RESOLVED: `custom/grocy_AI/module-version.json` is the authoritative portable module/diagnostic version source; stable `custom/grocy_AI/version.json` remains cache-only. | Architecture Patterns / resolved Open Question 2 | Execution must preserve these separate responsibilities on both branches. |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **When will the deployed LAN be reachable for the physical gate?**
+1. **When will the deployed LAN be reachable for the physical gate? — RESOLVED**
    - What we know: Research-time probes to the documented Grocy, companion, and SearXNG LAN endpoints could not connect. [VERIFIED: local network probes]
-   - What's unclear: Whether this Mac was off the household LAN/VPN or the services were temporarily down.
-   - Recommendation: Do not block implementation; make restored LAN access a named prerequisite of the final physical-phone acceptance task.
+   - Resolution: Deterministic implementation and contract work proceeds without LAN access. Plan 01-08 owns portable mirroring and parity without requiring LAN access; Plan 01-09 is the blocking deployment prerequisite and waits for household LAN/VPN access; after that deployment passes, Plan 01-10 performs the restored-LAN physical-phone acceptance.
 
-2. **Which existing version value should be authoritative for the module?**
+2. **Which existing version value should be authoritative for the module? — RESOLVED**
    - What we know: Grocy exposes `version.json`; `atech-release` has a custom production marker, while the portable module on `atech-main` lacks a dedicated manifest. [VERIFIED: codebase grep]
-   - What's unclear: Whether stable's cache marker is intended to be a public module semantic version.
-   - Recommendation: Add a portable module manifest used by both branches, and continue bumping the stable marker independently for cache invalidation. [ASSUMED]
+   - Resolution: `custom/grocy_AI/module-version.json` is authoritative for portable module and diagnostic contract versions on both branches. Stable `custom/grocy_AI/version.json` remains an independent deployment/cache-invalidation marker and is never used as the diagnostic module version.
 
 ## Environment Availability
 

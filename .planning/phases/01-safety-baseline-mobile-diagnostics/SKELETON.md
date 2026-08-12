@@ -29,7 +29,9 @@
 
 ## Brownfield Proof Contract
 
-The deterministic browser harness proves the phone interaction, zero-write enrichment invariant, state machine, and normal Save controls without live providers. The final deployed smoke signs in through existing auth, opens a designated test product (real SQLite read), changes an approved reversible field through the ordinary Save action (real SQLite write), reloads to observe it, restores the original value through ordinary Save, and reloads again. Evidence records product ID only; it excludes GTIN, product values, credentials, payloads, cookies, image tokens, and inventory contents per D-04.
+The deterministic browser harness proves the phone interaction, zero-write enrichment invariant, state machine, and normal Save controls without live providers. The final deployed smoke signs in through existing auth, has the operator select a test product (real SQLite read), changes an approved reversible field through the ordinary Save action (real SQLite write), reloads to observe it, restores the original value through ordinary Save, and reloads again. Evidence records only redacted boolean/timing outcomes for the read, save, reload, restore, and final reload; it excludes product IDs or derived identifiers, GTIN, product values, credentials, payloads, cookies, image tokens, and inventory contents per D-04.
+
+The final slice uses three sequential release gates: Plan 01-08 creates a portable-only stable commit, Plan 01-09 creates a separate adapter/cache commit and deploys its immutable image, and Plan 01-10 performs physical-phone timing plus the normal-Save proof against that exact artifact. This keeps byte parity, branch adaptation, deployment provenance, and human acceptance independently reviewable.
 
 ## Out of Scope (Deferred to Later Slices)
 
@@ -47,4 +49,3 @@ The deterministic browser harness proves the phone interaction, zero-write enric
 - Phase 5: Immutable bulk preview/apply/recovery engine.
 - Phase 6: Reviewed inventory categorization and conversion cleanup.
 - Phase 7: Reproducible upstream/stable promotion and recovery.
-
