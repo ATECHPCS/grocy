@@ -56,7 +56,9 @@ test('@mob02 cancel restores controls immediately with exact copy', async ({ pag
 
 test('@mob02 exact 15,000ms browser deadline uses virtual clock and exposes explicit retry', async ({ page }) =>
 {
-	await page.clock.install({ time: new Date('2026-08-12T12:00:00Z') });
+	const clockStart = new Date('2026-08-12T12:00:00Z');
+	await page.clock.install({ time: clockStart });
+	await page.clock.pauseAt(clockStart);
 	await page.route('**/api/grocy-ai/products/enrich/upc/**', async function ()
 	{
 		await new Promise(function () {});

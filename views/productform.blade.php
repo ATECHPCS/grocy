@@ -944,9 +944,18 @@
 			data-invalid-checksum="{{ $__t('That GTIN has an invalid check digit. Check the number and try again.') }}"
 			data-camera-unavailable="{{ $__t('Camera scanning is unavailable. Enter the GTIN manually.') }}"
 			data-cancelled-message="{{ $__t('Search cancelled. No changes were made.') }}"
+			data-offline-message="{{ $__t('This phone is offline. Reconnect and retry, or continue editing manually.') }}"
 			data-timeout-message="{{ $__t('The search took too long. Retry, or continue editing manually.') }}"
 			data-not-found-message="{{ $__t('No exact product match was found. Check the GTIN or continue editing manually.') }}"
-			data-error-message="{{ $__t('Product search is temporarily unavailable. Retry, or continue editing manually.') }}">
+			data-companion-unavailable-message="{{ $__t('Product search is temporarily unavailable. Retry, or continue editing manually.') }}"
+			data-provider-error-message="{{ $__t('A product data provider could not respond. Retry, or continue editing manually.') }}"
+			data-partial-image-message="{{ $__t('Product details were found, but images are unavailable. You can continue without an image.') }}"
+			data-retry-action="{{ $__t('Retry search') }}"
+			data-diagnostics-label="{{ $__t('Diagnostics') }}"
+			data-copy-diagnostic-action="{{ $__t('Copy diagnostic report') }}"
+			data-diagnostic-copy-success="{{ $__t('Diagnostic report copied.') }}"
+			data-diagnostic-copy-fallback="{{ $__t('Copy was blocked. Select and copy the redacted report manually.') }}"
+			data-diagnostic-fallback-label="{{ $__t('Redacted diagnostic report') }}">
 			<div class="col">
 				<div class="card grocy-ai-card">
 					<div class="card-body">
@@ -984,6 +993,11 @@
 								id="grocy-ai-cancel-button">
 								{{ $__t('Cancel search') }}
 							</button>
+							<button class="btn btn-primary d-none"
+								type="button"
+								id="grocy-ai-retry-button">
+								{{ $__t('Retry search') }}
+							</button>
 						</div>
 						<div class="grocy-ai-status alert alert-secondary mt-3 mb-0"
 							id="grocy-ai-status"
@@ -994,6 +1008,26 @@
 							<strong>{{ $__t('No enrichment result yet') }}</strong>
 							<span>{{ $__t('Scan or enter a GTIN, then search. You can continue editing this product without enrichment.') }}</span>
 						</div>
+						<details class="grocy-ai-diagnostics mt-3 d-none"
+							id="grocy-ai-diagnostics">
+							<summary id="grocy-ai-diagnostic-summary">{{ $__t('Diagnostics') }}</summary>
+							<div class="grocy-ai-diagnostic-body">
+								<button class="btn btn-outline-secondary"
+									type="button"
+									id="grocy-ai-copy-diagnostic-button">
+									<i class="fa-solid fa-copy" aria-hidden="true"></i> {{ $__t('Copy diagnostic report') }}
+								</button>
+								<div class="grocy-ai-diagnostic-feedback"
+									id="grocy-ai-diagnostic-feedback"
+									role="status"
+									aria-live="polite"></div>
+								<textarea class="form-control d-none"
+									id="grocy-ai-diagnostic-fallback"
+									rows="8"
+									readonly
+									aria-label="{{ $__t('Redacted diagnostic report') }}"></textarea>
+							</div>
+						</details>
 						<div class="mt-3 d-none"
 							id="grocy-ai-results"
 							aria-label="{{ $__t('Product enrichment preview') }}"></div>

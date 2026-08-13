@@ -46,6 +46,54 @@
 	display: block;
 }
 
+.grocy-ai-status-icon {
+	float: left;
+	margin-right: 8px;
+}
+
+.grocy-ai-diagnostics {
+	border: 1px solid #dee2e6;
+	background: #f8f9fa;
+	font-size: 14px;
+	line-height: 1.5;
+	padding: 8px 16px;
+	overflow-wrap: anywhere;
+}
+
+.grocy-ai-diagnostics summary {
+	color: var(--primary);
+	cursor: pointer;
+	font-variant-numeric: tabular-nums;
+}
+
+.grocy-ai-diagnostic-body {
+	display: grid;
+	gap: 8px;
+	margin-top: 16px;
+}
+
+details.grocy-ai-diagnostics:not([open]) > .grocy-ai-diagnostic-body {
+	display: grid;
+}
+
+.grocy-ai-diagnostic-body .btn {
+	justify-self: start;
+	min-height: 44px;
+}
+
+.grocy-ai-diagnostic-fallback,
+#grocy-ai-diagnostic-fallback {
+	font-size: 14px;
+	font-variant-numeric: tabular-nums;
+	max-width: 100%;
+	resize: vertical;
+}
+
+.night-mode .grocy-ai-diagnostics {
+	background: inherit;
+	border-color: #6c757d;
+}
+
 #grocy-ai-upc + #camerabarcodescanner-start-button {
 	display: none;
 }
@@ -97,9 +145,10 @@
 	}
 
 	.grocy-ai-card,
-	.grocy-ai-card .card-body,
-	.grocy-ai-status,
-	.grocy-ai-results {
+		.grocy-ai-card .card-body,
+		.grocy-ai-status,
+		.grocy-ai-diagnostics,
+		.grocy-ai-results {
 		max-width: 100%;
 		min-width: 0;
 	}

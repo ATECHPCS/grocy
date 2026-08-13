@@ -4,6 +4,7 @@
 	"private": true,
 	"scripts": {
 		"test": "playwright test",
+		"test:release": "playwright test",
 		"test:smoke": "playwright test --grep @smoke",
 		"test:install": "playwright install chromium webkit"
 	},
