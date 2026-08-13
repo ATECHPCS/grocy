@@ -3,12 +3,13 @@
 @extends('layout.default')
 
 @if(GROCY_FEATURE_FLAG_GROCY_AI)
+@php($grocyAiAssetVersion = '1.0.1')
 @push('pageStyles')
 <link rel="stylesheet"
-	href="{{ $U('/custom/grocy_AI/grocy-ai.css?v=', true) }}{{ $version }}">
+	href="{{ $U('/custom/grocy_AI/grocy-ai.css?v=', true) }}{{ $grocyAiAssetVersion }}">
 @endpush
 @push('pageScripts')
-<script src="{{ $U('/custom/grocy_AI/product-enrichment.js?v=', true) }}{{ $version }}"></script>
+<script src="{{ $U('/custom/grocy_AI/product-enrichment.js?v=', true) }}{{ $grocyAiAssetVersion }}"></script>
 @endpush
 @endif
 

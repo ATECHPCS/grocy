@@ -31,9 +31,9 @@ The production container is built with `Dockerfile.atech`. It pins the matching 
 
 ### Phase 1 portable and stable adapter boundary
 
-- Main commit `968b03dbddd00d422817a1533b18850f71f2b120` and stable portable commit `2e35a36e5b3da0a6badf72a3dfcb8d11d6e4b936` define the current portable baseline. The existing seven paths remain unchanged and match `atech-main` byte-for-byte: the module/diagnostic versions, diagnostic and service classes, native contract tests, module documentation, browser behavior, and module CSS.
+- Main commit `7fdf2ecf7ac63781b1ae2647a32ddfd1fa820cad` and stable portable commit `01a80bded58a0a3ea22a38ebb3516c6e114cb5ff` define the current portable baseline. The existing seven paths remain unchanged and match `atech-main` byte-for-byte: the module/diagnostic versions, diagnostic and service classes, native contract tests, module documentation, browser behavior, and module CSS.
 - The stable adapter commit changes only `custom/grocy_AI/src/GrocyAiApiController.php`, `custom/grocy_AI/routes.php`, `views/productform.blade.php`, `custom/grocy_AI/version.json`, and this file. The controller retains `Grocy\Controllers\BaseApiController`, routes retain class-based `JsonMiddleware::class`, and the product form retains the stable Save lifecycle.
-- `Customization` is `ATECHPCS-grocy_AI-5` so the unchanged `Dockerfile.atech` overlay invalidates persisted route/view and asset caches after the live Bootstrap focus, feedback-visibility, and camera focus-timing refinement.
+- `Customization` is `ATECHPCS-grocy_AI-6` so the unchanged `Dockerfile.atech` overlay invalidates persisted route/view caches when custom asset URLs move from core `4.6.0` to grocy_AI module token `1.0.1`.
 
 ## Unused Grocy features
 
