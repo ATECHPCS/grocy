@@ -43,7 +43,7 @@ This milestone turns the deployed product-enrichment baseline into a dependable,
 Plans:
 **Wave 1**
 
-- [ ] 01-01-PLAN.md — Verify and authorize the official Playwright test package.
+- [x] 01-01-PLAN.md — Verify and authorize the official Playwright test package.
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -191,7 +191,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7. Dual-bra
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Safety Baseline & Mobile Diagnostics | 0/TBD | Not started | - |
+| 1. Safety Baseline & Mobile Diagnostics | 1/10 | In Progress|  |
 | 2. Enrichment Contract, Barcode Handoff & Secure Media | 0/TBD | Not started | - |
 | 3. Food Taxonomy & Categorization Pilot | 0/TBD | Not started | - |
 | 4. Reusable Conversion Model | 0/TBD | Not started | - |

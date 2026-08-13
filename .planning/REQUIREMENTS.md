@@ -14,7 +14,7 @@
 - [ ] **MOB-05**: Operator can correlate browser, Grocy, companion, and provider stages using a request/trace identifier and privacy-safe timing data.
 - [ ] **MOB-06**: User can copy a redacted diagnostic report containing versions, correlation ID, stage statuses, and timings without credentials, cookies, payload bodies, UPC history, or image tokens.
 - [ ] **MOB-07**: User can continue normal Grocy product and inventory workflows when the companion, SearXNG, Open Food Facts, or an image host is unavailable.
-- [ ] **MOB-08**: Maintainer can verify explicit LAN/mobile latency budgets and failure behavior through automated mobile-browser coverage plus a physical-phone acceptance pass.
+- [x] **MOB-08**: Maintainer can verify explicit LAN/mobile latency budgets and failure behavior through automated mobile-browser coverage plus a physical-phone acceptance pass.
 
 ### Product Enrichment and Barcode Handoff
 
@@ -118,7 +118,7 @@
 | MOB-05 | Phase 1 | Pending |
 | MOB-06 | Phase 1 | Pending |
 | MOB-07 | Phase 1 | Pending |
-| MOB-08 | Phase 1 | Pending |
+| MOB-08 | Phase 1 | Complete |
 | ENR-01 | Phase 2 | Pending |
 | ENR-02 | Phase 2 | Pending |
 | ENR-03 | Phase 2 | Pending |
