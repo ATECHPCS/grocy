@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 02-02-PLAN.md
-last_updated: "2026-08-13T21:32:32.354Z"
+stopped_at: Completed 02-03-PLAN.md
+last_updated: "2026-08-13T21:57:32.016Z"
 last_activity: 2026-08-13
 progress:
   total_phases: 7
   completed_phases: 0
   total_plans: 24
-  completed_plans: 11
-  percent: 46
+  completed_plans: 12
+  percent: 50
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-08-12)
 ## Current Position
 
 Phase: 02 (Enrichment Contract, Barcode Handoff & Secure Media) — EXECUTING
-Plan: 3 of 14
+Plan: 4 of 14
 Status: Ready to execute
 Last activity: 2026-08-13
 
-Progress: [█████░░░░░] 46%
+Progress: [█████░░░░░] 50%
 
 ## Performance Metrics
 
@@ -63,6 +63,7 @@ Progress: [█████░░░░░] 46%
 | Phase 01 P09 | 43 min | 2 tasks | 7 files |
 | Phase 02 P01 | 13 min | 2 tasks | 8 files |
 | Phase 02 P02 | 16 min | 2 tasks | 16 files |
+| Phase 02 P03 | 20min | 2 tasks | 8 files |
 
 ## Accumulated Context
 
@@ -105,6 +106,9 @@ Recent decisions affecting current work:
 - [Phase 02]: Walk raw JSON recursively and compare decoded member-name tokens per object scope before full-document decode. — Ordinary JSON decoding collapses duplicate and escaped-equivalent keys.
 - [Phase 02]: Expose only the closed v2 review DTO and owned trace ID. — Provider dictionaries, URLs, deferred nutrition families, and parser details stay behind the boundary.
 - [Phase 02]: Preselect a name only for blank content plus high structured-direct canonical evidence. — Review remains reversible and zero-write; normal Save is still the sole persistence authority.
+- [Phase 02]: Resolve Brand only through one server-confirmed products.brand text-single-line userfield — Any duplicate, type, ID, label, or destination drift fails closed.
+- [Phase 02]: Re-read selected native controls before diff and staging — Changed rows are stale and require a fresh explicit decision before staging.
+- [Phase 02]: Keep barcode and product-image staging inactive until their assigned plans — Normal Grocy Save remains the sole persistence authority.
 
 ### Pending Todos
 
@@ -136,6 +140,6 @@ Items acknowledged for v2 after the preview/audit model is proven:
 
 ## Session Continuity
 
-Last session: 2026-08-13T21:32:32.350Z
-Stopped at: Completed 02-02-PLAN.md
+Last session: 2026-08-13T21:57:32.011Z
+Stopped at: Completed 02-03-PLAN.md
 Resume file: None
