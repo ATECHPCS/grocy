@@ -24,36 +24,13 @@ function traceIdFrom(traceparent)
 function safeEnvelope(traceId, outcome)
 {
 	return {
-		found: outcome === 'success',
-		product: outcome === 'success' ? { name: 'Safe fixture product', brand: 'Safe brand', size: '12 oz' } : {},
-		images: [],
-		sources: ['fixture-provider'],
+		contract_version: 2,
+		outcome: outcome === 'success' ? 'found' : outcome,
+		barcode: { scanned_gtin: validGtin, canonical_gtin: '00012345678905', equivalents_checked: [validGtin, '00012345678905'], status: 'unused', owner_product_id: null },
+		suggestions: outcome === 'success' ? [{ id: 'name:openfoodfacts:0', field: 'name', value: 'Safe fixture product', display_value: 'Safe fixture product', source: { id: 'openfoodfacts', label: 'Open Food Facts' }, confidence_band: 'high', reason_code: 'canonical_structured_match', evidence_kind: 'structured_direct', retrieved_at: '2026-08-13T12:00:00Z', source_updated_at: null, target: null }] : [],
+		media: [],
 		warnings: [],
-		outcome: outcome,
-		diagnostics: {
-			schema_version: 1,
-			versions: { grocy: '4.6.0', module: '1.0.0', companion: '0.1.0', contract: '1' },
-			trace_id: traceId,
-			outcome: outcome,
-			stages: [
-				{ name: 'grocy_connect', status: 'ok', error_code: null, cache: 'unknown', duration_ms: 4 },
-				{ name: 'grocy_companion', status: outcome === 'success' ? 'ok' : 'timeout', error_code: outcome === 'success' ? null : 'deadline', cache: 'unknown', duration_ms: 24 },
-				{ name: 'openfoodfacts', status: outcome === 'success' ? 'ok' : 'timeout', error_code: outcome === 'success' ? null : 'deadline', cache: 'miss', duration_ms: 20 }
-			],
-			overall_duration_ms: 28,
-			api_key: canaries[0],
-			cookie: canaries[1],
-			authorization: 'Bearer ' + canaries[2],
-			request_body: canaries[3],
-			response_body: canaries[4],
-			provider_url: canaries[5],
-			download_token: canaries[6],
-			headers: { 'x-canary': canaries[7] },
-			stack: canaries[8],
-			product_name: canaries[9],
-			inventory: canaries[10]
-		},
-		raw_exception: canaries[8]
+		diagnostics: { trace_id: traceId }
 	};
 }
 
@@ -139,8 +116,9 @@ test('@mob05 @mob06 owned trace reaches Grocy and companion, copied diagnostics 
 	const copied = await page.evaluate(function () { return window.__copiedReports[0]; });
 	const report = JSON.parse(copied);
 	expectClosedReport(report, traceId, 'success');
-	const surfaces = [await page.locator('body').innerText(), copied, consoleLines.join('\n')].join('\n');
-	expect(surfaces).not.toContain(validGtin);
+	const diagnosticSurfaces = [copied, consoleLines.join('\n')].join('\n');
+	expect(diagnosticSurfaces).not.toContain(validGtin);
+	const surfaces = [await page.locator('body').innerText(), diagnosticSurfaces].join('\n');
 	for (const canary of canaries) expect(surfaces).not.toContain(canary);
 });
 

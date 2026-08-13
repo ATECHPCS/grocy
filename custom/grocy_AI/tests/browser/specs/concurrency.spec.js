@@ -7,21 +7,13 @@ function responseFor(gtin, name, outcome)
 {
 	const traceId = '4bf92f3577b34da6a3ce929d0e0e4736';
 	return {
-		found: outcome !== 'provider_error',
-		upc: gtin,
-		product: { name: name, brand: 'Fixture Foods', size: '12 oz' },
-		images: [],
-		sources: ['fixture-provider'],
+		contract_version: 2,
+		outcome: outcome === 'success' ? 'found' : outcome,
+		barcode: { scanned_gtin: gtin, canonical_gtin: gtin.padStart(14, '0'), equivalents_checked: [gtin, gtin.padStart(14, '0')], status: 'unused', owner_product_id: null },
+		suggestions: outcome === 'success' ? [{ id: 'name:openfoodfacts:0', field: 'name', value: name, display_value: name, source: { id: 'openfoodfacts', label: 'Open Food Facts' }, confidence_band: 'high', reason_code: 'canonical_structured_match', evidence_kind: 'structured_direct', retrieved_at: '2026-08-13T12:00:00Z', source_updated_at: null, target: null }] : [],
+		media: [],
 		warnings: [],
-		outcome: outcome,
-		diagnostics: {
-			schema_version: 1,
-			versions: { grocy: '4.6.0', module: '1.0.0', companion: '0.1.0', contract: '1' },
-			trace_id: traceId,
-			outcome: outcome,
-			stages: [{ name: 'grocy_companion', status: outcome === 'provider_error' ? 'error' : 'ok', error_code: outcome === 'provider_error' ? 'provider_error' : null, cache: 'miss', duration_ms: 20 }],
-			overall_duration_ms: 20
-		}
+		diagnostics: { trace_id: traceId }
 	};
 }
 
@@ -66,7 +58,7 @@ test('@mob04 ten identical taps and scans coalesce; explicit retry is exactly on
 	await expect(page.locator('#grocy-ai-retry-button')).toBeVisible();
 	await page.locator('#grocy-ai-retry-button').click();
 	await expect.poll(function () { return requests.length; }).toBe(2);
-	await expect(page.locator('.grocy-ai-summary strong')).toHaveText('Retry product');
+	await expect(page.locator('[data-grocy-ai-field="name"]')).toContainText('Retry product');
 	expect(requests[0].traceparent).toMatch(/^00-[0-9a-f]{32}-[0-9a-f]{16}-0[01]$/);
 	expect(requests[1].traceparent).toMatch(/^00-[0-9a-f]{32}-[0-9a-f]{16}-0[01]$/);
 	expect(requests[1].traceparent).not.toBe(requests[0].traceparent);
@@ -101,9 +93,9 @@ test('@mob03 held A cannot overwrite newer intent B after GTIN edit or different
 	{
 		window.$(document).trigger('Grocy.BarcodeScanned', ['4006381333931', 'grocy-ai-upc']);
 	});
-	await expect(page.locator('.grocy-ai-summary strong')).toHaveText('Current B product');
+	await expect(page.locator('[data-grocy-ai-field="name"]')).toContainText('Current B product');
 	await routeA.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(responseFor(gtinA, 'Obsolete A product', 'success')) }).catch(function () {});
-	await expect(page.locator('.grocy-ai-summary strong')).toHaveText('Current B product');
+	await expect(page.locator('[data-grocy-ai-field="name"]')).toContainText('Current B product');
 	expect(await page.locator('body').innerText()).not.toContain('Obsolete A product');
 	expect(requestGtins).toEqual([gtinA, gtinB]);
 });

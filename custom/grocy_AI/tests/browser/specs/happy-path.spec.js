@@ -2,16 +2,11 @@ const { test, expect } = require('@playwright/test');
 
 const validGtin = '012345678905';
 const successEnvelope = {
-	found: true,
-	upc: validGtin,
-	product: {
-		name: 'Fixture rolled oats',
-		brand: 'Fixture Foods',
-		size: '18 oz'
-	},
-	sources: ['fixture-provider'],
-	images: [],
-	warnings: []
+	contract_version: 2,
+	outcome: 'found',
+	barcode: { scanned_gtin: validGtin, canonical_gtin: '00012345678905', equivalents_checked: [validGtin, '00012345678905'], status: 'unused', owner_product_id: null },
+	suggestions: [{ id: 'name:openfoodfacts:0', field: 'name', value: 'Fixture rolled oats', display_value: 'Fixture rolled oats', source: { id: 'openfoodfacts', label: 'Open Food Facts' }, confidence_band: 'high', reason_code: 'canonical_structured_match', evidence_kind: 'structured_direct', retrieved_at: '2026-08-13T12:00:00Z', source_updated_at: null, target: null }],
+	media: [], warnings: [], diagnostics: { trace_id: '4bf92f3577b34da6a3ce929d0e0e4736' }
 };
 
 test('@smoke harness serves only the fixture and real phase-owned assets', async ({ page, request }) =>
@@ -119,7 +114,7 @@ test('@smoke @mob01 @mob02 @mob04 @mob07 @mob08 phone enrichment happy path rema
 	}
 
 	releaseEnrichment();
-	await expect(page.locator('.grocy-ai-summary strong')).toHaveText('Fixture rolled oats');
+	await expect(page.locator('[data-grocy-ai-field="name"]')).toContainText('Fixture rolled oats');
 
 	for (let index = 0; index < await saveButtons.count(); index++)
 	{

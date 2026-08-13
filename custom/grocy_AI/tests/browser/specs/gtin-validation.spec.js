@@ -31,14 +31,7 @@ async function installSuccessRoute(page, requestedGtins)
 		await route.fulfill({
 			status: 200,
 			contentType: 'application/json',
-			body: JSON.stringify({
-				found: true,
-				upc: gtin,
-				product: { name: 'Fixture product ' + gtin },
-				sources: ['fixture-provider'],
-				images: [],
-				warnings: []
-			})
+			body: JSON.stringify({ contract_version: 2, outcome: 'found', barcode: { scanned_gtin: gtin, canonical_gtin: gtin.padStart(14, '0'), equivalents_checked: [gtin, gtin.padStart(14, '0')], status: 'unused', owner_product_id: null }, suggestions: [{ id: 'name:openfoodfacts:0', field: 'name', value: 'Fixture product ' + gtin, display_value: 'Fixture product ' + gtin, source: { id: 'openfoodfacts', label: 'Open Food Facts' }, confidence_band: 'high', reason_code: 'canonical_structured_match', evidence_kind: 'structured_direct', retrieved_at: '2026-08-13T12:00:00Z', source_updated_at: null, target: null }], media: [], warnings: [], diagnostics: { trace_id: '4bf92f3577b34da6a3ce929d0e0e4736' } })
 		});
 	});
 }

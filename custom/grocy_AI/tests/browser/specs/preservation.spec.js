@@ -5,22 +5,15 @@ const validGtin = '012345678905';
 function envelope(outcome, options)
 {
 	const settings = options || {};
+	const v2Outcome = outcome === 'success' || outcome === 'partial_image' ? 'found' : outcome;
 	return {
-		found: outcome === 'success' || outcome === 'partial_image',
-		upc: validGtin,
-		product: { name: 'Provider suggestion', brand: 'Provider brand', size: '12 oz' },
-		images: settings.images || [],
-		sources: ['fixture-provider'],
-		warnings: [],
-		outcome: outcome,
-		diagnostics: {
-			schema_version: 1,
-			versions: { grocy: '4.6.0', module: '1.0.0', companion: '0.1.0', contract: '1' },
-			trace_id: settings.traceId || '4bf92f3577b34da6a3ce929d0e0e4736',
-			outcome: outcome,
-			stages: [{ name: 'grocy_companion', status: outcome === 'success' ? 'ok' : 'error', error_code: outcome === 'success' ? null : 'provider_error', cache: 'unknown', duration_ms: 20 }],
-			overall_duration_ms: 20
-		}
+		contract_version: 2,
+		outcome: v2Outcome,
+		barcode: { scanned_gtin: validGtin, canonical_gtin: '00012345678905', equivalents_checked: [validGtin, '00012345678905'], status: 'unused', owner_product_id: null },
+		suggestions: v2Outcome === 'found' ? [{ id: 'name:openfoodfacts:0', field: 'name', value: 'Provider suggestion', display_value: 'Provider suggestion', source: { id: 'openfoodfacts', label: 'Open Food Facts' }, confidence_band: 'high', reason_code: 'canonical_structured_match', evidence_kind: 'structured_direct', retrieved_at: '2026-08-13T12:00:00Z', source_updated_at: null, target: null }] : [],
+		media: settings.media || [],
+		warnings: outcome === 'partial_image' ? ['image_search_unavailable'] : [],
+		diagnostics: { trace_id: settings.traceId || '4bf92f3577b34da6a3ce929d0e0e4736' }
 	};
 }
 
@@ -74,7 +67,7 @@ for (const scenario of [
 	{ name: 'timeout', status: 504, outcome: 'timeout', copy: 'The search took too long.' },
 	{ name: 'companion unavailable', status: 503, outcome: 'provider_error', copy: 'Product search is temporarily unavailable.' },
 	{ name: 'provider failure', status: 502, outcome: 'provider_error', copy: 'A product data provider could not respond.' },
-	{ name: 'partial image', status: 200, outcome: 'partial_image', copy: 'Product details were found, but images are unavailable.' }
+	{ name: 'partial image', status: 200, outcome: 'partial_image', copy: 'Product details found' }
 ])
 {
 	test('@mob07 ' + scenario.name + ' preserves ordinary fields, selected file, Saves, and zero writes', async ({ page }) =>
@@ -124,19 +117,15 @@ test('@mob07 selected image download failure keeps the preselected file and norm
 			contentType: 'application/json',
 			body: JSON.stringify(envelope('success', {
 				traceId: traceId,
-				images: [{ url: 'https://images.example/front.png', download_token: 'safe-fixture-token', source: 'openfoodfacts' }]
+				media: [{ id: 'image:openfoodfacts:preservation', kind: 'front_package', thumbnail_handle: 'thumbnail_preservation_capability_01', full_handle: 'full_preservation_capability_000001', source: { id: 'openfoodfacts', label: 'Open Food Facts' }, confidence_band: 'high', reason_code: 'canonical_structured_front_image', evidence_kind: 'structured_direct', retrieved_at: '2026-08-13T12:00:00Z' }]
 			}))
 		});
 	});
 	await page.route('**/api/grocy-ai/images/**', async function (route) { await route.abort('connectionreset'); });
-	await page.route('https://images.example/**', async function (route)
-	{
-		await route.fulfill({ status: 200, contentType: 'image/png', body: Buffer.from('preview') });
-	});
 	const before = await seedForm(page);
 	await page.locator('#grocy-ai-upc').fill(validGtin);
 	await page.locator('#grocy-ai-upc').press('Enter');
-	await page.getByRole('button', { name: 'Use as product picture' }).click();
-	await expect(page.locator('.grocy-ai-feedback')).toContainText('The image download was interrupted.');
+	await page.getByRole('button', { name: 'Load thumbnail' }).click();
+	await expect(page.locator('.grocy-ai-media-error')).toContainText('This image could not be loaded safely.');
 	await assertPreserved(page, before);
 });

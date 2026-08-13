@@ -6,20 +6,13 @@ const viewportWidths = [320, 375, 390, 768];
 function terminalEnvelope(outcome)
 {
 	return {
-		found: false,
+		contract_version: 2,
 		outcome: outcome,
-		product: {},
-		images: [],
-		sources: [],
+		barcode: { scanned_gtin: validGtin, canonical_gtin: '00012345678905', equivalents_checked: [validGtin, '00012345678905'], status: 'unused', owner_product_id: null },
+		suggestions: [],
+		media: [],
 		warnings: [],
-		diagnostics: {
-			schema_version: 1,
-			versions: { grocy: '4.6.0', module: '1.0.0', companion: '0.1.0', contract: '1' },
-			trace_id: '4bf92f3577b34da6a3ce929d0e0e4736',
-			outcome: outcome,
-			stages: [{ name: 'grocy_companion', status: 'timeout', error_code: 'deadline', cache: 'miss', duration_ms: 5000 }],
-			overall_duration_ms: 5000
-		}
+		diagnostics: { trace_id: '4bf92f3577b34da6a3ce929d0e0e4736' }
 	};
 }
 
@@ -176,7 +169,7 @@ test('@mob08 browser timeout transitions only at exactly 15000ms', async ({ page
 {
 	const clockStart = new Date('2026-08-12T12:00:00Z');
 	await page.clock.install({ time: clockStart });
-	await page.clock.pauseAt(clockStart);
+	await page.clock.pauseAt(new Date(clockStart.getTime() + 1000));
 	await page.route('**/api/grocy-ai/products/enrich/upc/**', async function ()
 	{
 		await new Promise(function () {});

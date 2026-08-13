@@ -21,14 +21,15 @@ function diagnostic(outcome, stageStatus, errorCode)
 
 function envelope(outcome, overrides)
 {
+	const v2Outcome = outcome === 'success' || outcome === 'partial_image' ? 'found' : outcome;
 	return Object.assign({
-		found: outcome === 'success' || outcome === 'partial_image',
-		product: successProduct,
-		images: [],
-		sources: ['fixture-provider'],
-		warnings: [],
-		outcome: outcome,
-		diagnostics: diagnostic(outcome, outcome === 'provider_error' ? 'error' : 'ok', outcome === 'provider_error' ? 'provider_error' : null)
+		contract_version: 2,
+		outcome: v2Outcome,
+		barcode: { scanned_gtin: validGtin, canonical_gtin: '00012345678905', equivalents_checked: [validGtin, '00012345678905'], status: 'unused', owner_product_id: null },
+		suggestions: v2Outcome === 'found' ? [{ id: 'name:openfoodfacts:0', field: 'name', value: successProduct.name, display_value: successProduct.name, source: { id: 'openfoodfacts', label: 'Open Food Facts' }, confidence_band: 'high', reason_code: 'canonical_structured_match', evidence_kind: 'structured_direct', retrieved_at: '2026-08-13T12:00:00Z', source_updated_at: null, target: null }] : [],
+		media: [],
+		warnings: outcome === 'partial_image' ? ['image_search_unavailable'] : [],
+		diagnostics: { trace_id: '4bf92f3577b34da6a3ce929d0e0e4736' }
 	}, overrides || {});
 }
 
@@ -103,24 +104,21 @@ for (const scenario of [
 	{
 		name: 'not found',
 		status: 200,
-		body: envelope('not_found', { found: false }),
+		body: envelope('not_found'),
 		copy: 'No exact product match was found. Check the GTIN or continue editing manually.',
 		stateClass: 'alert-warning'
 	},
 	{
 		name: 'companion unavailable',
 		status: 503,
-		body: envelope('provider_error', {
-			found: false,
-			diagnostics: diagnostic('provider_error', 'unavailable', 'connection')
-		}),
+		body: envelope('provider_error'),
 		copy: 'Product search is temporarily unavailable. Retry, or continue editing manually.',
 		stateClass: 'alert-danger'
 	},
 	{
 		name: 'provider error',
 		status: 502,
-		body: envelope('provider_error', { found: false }),
+		body: envelope('provider_error'),
 		copy: 'A product data provider could not respond. Retry, or continue editing manually.',
 		stateClass: 'alert-danger'
 	},
@@ -128,8 +126,8 @@ for (const scenario of [
 		name: 'partial image',
 		status: 200,
 		body: envelope('partial_image'),
-		copy: 'Product details were found, but images are unavailable. You can continue without an image.',
-		stateClass: 'alert-warning'
+		copy: 'Product details found',
+		stateClass: 'alert-success'
 	},
 	{
 		name: 'success',
