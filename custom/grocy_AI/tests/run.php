@@ -20,6 +20,13 @@ use GrocyAI\Services\GrocyAiService;
 $failures = 0;
 $tests = 0;
 
+$repoRoot = dirname(__DIR__, 3);
+$moduleVersionData = json_decode(file_get_contents($repoRoot . '/custom/grocy_AI/module-version.json'), true, 512, JSON_THROW_ON_ERROR);
+$moduleVersion = (string)($moduleVersionData['module_version'] ?? '');
+$productFormTemplate = file_get_contents($repoRoot . '/views/productform.blade.php');
+$assetVersionMatch = [];
+$hasAssetVersion = preg_match('/\$grocyAiAssetVersion = \'([^\']+)\'/', $productFormTemplate, $assetVersionMatch) === 1;
+
 function check(bool $condition, string $message): void
 {
 	global $failures, $tests;
@@ -43,6 +50,13 @@ function expectException(callable $callback, string $exceptionClass, string $mes
 		check($ex instanceof $exceptionClass, $message . ' (received ' . get_class($ex) . ')');
 	}
 }
+
+check($moduleVersion !== '', 'The portable module version is defined');
+check($hasAssetVersion, 'The product form defines one grocy_AI asset version token');
+check(($assetVersionMatch[1] ?? null) === $moduleVersion, 'The grocy_AI asset token matches the portable module version');
+check(substr_count($productFormTemplate, '{{ $grocyAiAssetVersion }}') === 2, 'Both custom product-form assets use the grocy_AI token');
+check(!str_contains($productFormTemplate, 'grocy-ai.css?v=\', true) }}{{ $version }}'), 'Custom CSS is independent from the Grocy core version');
+check(!str_contains($productFormTemplate, 'product-enrichment.js?v=\', true) }}{{ $version }}'), 'Custom JavaScript is independent from the Grocy core version');
 
 function companionBody(string $outcome = 'success', array $extra = []): string
 {
@@ -225,7 +239,7 @@ check(($result['outcome'] ?? null) === 'success', 'Companion success is preserve
 check(($result['diagnostics']['trace_id'] ?? null) === $traceContext['trace_id'], 'Diagnostics use the trusted owned trace ID');
 check(($result['diagnostics']['versions'] ?? null) === [
 	'grocy' => '4.6.0',
-	'module' => '1.0.0',
+	'module' => $moduleVersion,
 	'companion' => '0.1.0',
 	'contract' => '1'
 ], 'Diagnostics contain only portable version values');

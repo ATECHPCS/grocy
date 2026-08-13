@@ -97,6 +97,8 @@ Only `http` and `https` image URLs are returned to the browser. Image downloads 
 
 `custom/grocy_AI/module-version.json` is the portable source for the module version and diagnostic contract version. Grocy validates or replaces inbound W3C v00 `traceparent`, creates a fresh parent ID, and forwards only that rebuilt header to the companion. `tracestate` is ignored, and owned trace headers end at the companion rather than reaching external providers.
 
+The product-form JavaScript and CSS query token is the grocy_AI `module_version`, not Grocy's core release version. Bump `module-version.json` whenever either custom asset changes and update the one `grocyAiAssetVersion` literal in `views/productform.blade.php` to the same value. The native contract suite enforces that both asset URLs use that matching module token and remain independent from core `$version`, preventing a stable browser cache from serving older custom bytes across deployments.
+
 Grocy rebuilds diagnostics field-by-field. The v1 browser envelope contains only schema/version values, the trace ID, a finite outcome, allowlisted stages, and bounded or nullable millisecond durations. The supplementary `Server-Timing` header contains only allowlisted metric names and durations. Diagnostics and status never contain GTINs, product or inventory values, service URLs, request/response headers, credentials, cookies, payload bodies, image handles, or raw exception text.
 
 Enrichment and diagnostics remain authenticated GET/read operations. They do not write database rows, files, product data, barcodes, stock, or inventory state. Suggested names and selected images remain previews until the user invokes Grocy's existing Save workflow.
