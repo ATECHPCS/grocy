@@ -121,6 +121,8 @@
 				data-owned-other-message="This barcode already belongs to an existing product."
 				data-owned-current-message="This barcode is already attached to this product."
 				data-open-existing-product="Open existing product"
+				data-partial-barcode-error="The product was saved, but the barcode was not attached. Retry the barcode only; the product will not be created again."
+				data-barcode-retry="Retry barcode attachment"
 				data-ready-message="GTIN ready."
 				data-busy-message="Searching product details…"
 				data-success-heading="Product details found"
@@ -227,6 +229,13 @@
 			saveClicks: 0,
 			objectUrlsCreated: 0,
 			objectUrlsRevoked: 0
+		};
+		window.__fixturePersistence = {
+			enabled: false,
+			productId: 501,
+			createdProductId: null,
+			continuationCalls: 0,
+			lastOutcome: null
 		};
 
 		function JQueryCompatible(target)
@@ -363,7 +372,34 @@
 			return xhr;
 		};
 
-		['Post', 'Put', 'Delete', 'UploadFile', 'DeleteFile'].forEach(function (methodName)
+		window.Grocy.Api.Post = function (apiFunction, data, success, error)
+		{
+			var url = window.U('/api/' + apiFunction);
+			if (!window.__fixturePersistence.enabled)
+			{
+				throw new Error('Persistence is intentionally unavailable in the browser fixture');
+			}
+
+			var xhr = new XMLHttpRequest();
+			xhr.onreadystatechange = function ()
+			{
+				if (xhr.readyState !== XMLHttpRequest.DONE) return;
+				if (xhr.status >= 200 && xhr.status < 300)
+				{
+					if (success) success(xhr.responseText ? JSON.parse(xhr.responseText) : {});
+				}
+				else if (error)
+				{
+					error(xhr);
+				}
+			};
+			xhr.open('POST', url, true);
+			xhr.setRequestHeader('Content-Type', 'application/json');
+			xhr.send(JSON.stringify(data || {}));
+			return xhr;
+		};
+
+		['Put', 'Delete', 'UploadFile', 'DeleteFile'].forEach(function (methodName)
 		{
 			window.Grocy.Api[methodName] = function (apiFunction)
 			{
@@ -394,8 +430,34 @@
 			button.addEventListener('click', function ()
 			{
 				window.__fixtureCounters.saveClicks++;
+				if (!window.__fixturePersistence.enabled || window.__fixturePersistence.createdProductId !== null) return;
+				window.Grocy.Api.Post('objects/products', { name: document.getElementById('name').value }, function (result)
+				{
+					var productId = Number(result.created_object_id || window.__fixturePersistence.productId);
+					window.__fixturePersistence.createdProductId = productId;
+					window.__fixtureContinueProductSave(productId);
+				});
 			});
 		});
+
+		window.__fixtureContinueProductSave = function (productId)
+		{
+			window.__fixturePersistence.continuationCalls++;
+			if (!window.GrocyAI || typeof window.GrocyAI.AttachStagedBarcode !== 'function')
+			{
+				window.__fixturePersistence.lastOutcome = 'missing-continuation';
+				return Promise.reject(new Error('Barcode Save continuation is not implemented'));
+			}
+			return window.GrocyAI.AttachStagedBarcode(productId).then(function (result)
+			{
+				window.__fixturePersistence.lastOutcome = result && result.status ? result.status : 'success';
+				return result;
+			}).catch(function (error)
+			{
+				window.__fixturePersistence.lastOutcome = error && error.code ? error.code : 'failed';
+				return null;
+			});
+		};
 
 		['name', 'product_group_id', 'qu_id_stock', 'fixture-brand', 'product-picture'].forEach(function (id)
 		{

@@ -43,9 +43,9 @@ function expectBarcodeException(callable $callback, string $exceptionClass, stri
 	}
 }
 
-function expectedBarcodeRed(string $message): never
+function expectedBarcodeRed(string $marker, string $message): never
 {
-	fwrite(STDERR, 'EXPECTED_RED: gtin.shared_predicate' . PHP_EOL);
+	fwrite(STDERR, 'EXPECTED_RED: ' . $marker . PHP_EOL);
 	fwrite(STDERR, 'FAIL: ' . $message . PHP_EOL);
 	exit(1);
 }
@@ -78,7 +78,7 @@ function assertSharedPredicate(): void
 		|| !method_exists(GrocyAiGtin::class, 'CanonicalOrNull')
 		|| !method_exists(GrocyAiGtin::class, 'CanonicalSqlExpression'))
 	{
-		expectedBarcodeRed('The shared PHP/SQLite GTIN predicate is not implemented');
+		expectedBarcodeRed('gtin.shared_predicate', 'The shared PHP/SQLite GTIN predicate is not implemented');
 	}
 
 	foreach (canonicalVectors() as $vector)
@@ -99,14 +99,142 @@ function assertSharedPredicate(): void
 	checkBarcode(GrocyAiGtin::CanonicalOrNull(' 012345678905 ') === null, 'Canonical ownership never trims or normalizes the scanned display string');
 }
 
+function migrationVectors(): array
+{
+	return array_merge(canonicalVectors(), [
+		['id' => 'valid-boundary-zeroes', 'value' => '00000000', 'canonical' => '00000000000000'],
+		['id' => 'valid-boundary-nines', 'value' => '99999995', 'canonical' => '00000099999995']
+	], invalidVectors(), [
+		['id' => 'invalid-boundary-zero-check', 'value' => '00000001'],
+		['id' => 'invalid-boundary-nine-check', 'value' => '99999999'],
+		['id' => 'arbitrary-numeric-short', 'value' => '0'],
+		['id' => 'arbitrary-numeric-long', 'value' => '999999999999999']
+	]);
+}
+
+function barcodeRowsHash(PDO $pdo): string
+{
+	$rows = $pdo->query('SELECT id, product_id, barcode FROM product_barcodes ORDER BY id')->fetchAll(PDO::FETCH_ASSOC);
+	return hash('sha256', json_encode($rows, JSON_THROW_ON_ERROR));
+}
+
+function executeExactMigration(PDO $pdo): void
+{
+	$migrationFile = dirname(__DIR__, 3) . '/migrations/0256.php';
+	if (!is_file($migrationFile))
+	{
+		expectedBarcodeRed('gtin.migration_valid_only', 'Migration 0256.php is not implemented');
+	}
+
+	$grocyAiMigrationDb = $pdo;
+	include $migrationFile;
+}
+
+function assertMigrationValidOnly(): void
+{
+	global $failures;
+
+	$preflight = file_get_contents(dirname(__DIR__, 3) . '/.planning/phases/02-enrichment-contract-barcode-handoff-secure-media/02-ENVIRONMENT-PREFLIGHT.md');
+	checkBarcode(
+		preg_match('/^canonical_collision_groups:\s*0$/m', $preflight) === 1,
+		'The redacted execution preflight authorizes migration only at zero collision groups'
+	);
+	if ($failures > 0)
+	{
+		expectedBarcodeRed('gtin.migration_valid_only', 'The redacted collision preflight is not zero');
+	}
+
+	$tempPath = tempnam(sys_get_temp_dir(), 'grocy-ai-migration-');
+	if ($tempPath === false)
+	{
+		throw new RuntimeException('Unable to allocate the isolated migration fixture');
+	}
+
+	try
+	{
+		$pdo = new PDO('sqlite:' . $tempPath);
+		$pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+		$pdo->exec('CREATE TABLE product_barcodes (id INTEGER PRIMARY KEY, product_id INTEGER NOT NULL, barcode TEXT NOT NULL)');
+		$pdo->exec('CREATE UNIQUE INDEX ix_product_barcodes ON product_barcodes (barcode)');
+		$insert = $pdo->prepare('INSERT INTO product_barcodes (product_id, barcode) VALUES (:product_id, :barcode)');
+		foreach (migrationVectors() as $offset => $vector)
+		{
+			$insert->execute(['product_id' => ($offset % 2) + 1, 'barcode' => $vector['value']]);
+		}
+
+		$sqlExpression = GrocyAiGtin::CanonicalSqlExpression('barcode');
+		$rows = $pdo->query('SELECT barcode, ' . $sqlExpression . ' AS canonical_gtin FROM product_barcodes ORDER BY id')->fetchAll(PDO::FETCH_ASSOC);
+		foreach ($rows as $row)
+		{
+			checkBarcode(
+				$row['canonical_gtin'] === GrocyAiGtin::CanonicalOrNull($row['barcode']),
+				'Generated SQLite and PHP predicates agree for ' . $row['barcode']
+			);
+		}
+
+		$beforeHash = barcodeRowsHash($pdo);
+		executeExactMigration($pdo);
+		checkBarcode(barcodeRowsHash($pdo) === $beforeHash, 'Successful migration changes no pre-existing barcode row');
+		$indexSql = (string)$pdo->query("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'ix_product_barcodes_canonical_gtin'")->fetchColumn();
+		checkBarcode(str_contains($indexSql, $sqlExpression), 'The exact migration index uses the shared generated SQL predicate');
+		$insert->execute(['product_id' => 1, 'barcode' => '012345678907']);
+		$insert->execute(['product_id' => 2, 'barcode' => '00012345678907']);
+		$insert->execute(['product_id' => 1, 'barcode' => 'shelf-B-123']);
+		expectBarcodeException(
+			fn() => $insert->execute(['product_id' => 2, 'barcode' => '00012345678905']),
+			PDOException::class,
+			'Only a checksum-valid canonical equivalent conflicts after migration'
+		);
+	}
+	finally
+	{
+		$pdo = null;
+		@unlink($tempPath);
+	}
+
+	$collisionPath = tempnam(sys_get_temp_dir(), 'grocy-ai-migration-collision-');
+	if ($collisionPath === false)
+	{
+		throw new RuntimeException('Unable to allocate the collision migration fixture');
+	}
+	try
+	{
+		$pdo = new PDO('sqlite:' . $collisionPath);
+		$pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+		$pdo->exec('CREATE TABLE product_barcodes (id INTEGER PRIMARY KEY, product_id INTEGER NOT NULL, barcode TEXT NOT NULL)');
+		$pdo->exec('CREATE UNIQUE INDEX ix_product_barcodes ON product_barcodes (barcode)');
+		$pdo->exec("INSERT INTO product_barcodes (product_id, barcode) VALUES (10, '012345678905'), (20, '00012345678905'), (30, 'shelf-A-123')");
+		$beforeHash = barcodeRowsHash($pdo);
+		expectBarcodeException(fn() => executeExactMigration($pdo), RuntimeException::class, 'Pre-existing valid collision blocks migration');
+		checkBarcode(barcodeRowsHash($pdo) === $beforeHash, 'Blocked migration deletes and reassigns no rows');
+		checkBarcode(
+			(int)$pdo->query("SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'ix_product_barcodes_canonical_gtin'")->fetchColumn() === 0,
+			'Blocked migration creates no canonical index'
+		);
+	}
+	finally
+	{
+		$pdo = null;
+		@unlink($collisionPath);
+	}
+}
+
 if (($argv[1] ?? null) === '--case')
 {
-	if (($argv[2] ?? null) !== 'gtin.shared_predicate')
+	if (($argv[2] ?? null) === 'gtin.shared_predicate')
+	{
+		assertSharedPredicate();
+	}
+	elseif (($argv[2] ?? null) === 'gtin.migration_valid_only')
+	{
+		assertSharedPredicate();
+		assertMigrationValidOnly();
+	}
+	else
 	{
 		fwrite(STDERR, 'Unknown test case' . PHP_EOL);
 		exit(2);
 	}
-	assertSharedPredicate();
 	if ($failures > 0)
 	{
 		exit(1);
