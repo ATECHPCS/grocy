@@ -30,10 +30,24 @@
 	var activeRequest = null;
 	var currentDiagnostic = null;
 	var reviewState = null;
+	var FIELD_LABELS = {
+		name: 'Name',
+		brand: 'Brand',
+		package_size: 'Package size',
+		product_group: 'Product group',
+		quantity_unit: 'Quantity unit',
+		food_type: 'Food type',
+		product_image: 'Product image'
+	};
 
 	function localized(name, fallback)
 	{
 		return root.dataset[name] || fallback;
+	}
+
+	function translated(value)
+	{
+		return typeof window.__t === 'function' ? window.__t(value) : value;
 	}
 
 	function textElement(tag, className, value)
@@ -108,6 +122,18 @@
 	}
 
 	var ui = ensureUi();
+	var reviewUi = {
+		section: document.getElementById('grocy-ai-field-review'),
+		rows: document.getElementById('grocy-ai-field-rows'),
+		selectionStatus: document.getElementById('grocy-ai-selection-status'),
+		reviewButton: document.getElementById('grocy-ai-review-selected-button'),
+		diff: document.getElementById('grocy-ai-final-diff'),
+		diffHeading: document.getElementById('grocy-ai-final-diff-heading'),
+		diffList: document.getElementById('grocy-ai-final-diff-list'),
+		backButton: document.getElementById('grocy-ai-back-to-suggestions-button'),
+		stageButton: document.getElementById('grocy-ai-stage-selected-button'),
+		stagingFeedback: document.getElementById('grocy-ai-staging-feedback')
+	};
 
 	function normalizeGtin(value)
 	{
@@ -397,7 +423,16 @@
 	function clearResults()
 	{
 		reviewState = null;
-		results.replaceChildren();
+		if (reviewUi.rows) reviewUi.rows.replaceChildren();
+		if (reviewUi.diffList) reviewUi.diffList.replaceChildren();
+		if (reviewUi.diff) reviewUi.diff.classList.add('d-none');
+		if (reviewUi.stagingFeedback)
+		{
+			reviewUi.stagingFeedback.textContent = '';
+			reviewUi.stagingFeedback.classList.add('d-none');
+		}
+		if (reviewUi.selectionStatus) reviewUi.selectionStatus.textContent = localized('selectionSummary', '%s changes selected').replace('%s', '0');
+		if (reviewUi.reviewButton) reviewUi.reviewButton.disabled = true;
 		results.classList.add('d-none');
 	}
 
@@ -457,22 +492,54 @@
 			&& !Number.isNaN(Date.parse(value));
 	}
 
+	function validText(value)
+	{
+		return typeof value === 'string' && value.trim() !== '' && value.length <= 500 && !/https?:\/\//i.test(value);
+	}
+
+	function validSource(source)
+	{
+		return hasExactKeys(source, ['id', 'label'])
+			&& ['openfoodfacts', 'bb-federation', 'searxng'].indexOf(source.id) !== -1
+			&& validText(source.label);
+	}
+
+	function validTarget(target)
+	{
+		return target === null || (hasExactKeys(target, ['kind', 'id', 'label'])
+			&& ['product_field', 'userfield', 'product_group', 'quantity_unit', 'food_type'].indexOf(target.kind) !== -1
+			&& Number.isInteger(target.id) && target.id > 0
+			&& validText(target.label));
+	}
+
 	function validSuggestion(suggestion)
 	{
 		return hasExactKeys(suggestion, ['id', 'field', 'value', 'display_value', 'source', 'confidence_band', 'reason_code', 'evidence_kind', 'retrieved_at', 'source_updated_at', 'target'])
-			&& typeof suggestion.id === 'string'
+			&& validText(suggestion.id)
 			&& ['name', 'brand', 'package_size', 'product_group', 'quantity_unit', 'food_type'].indexOf(suggestion.field) !== -1
-			&& typeof suggestion.value === 'string' && suggestion.value !== ''
-			&& typeof suggestion.display_value === 'string' && suggestion.display_value !== ''
-			&& hasExactKeys(suggestion.source, ['id', 'label'])
-			&& ['openfoodfacts', 'bb-federation', 'searxng'].indexOf(suggestion.source.id) !== -1
-			&& typeof suggestion.source.label === 'string' && suggestion.source.label !== ''
+			&& validText(suggestion.value)
+			&& validText(suggestion.display_value)
+			&& validSource(suggestion.source)
 			&& ['high', 'medium', 'low', 'unverified'].indexOf(suggestion.confidence_band) !== -1
 			&& ['canonical_structured_match', 'mapped_local_option', 'inferred_provider_data', 'unverified_search_result'].indexOf(suggestion.reason_code) !== -1
 			&& ['structured_direct', 'mapped', 'inferred', 'search'].indexOf(suggestion.evidence_kind) !== -1
 			&& validTimestamp(suggestion.retrieved_at)
 			&& (suggestion.source_updated_at === null || validTimestamp(suggestion.source_updated_at))
-			&& suggestion.target === null;
+			&& validTarget(suggestion.target);
+	}
+
+	function validMedia(media)
+	{
+		return hasExactKeys(media, ['id', 'kind', 'thumbnail_handle', 'full_handle', 'source', 'confidence_band', 'reason_code', 'evidence_kind', 'retrieved_at'])
+			&& validText(media.id)
+			&& media.kind === 'front_package'
+			&& typeof media.thumbnail_handle === 'string' && /^[A-Za-z0-9_-]{20,200}$/.test(media.thumbnail_handle)
+			&& typeof media.full_handle === 'string' && /^[A-Za-z0-9_-]{20,200}$/.test(media.full_handle)
+			&& validSource(media.source)
+			&& ['high', 'medium', 'low', 'unverified'].indexOf(media.confidence_band) !== -1
+			&& media.reason_code === 'canonical_structured_front_image'
+			&& ['structured_direct', 'mapped', 'inferred', 'search'].indexOf(media.evidence_kind) !== -1
+			&& validTimestamp(media.retrieved_at);
 	}
 
 	function validContract(data, requestedGtin)
@@ -490,92 +557,413 @@
 		{
 			return false;
 		}
-		if (data.media.length !== 0 || /https?:\/\//i.test(JSON.stringify(data))) return false;
+		if (/https?:\/\//i.test(JSON.stringify(data))) return false;
 		var ids = {};
-		return data.suggestions.every(function (suggestion)
+		var suggestionsValid = data.suggestions.every(function (suggestion)
 		{
 			if (!validSuggestion(suggestion) || ids[suggestion.id]) return false;
 			ids[suggestion.id] = true;
 			return true;
 		});
+		var mediaValid = data.media.every(function (media)
+		{
+			if (!validMedia(media) || ids[media.id]) return false;
+			ids[media.id] = true;
+			return true;
+		});
+		var warningsValid = data.warnings.every(function (warning)
+		{
+			return ['image_search_unavailable', 'no_structured_record', 'no_media', 'provider_timeout', 'provider_error'].indexOf(warning) !== -1;
+		});
+		return suggestionsValid && mediaValid && warningsValid;
 	}
 
 	function reasonLabel(reasonCode)
 	{
-		return {
+		return translated({
 			canonical_structured_match: 'Exact canonical barcode match',
 			mapped_local_option: 'Mapped to a Grocy option',
 			inferred_provider_data: 'Inferred from provider data',
-			unverified_search_result: 'Unverified search result'
-		}[reasonCode] || '';
+			unverified_search_result: 'Unverified search result',
+			canonical_structured_front_image: 'Front package image'
+		}[reasonCode] || '');
 	}
 
 	function confidenceLabel(confidenceBand)
 	{
-		return confidenceBand.charAt(0).toUpperCase() + confidenceBand.slice(1) + ' confidence';
+		return translated(confidenceBand.charAt(0).toUpperCase() + confidenceBand.slice(1) + ' confidence');
 	}
 
-	function renderNameReview(data)
+	function deepFreeze(value)
 	{
-		results.replaceChildren();
-		var suggestion = data.suggestions.find(function (candidate) { return candidate.field === 'name'; });
-		if (!suggestion)
-		{
-			results.classList.add('d-none');
-			return;
-		}
-		var currentValue = productNameInput ? productNameInput.value : '';
-		var automatic = currentValue.trim() === ''
-			&& suggestion.confidence_band === 'high'
-			&& suggestion.evidence_kind === 'structured_direct'
-			&& suggestion.reason_code === 'canonical_structured_match';
-		reviewState = { data: data, currentName: currentValue, selected: automatic, origin: automatic ? 'automatic' : null };
+		if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value;
+		Object.keys(value).forEach(function (key) { deepFreeze(value[key]); });
+		return Object.freeze(value);
+	}
 
-		var row = document.createElement('section');
-		row.className = 'grocy-ai-field-review';
-		row.dataset.grocyAiField = 'name';
-		var heading = textElement('h5', '', localized('reviewHeading', 'Review suggested fields'));
-		row.appendChild(heading);
-		var selectionLabel = document.createElement('label');
-		selectionLabel.className = 'custom-control custom-checkbox grocy-ai-selection-control';
+	function activeOption(control, id, label)
+	{
+		if (!control) return null;
+		return Array.from(control.options).find(function (option)
+		{
+			return option.value === String(id) && !option.disabled && option.textContent.trim() === label;
+		}) || null;
+	}
+
+	function brandControl(suggestion)
+	{
+		if (!suggestion.target || suggestion.target.kind !== 'userfield'
+			|| String(suggestion.target.id) !== root.dataset.brandTargetId
+			|| root.dataset.brandTargetName !== 'products.brand') return null;
+		var matches = Array.from(document.querySelectorAll('.userfield-input')).filter(function (control)
+		{
+			return control.dataset.userfieldName === root.dataset.brandTargetName && control.type === 'text';
+		});
+		return matches.length === 1 ? matches[0] : null;
+	}
+
+	function targetAdapter(suggestion)
+	{
+		var control = null;
+		var unavailable = '';
+		var stagedValue = suggestion.value;
+		if (suggestion.field === 'name' && suggestion.target === null)
+		{
+			control = productNameInput;
+		}
+		else if (suggestion.field === 'brand')
+		{
+			control = brandControl(suggestion);
+			unavailable = localized('noFieldMessage', 'No matching Grocy field is configured.');
+		}
+		else if (suggestion.field === 'package_size')
+		{
+			unavailable = localized('noFieldMessage', 'No matching Grocy field is configured.');
+		}
+		else if (suggestion.field === 'product_group')
+		{
+			control = document.getElementById('product_group_id');
+			if (!suggestion.target || suggestion.target.kind !== 'product_group'
+				|| !activeOption(control, suggestion.target.id, suggestion.display_value)) control = null;
+			stagedValue = suggestion.target ? String(suggestion.target.id) : '';
+			unavailable = localized('noOptionMessage', 'No matching Grocy option is available.');
+		}
+		else if (suggestion.field === 'quantity_unit')
+		{
+			control = document.getElementById('qu_id_stock');
+			if (!suggestion.target || suggestion.target.kind !== 'quantity_unit'
+				|| !activeOption(control, suggestion.target.id, suggestion.display_value)) control = null;
+			stagedValue = suggestion.target ? String(suggestion.target.id) : '';
+			unavailable = localized('noOptionMessage', 'No matching Grocy option is available.');
+		}
+		else if (suggestion.field === 'food_type')
+		{
+			unavailable = localized('noFoodTypeMessage', 'No local food type is configured.');
+		}
+
+		return {
+			control: control,
+			available: Boolean(control),
+			stagedValue: stagedValue,
+			unavailable: control ? '' : unavailable
+		};
+	}
+
+	function currentDisplay(row, value)
+	{
+		if (row.field === 'product_image') return value || translated('No picture');
+		if (value === '') return localized('blankLabel', 'Blank');
+		if (row.control && row.control.tagName === 'SELECT')
+		{
+			var option = row.control.options[row.control.selectedIndex];
+			return option ? option.textContent.trim() : value;
+		}
+		return value;
+	}
+
+	function selectionCount()
+	{
+		return reviewState ? Object.keys(reviewState.rows).filter(function (field) { return reviewState.rows[field].selected; }).length : 0;
+	}
+
+	function updateSelectionSummary()
+	{
+		var count = selectionCount();
+		reviewUi.selectionStatus.textContent = localized('selectionSummary', '%s changes selected').replace('%s', String(count));
+		reviewUi.reviewButton.disabled = count === 0;
+	}
+
+	function hideFinalDiff()
+	{
+		if (!reviewState) return;
+		reviewState.finalDiffVisible = false;
+		reviewUi.diff.classList.add('d-none');
+		reviewUi.diffList.replaceChildren();
+	}
+
+	function renderProvenance(container, suggestion)
+	{
+		container.appendChild(textElement('span', 'grocy-ai-source', suggestion.source.label));
+		container.appendChild(textElement('span', 'grocy-ai-confidence badge badge-' + (suggestion.confidence_band === 'high' ? 'success' : 'secondary'), confidenceLabel(suggestion.confidence_band)));
+		container.appendChild(textElement('span', 'grocy-ai-reason', reasonLabel(suggestion.reason_code)));
+		container.appendChild(textElement('span', 'grocy-ai-freshness', translated('Retrieved') + ' ' + new Date(suggestion.retrieved_at).toLocaleString()));
+		container.appendChild(textElement('span', 'grocy-ai-freshness', suggestion.source_updated_at === null
+			? localized('sourceUpdateUnavailable', 'Source update time unavailable')
+			: translated('Source updated') + ' ' + new Date(suggestion.source_updated_at).toLocaleString()));
+	}
+
+	function renderReviewRow(row)
+	{
+		var section = document.createElement('section');
+		section.className = 'grocy-ai-field-review';
+		section.dataset.grocyAiField = row.field;
+		var headingId = 'grocy-ai-' + row.field.replace(/_/g, '-') + '-heading';
+		var currentId = headingId + '-current';
+		var suggestedId = headingId + '-suggested';
+		var provenanceId = headingId + '-provenance';
+		var header = document.createElement('div');
+		header.className = 'grocy-ai-field-header';
+		var heading = textElement('h6', '', translated(FIELD_LABELS[row.field]));
+		heading.id = headingId;
+		header.appendChild(heading);
+		var selectionWrapper = document.createElement('div');
+		selectionWrapper.className = 'custom-control custom-checkbox grocy-ai-selection-control';
 		var selection = document.createElement('input');
 		selection.type = 'checkbox';
 		selection.className = 'custom-control-input';
-		selection.id = 'grocy-ai-use-name';
-		selection.checked = automatic;
-		selectionLabel.appendChild(selection);
-		var selectionText = textElement('span', 'custom-control-label', localized('selectionLabel', 'Use suggested value'));
-		selectionLabel.appendChild(selectionText);
-		row.appendChild(selectionLabel);
+		selection.id = 'grocy-ai-use-' + row.field.replace(/_/g, '-');
+		selection.checked = row.selected;
+		selection.disabled = !row.available;
+		selection.setAttribute('aria-labelledby', headingId + ' ' + selection.id + '-label');
+		selection.setAttribute('aria-describedby', currentId + ' ' + suggestedId + ' ' + provenanceId);
+		selectionWrapper.appendChild(selection);
+		var selectionLabel = textElement('label', 'custom-control-label', localized('selectionLabel', 'Use suggested value'));
+		selectionLabel.id = selection.id + '-label';
+		selectionLabel.htmlFor = selection.id;
+		selectionWrapper.appendChild(selectionLabel);
+		header.appendChild(selectionWrapper);
+		section.appendChild(header);
 
 		var comparison = document.createElement('div');
 		comparison.className = 'grocy-ai-comparison-grid';
 		var current = document.createElement('div');
+		current.className = 'grocy-ai-value-cell grocy-ai-current-value';
+		current.id = currentId;
 		current.appendChild(textElement('strong', '', localized('currentLabel', 'Current')));
-		current.appendChild(textElement('span', '', currentValue.trim() === '' ? 'Blank' : currentValue));
+		var currentValue = textElement('span', 'grocy-ai-value', currentDisplay(row, row.currentSnapshot));
+		current.appendChild(currentValue);
 		var suggested = document.createElement('div');
+		suggested.className = 'grocy-ai-value-cell grocy-ai-suggested-value';
+		suggested.id = suggestedId;
 		suggested.appendChild(textElement('strong', '', localized('suggestedLabel', 'Suggested')));
-		suggested.appendChild(textElement('span', '', suggestion.display_value));
-		suggested.appendChild(textElement('span', '', suggestion.source.label));
-		suggested.appendChild(textElement('span', '', confidenceLabel(suggestion.confidence_band)));
-		suggested.appendChild(textElement('span', '', reasonLabel(suggestion.reason_code)));
-		suggested.appendChild(textElement('span', '', 'Retrieved ' + new Date(suggestion.retrieved_at).toLocaleString()));
-		suggested.appendChild(textElement('span', '', suggestion.source_updated_at === null
-			? 'Source update time unavailable'
-			: 'Source updated ' + new Date(suggestion.source_updated_at).toLocaleString()));
+		suggested.appendChild(textElement('span', 'grocy-ai-value', row.suggestion.display_value));
+		var provenance = document.createElement('div');
+		provenance.className = 'grocy-ai-provenance';
+		provenance.id = provenanceId;
+		renderProvenance(provenance, row.suggestion);
+		suggested.appendChild(provenance);
 		comparison.appendChild(current);
 		comparison.appendChild(suggested);
-		row.appendChild(comparison);
-		var origin = textElement('div', 'grocy-ai-selection-origin', automatic ? localized('automaticOrigin', 'Preselected — blank field and exact structured match') : '');
-		row.appendChild(origin);
+		section.appendChild(comparison);
+
+		var origin = textElement('div', 'grocy-ai-selection-origin', row.origin === 'automatic' ? localized('automaticOrigin', 'Preselected — blank field and exact structured match') : '');
+		section.appendChild(origin);
+		var unavailable = textElement('div', 'grocy-ai-unavailable text-muted', row.unavailable);
+		if (!row.unavailable) unavailable.classList.add('d-none');
+		section.appendChild(unavailable);
+		var stale = textElement('div', 'grocy-ai-stale alert alert-warning d-none', '');
+		stale.setAttribute('role', 'alert');
+		section.appendChild(stale);
+
+		row.element = section;
+		row.checkbox = selection;
+		row.currentValueElement = currentValue;
+		row.originElement = origin;
+		row.staleElement = stale;
 		selection.addEventListener('change', function ()
 		{
-			reviewState.selected = selection.checked;
-			reviewState.origin = selection.checked ? 'explicit' : null;
+			row.selected = selection.checked;
+			row.origin = selection.checked ? 'explicit' : null;
+			row.stale = false;
+			stale.textContent = '';
+			stale.classList.add('d-none');
 			origin.textContent = selection.checked ? localized('explicitOrigin', 'Selected by you') : '';
+			hideFinalDiff();
+			updateSelectionSummary();
 		});
-		results.appendChild(row);
+		reviewUi.rows.appendChild(section);
+	}
+
+	function mediaReviewRow(media)
+	{
+		return {
+			field: 'product_image',
+			suggestion: {
+				display_value: translated('Front package image'),
+				source: media.source,
+				confidence_band: media.confidence_band,
+				reason_code: media.reason_code,
+				retrieved_at: media.retrieved_at,
+				source_updated_at: null
+			},
+			control: productPictureInput,
+			available: false,
+			unavailable: '',
+			stagedValue: '',
+			currentSnapshot: productPictureInput && productPictureInput.files && productPictureInput.files.length ? productPictureInput.files[0].name : '',
+			selected: false,
+			origin: null,
+			stale: false
+		};
+	}
+
+	function renderReview(data)
+	{
+		clearResults();
+		var frozenData = deepFreeze(data);
+		reviewState = { data: frozenData, rows: {}, finalDiffVisible: false, staged: false };
+		frozenData.suggestions.forEach(function (suggestion)
+		{
+			var adapter = targetAdapter(suggestion);
+			var currentValue = adapter.control ? adapter.control.value : '';
+			var automatic = adapter.available && currentValue === ''
+				&& suggestion.confidence_band === 'high'
+				&& suggestion.evidence_kind === 'structured_direct'
+				&& suggestion.reason_code === 'canonical_structured_match';
+			var row = {
+				field: suggestion.field,
+				suggestion: suggestion,
+				control: adapter.control,
+				available: adapter.available,
+				unavailable: adapter.unavailable,
+				stagedValue: adapter.stagedValue,
+				currentSnapshot: currentValue,
+				selected: automatic,
+				origin: automatic ? 'automatic' : null,
+				stale: false
+			};
+			reviewState.rows[row.field] = row;
+			renderReviewRow(row);
+		});
+		if (frozenData.media.length > 0)
+		{
+			var imageRow = mediaReviewRow(frozenData.media[0]);
+			reviewState.rows.product_image = imageRow;
+			renderReviewRow(imageRow);
+		}
+		if (Object.keys(reviewState.rows).length === 0)
+		{
+			clearResults();
+			return;
+		}
+		updateSelectionSummary();
 		results.classList.remove('d-none');
+	}
+
+	function selectedRows()
+	{
+		return Object.keys(reviewState.rows).map(function (field) { return reviewState.rows[field]; }).filter(function (row) { return row.selected; });
+	}
+
+	function revalidateSelectedRows()
+	{
+		var firstStale = null;
+		selectedRows().forEach(function (row)
+		{
+			if (!row.control || row.field === 'product_image') return;
+			var liveValue = row.control.value;
+			if (liveValue === row.currentSnapshot) return;
+			row.currentSnapshot = liveValue;
+			row.currentValueElement.textContent = currentDisplay(row, liveValue);
+			row.selected = false;
+			row.origin = null;
+			row.stale = true;
+			row.checkbox.checked = false;
+			row.originElement.textContent = '';
+			row.staleElement.textContent = localized('staleFieldMessage', 'This field changed after the search. Review it again before staging.');
+			row.staleElement.classList.remove('d-none');
+			if (!firstStale) firstStale = row;
+		});
+		updateSelectionSummary();
+		return firstStale;
+	}
+
+	function renderDiffList()
+	{
+		reviewUi.diffList.replaceChildren();
+		var rows = selectedRows();
+		if (rows.length === 0)
+		{
+			var empty = document.createElement('div');
+			empty.className = 'alert alert-secondary';
+			empty.appendChild(textElement('h6', '', localized('emptySelectionHeading', 'No changes selected')));
+			empty.appendChild(textElement('span', '', localized('emptySelectionBody', 'Select one or more suggestions, or continue editing the product manually.')));
+			reviewUi.diffList.appendChild(empty);
+			return;
+		}
+		rows.forEach(function (row)
+		{
+			var item = document.createElement('section');
+			item.className = 'grocy-ai-diff-item';
+			item.dataset.grocyAiDiffField = row.field;
+			item.appendChild(textElement('h6', '', translated(FIELD_LABELS[row.field])));
+			var grid = document.createElement('div');
+			grid.className = 'grocy-ai-diff-grid';
+			var current = document.createElement('div');
+			current.className = 'grocy-ai-value-cell';
+			current.appendChild(textElement('strong', '', localized('currentLabel', 'Current')));
+			current.appendChild(textElement('span', 'grocy-ai-value', currentDisplay(row, row.currentSnapshot)));
+			var suggested = document.createElement('div');
+			suggested.className = 'grocy-ai-value-cell';
+			suggested.appendChild(textElement('strong', '', localized('suggestedLabel', 'Suggested')));
+			suggested.appendChild(textElement('span', 'grocy-ai-value', row.suggestion.display_value));
+			grid.appendChild(current);
+			grid.appendChild(suggested);
+			item.appendChild(grid);
+			item.appendChild(textElement('div', 'grocy-ai-diff-provenance', row.suggestion.source.label + ' · ' + (row.origin === 'automatic' ? translated('Preselected') : localized('explicitOrigin', 'Selected by you'))));
+			reviewUi.diffList.appendChild(item);
+		});
+	}
+
+	function openFinalDiff()
+	{
+		if (!reviewState || selectionCount() === 0) return;
+		var firstStale = revalidateSelectedRows();
+		renderDiffList();
+		reviewState.finalDiffVisible = true;
+		reviewUi.diff.classList.remove('d-none');
+		if (firstStale) firstStale.checkbox.focus();
+		else reviewUi.diffHeading.focus();
+	}
+
+	function backToSuggestions()
+	{
+		hideFinalDiff();
+		reviewUi.reviewButton.focus();
+	}
+
+	function stageSelectedRows()
+	{
+		if (!reviewState) return;
+		var firstStale = revalidateSelectedRows();
+		renderDiffList();
+		if (firstStale)
+		{
+			firstStale.checkbox.focus();
+			return;
+		}
+		selectedRows().forEach(function (row)
+		{
+			if (!row.control || row.field === 'product_image') return;
+			row.control.value = row.stagedValue;
+			row.control.dispatchEvent(new Event('input', { bubbles: true }));
+			row.control.dispatchEvent(new Event('change', { bubbles: true }));
+			row.currentSnapshot = row.stagedValue;
+		});
+		reviewState.staged = true;
+		reviewUi.stagingFeedback.textContent = localized('stagingSuccess', "Selected changes are staged in the form. Review the form, then use Grocy's Save button to save them.");
+		reviewUi.stagingFeedback.classList.remove('d-none');
+		updateSelectionSummary();
 	}
 
 	function companionUnavailable(data)
@@ -642,7 +1030,7 @@
 		var outcome = allowed(data.outcome, ['found', 'not_found', 'timeout', 'provider_error'], 'provider_error');
 		if (outcome === 'found')
 		{
-			renderNameReview(data);
+			renderReview(data);
 			terminal(request, 'success', data, false);
 		}
 		else if (outcome === 'not_found') terminal(request, 'not_found', data, false);
@@ -708,11 +1096,10 @@
 
 	function lifecycleCancel(reason)
 	{
-		if (!activeRequest) return;
-		invalidateActiveRequest(reason);
+		if (activeRequest) invalidateActiveRequest(reason);
 		clearResults();
 		hideDiagnostics();
-		renderState('ready');
+		if (validateGtin(upcInput.value).valid) renderState('ready');
 	}
 
 	function showCameraUnavailable()
@@ -798,6 +1185,9 @@
 	}
 
 	searchButton.addEventListener('click', function () { search('search'); });
+	if (reviewUi.reviewButton) reviewUi.reviewButton.addEventListener('click', openFinalDiff);
+	if (reviewUi.backButton) reviewUi.backButton.addEventListener('click', backToSuggestions);
+	if (reviewUi.stageButton) reviewUi.stageButton.addEventListener('click', stageSelectedRows);
 	ui.retryButton.addEventListener('click', function () { search('retry'); });
 	cancelButton.addEventListener('click', cancelSearch);
 	ui.copyButton.addEventListener('click', copyDiagnostic);

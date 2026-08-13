@@ -110,44 +110,174 @@ details.grocy-ai-diagnostics:not([open]) > .grocy-ai-diagnostic-body {
 	box-shadow: 0 0 0 .2rem rgba(220, 53, 69, .25);
 }
 
-.grocy-ai-summary {
+.grocy-ai-results {
 	display: grid;
-	gap: .25rem;
-}
-
-.grocy-ai-images {
-	display: grid;
-	grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
-	gap: .75rem;
-}
-
-.grocy-ai-image-candidate {
-	display: flex;
-	flex-direction: column;
-	gap: .35rem;
+	gap: 24px;
 	min-width: 0;
 }
 
-.grocy-ai-image-candidate-selected {
-	border-color: var(--success);
-	box-shadow: 0 0 0 .2rem rgba(40, 167, 69, .25);
+.grocy-ai-review-section > h5,
+.grocy-ai-final-diff > h5 {
+	font-size: 20px;
+	font-weight: 500;
+	line-height: 1.2;
+	margin: 0 0 16px;
 }
 
-.grocy-ai-image-candidate > a {
+.grocy-ai-field-rows,
+#grocy-ai-final-diff-list {
+	display: grid;
+	gap: 16px;
+}
+
+.grocy-ai-field-review,
+.grocy-ai-diff-item {
+	border: 1px solid #dee2e6;
+	padding: 16px;
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+
+.grocy-ai-field-header {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin-bottom: 8px;
+}
+
+.grocy-ai-field-header h6,
+.grocy-ai-diff-item h6 {
+	font-size: 16px;
+	font-weight: 500;
+	line-height: 1.5;
+	margin: 0;
+}
+
+.grocy-ai-selection-control,
+.grocy-ai-selection-control .custom-control-label {
+	display: flex;
+	align-items: center;
+	min-height: 44px;
+}
+
+.grocy-ai-selection-control .custom-control-label {
+	cursor: pointer;
+	padding-right: 8px;
+}
+
+.grocy-ai-selection-control .custom-control-input:disabled + .custom-control-label {
+	cursor: not-allowed;
+}
+
+.grocy-ai-comparison-grid,
+.grocy-ai-diff-grid {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	min-width: 0;
+}
+
+.grocy-ai-value-cell {
+	background: #fff;
+	border: 1px solid #dee2e6;
+	min-width: 0;
+	padding: 16px;
+	overflow-wrap: anywhere;
+}
+
+.grocy-ai-current-value {
+	background: #f8f9fa;
+}
+
+.grocy-ai-value-cell > strong,
+.grocy-ai-value-cell > span,
+.grocy-ai-provenance > span {
 	display: block;
 }
 
-.grocy-ai-image-candidate img {
-	width: 100%;
-	height: 120px;
-	object-fit: contain;
-	background: #fff;
+.grocy-ai-value {
+	font-size: 16px;
+	line-height: 1.5;
 }
 
-.grocy-ai-image-source {
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
+.grocy-ai-provenance {
+	display: grid;
+	gap: 4px;
+	font-size: 14px;
+	line-height: 1.5;
+	margin-top: 8px;
+	min-width: 0;
+}
+
+.grocy-ai-confidence {
+	justify-self: start;
+	font-size: 14px;
+	font-weight: 400;
+	white-space: normal;
+}
+
+.grocy-ai-selection-origin,
+.grocy-ai-unavailable,
+.grocy-ai-diff-provenance {
+	font-size: 14px;
+	line-height: 1.5;
+	margin-top: 8px;
+	overflow-wrap: anywhere;
+}
+
+.grocy-ai-selection-origin:not(:empty)::before {
+	content: "\2713";
+	margin-right: 4px;
+}
+
+.grocy-ai-stale {
+	font-size: 16px;
+	line-height: 1.5;
+	margin: 8px 0 0;
+}
+
+.grocy-ai-selection-status {
+	font-size: 16px;
+	line-height: 1.5;
+}
+
+#grocy-ai-review-selected-button,
+#grocy-ai-back-to-suggestions-button,
+#grocy-ai-stage-selected-button {
+	min-height: 44px;
+}
+
+.grocy-ai-final-diff {
+	background: #f8f9fa;
+	border: 1px solid #dee2e6;
+	padding: 16px;
+	min-width: 0;
+}
+
+#grocy-ai-staging-feedback {
+	font-size: 16px;
+	line-height: 1.5;
+	margin: 0;
+}
+
+.grocy-ai-review-section > h5:focus,
+.grocy-ai-final-diff > h5:focus,
+.grocy-ai-selection-control .custom-control-input:focus + .custom-control-label {
+	outline: 2px solid var(--primary);
+	outline-offset: 2px;
+}
+
+.night-mode .grocy-ai-field-review,
+.night-mode .grocy-ai-diff-item,
+.night-mode .grocy-ai-value-cell,
+.night-mode .grocy-ai-final-diff {
+	background: inherit;
+	border-color: #6c757d;
+}
+
+.night-mode .grocy-ai-current-value {
+	background: rgba(108, 117, 125, .2);
 }
 
 @media (max-width: 575.98px) {
@@ -163,6 +293,19 @@ details.grocy-ai-diagnostics:not([open]) > .grocy-ai-diagnostic-body {
 		.grocy-ai-results {
 		max-width: 100%;
 		min-width: 0;
+	}
+
+	.grocy-ai-field-review,
+	.grocy-ai-diff-item,
+	.grocy-ai-value-cell,
+	.grocy-ai-final-diff {
+		padding: 8px;
+	}
+
+	#grocy-ai-review-selected-button,
+	#grocy-ai-back-to-suggestions-button,
+	#grocy-ai-stage-selected-button {
+		width: 100%;
 	}
 }
 

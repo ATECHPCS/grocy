@@ -92,7 +92,11 @@ Expected contract-v2 response:
 
 Grocy preserves the raw response until a duplicate-aware lexical walk has rejected repeated member names at every object depth. It then validates exact version, members, enums, types, IDs, timestamps, targets, provenance, and unique IDs as one all-or-nothing boundary. Any malformed, unknown, duplicate, URL-bearing, nutrition, allergen, dietary, or medical content becomes the single redacted `contract_invalid` recovery state; no partial suggestion survives.
 
-Contract v2 contains no external image URL or provider dictionary. Secure media is represented only by future short-lived opaque handles and authenticated same-origin routes. The first v2 slice renders a direct structured name suggestion beside the current value and visibly preselects it only when the current name is blank. Selection is transient and reversible; search and review make zero mutation calls, and Grocy's unchanged normal Save remains the sole persistence authority.
+Contract v2 contains no external image URL or provider dictionary. Secure media is represented only by future short-lived opaque handles and authenticated same-origin routes. The review renders name, brand, package size, product group, quantity unit, food type, and product image as independent current/suggested decisions with field-local provenance. Only a blank native destination backed by high-confidence direct structured canonical evidence starts selected. Mapped, inferred, search, missing-target, inactive-target, whitespace, and non-empty cases require an explicit decision or remain disabled.
+
+The only Phase 2 brand destination is the revalidated `products.brand` single-line product userfield. Package size and food type remain visible evidence with no destination; this module does not create userfields or a Phase 3 taxonomy surrogate. Product-group and quantity-unit suggestions must name an active local option. Nutrition Facts, allergen, dietary, and medical members remain rejected and deferred.
+
+Selection state, captured current values, and the selected-only final diff are transient. The browser re-reads each native control before opening the diff and again before staging. A changed value is marked `Needs review`, removed from the diff, and cannot stage until the user explicitly selects it against the new current value. `Stage selected changes` dispatches only local native input/change behavior for selected live rows and makes no API request. Barcode attachment remains assigned to the normal-Save handoff slice, and secure image-file staging remains assigned to the secure-media slice. Grocy's unchanged normal Save buttons are the sole persistence authority.
 
 ## Diagnostic and privacy contract
 
@@ -102,7 +106,7 @@ The product-form JavaScript and CSS query token is the grocy_AI `module_version`
 
 Grocy validates contract-v2 diagnostics as the single owned trace ID. The browser still creates its closed local diagnostic report without copying raw response fields. Diagnostics and status never contain GTINs, product or inventory values, service URLs, request/response headers, credentials, cookies, payload bodies, image handles, or raw exception text.
 
-Enrichment and diagnostics remain authenticated GET/read operations. They do not write database rows, files, product data, barcodes, stock, or inventory state. Suggested names and selected images remain previews until the user invokes Grocy's existing Save workflow.
+Enrichment and diagnostics remain authenticated GET/read operations. Search, review, selection, final-diff display, staleness handling, and local form staging do not write database rows, files, product data, barcodes, categories, conversions, stock, or inventory state. Unselected controls receive no value or dirty event. Suggested fields and image evidence remain review state until the user invokes Grocy's existing Save workflow.
 
 Run the standalone module checks with:
 

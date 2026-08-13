@@ -55,12 +55,12 @@ const sevenFamilyEnvelope = {
 	suggestions: [
 		suggestion('name', 'Fixture rolled oats', { sourceUpdatedAt: '2026-08-12T10:30:00Z' }),
 		suggestion('brand', 'Fixture Farms', { target: { kind: 'userfield', id: 27, label: 'Brand' } }),
-		suggestion('package_size', '18 oz'),
-		suggestion('product_group', '4', {
-			displayValue: 'Breakfast foods',
+		suggestion('package_size', '18 oz <img src=x onerror="window.__providerCanary=1">'),
+		suggestion('product_group', '9', {
+			displayValue: 'Inactive group',
 			reasonCode: 'mapped_local_option',
 			evidenceKind: 'mapped',
-			target: { kind: 'product_group', id: 4, label: 'Breakfast foods' }
+			target: { kind: 'product_group', id: 9, label: 'Inactive group' }
 		}),
 		suggestion('quantity_unit', '5', {
 			displayValue: 'Package',
@@ -251,15 +251,30 @@ test('@enr05 seven-family final diff @enr06 @enr09 is independent, stale-safe, s
 	await expect(page.locator('[data-grocy-ai-field="name"]')).toContainText('Source updated');
 	await expect(page.locator('[data-grocy-ai-field="brand"]')).toContainText('Source update time unavailable');
 	await expect(page.locator('[data-grocy-ai-field="package_size"]')).toContainText('No matching Grocy field is configured.');
+	await expect(page.locator('[data-grocy-ai-field="package_size"] img')).toHaveCount(0);
+	expect(await page.evaluate(function () { return window.__providerCanary || 0; })).toBe(0);
 	await expect(page.locator('[data-grocy-ai-field="food_type"]')).toContainText('No local food type is configured.');
+	await expect(page.locator('[data-grocy-ai-field="product_group"]')).toContainText('No matching Grocy option is available.');
 	await expect(page.locator('[data-grocy-ai-field="package_size"] input[type="checkbox"]')).toBeDisabled();
 	await expect(page.locator('[data-grocy-ai-field="food_type"] input[type="checkbox"]')).toBeDisabled();
+	await expect(page.locator('[data-grocy-ai-field="product_group"] input[type="checkbox"]')).toBeDisabled();
 	await expect(page.locator('[data-grocy-ai-field="product_image"] input[type="checkbox"]')).toBeDisabled();
-
+	for (const control of [
+		page.locator('#grocy-ai-use-name-label'),
+		page.locator('#grocy-ai-use-brand-label'),
+		page.locator('#grocy-ai-review-selected-button')
+	])
+	{
+		const box = await control.boundingBox();
+		expect(box).not.toBeNull();
+		expect(box.width).toBeGreaterThanOrEqual(44);
+		expect(box.height).toBeGreaterThanOrEqual(44);
+	}
 	const nameSelection = page.locator('[data-grocy-ai-field="name"] input[type="checkbox"]');
 	const brandSelection = page.locator('[data-grocy-ai-field="brand"] input[type="checkbox"]');
 	const groupSelection = page.locator('[data-grocy-ai-field="product_group"] input[type="checkbox"]');
 	const unitSelection = page.locator('[data-grocy-ai-field="quantity_unit"] input[type="checkbox"]');
+	await expect(nameSelection).toHaveAttribute('aria-describedby', /grocy-ai-name-heading-current.*grocy-ai-name-heading-suggested.*grocy-ai-name-heading-provenance/);
 	await expect(nameSelection).toBeChecked();
 	await expect(brandSelection).toBeChecked();
 	await expect(groupSelection).not.toBeChecked();
@@ -299,7 +314,8 @@ test('@enr05 seven-family final diff @enr06 @enr09 is independent, stale-safe, s
 	expect(await page.locator('#qu_id_stock').inputValue()).toBe('5');
 	expect(await page.locator('#product_group_id').inputValue()).toBe('2');
 	await expect(page.locator('#fixture-brand')).toHaveClass(/is-dirty/);
-	await expect(page.locator('.save-product-button')).toBeEnabled();
+	await expect(page.locator('.save-product-button').first()).toBeEnabled();
+	await expect(page.locator('.save-product-button').last()).toBeEnabled();
 
 	const counters = await page.evaluate(function () { return window.__fixtureCounters; });
 	expectZeroWrites(counters);
