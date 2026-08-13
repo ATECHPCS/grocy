@@ -948,6 +948,8 @@ $grocyAiAssetVersion = '2.1.0';
 		@endphp
 		<div class="row @if($mode == 'edit') mt-5 @endif permission-MASTER_DATA_EDIT"
 			id="grocy-ai-product-enrichment"
+			data-current-product-id="@if($mode === 'edit'){{ $product->id }}@endif"
+			data-product-route-template="{{ $U('/product/__PRODUCT_ID__') }}"
 			data-brand-target-id="@if($grocyAiBrandTarget !== null){{ $grocyAiBrandTarget->id }}@endif"
 			data-brand-target-name="@if($grocyAiBrandTarget !== null){{ $grocyAiBrandTarget->name }}@endif"
 			data-brand-target-label="@if($grocyAiBrandTarget !== null){{ $grocyAiBrandTarget->caption }}@endif"
@@ -973,6 +975,14 @@ $grocyAiAssetVersion = '2.1.0';
 			data-back-action="{{ $__t('Back to suggestions') }}"
 			data-staging-success="{{ $__t('Selected changes are staged in the form. Review the form, then use Grocy\'s Save button to save them.') }}"
 			data-stale-field-message="{{ $__t('This field changed after the search. Review it again before staging.') }}"
+			data-scanned-barcode-label="{{ $__t('Scanned barcode') }}"
+			data-equivalents-label="{{ $__t('Canonical equivalents checked') }}"
+			data-unused-barcode-message="{{ $__t('This barcode is not assigned in Grocy.') }}"
+			data-staged-barcode-label="{{ $__t('Ready to add on Save') }}"
+			data-remove-staged-barcode="{{ $__t('Remove staged barcode') }}"
+			data-owned-other-message="{{ $__t('This barcode already belongs to an existing product.') }}"
+			data-owned-current-message="{{ $__t('This barcode is already attached to this product.') }}"
+			data-open-existing-product="{{ $__t('Open existing product') }}"
 			data-ready-message="{{ $__t('GTIN ready.') }}"
 			data-busy-message="{{ $__t('Searching product details…') }}"
 			data-success-heading="{{ $__t('Product details found') }}"
@@ -1068,6 +1078,26 @@ $grocyAiAssetVersion = '2.1.0';
 						<div class="grocy-ai-results mt-3 d-none"
 							id="grocy-ai-results"
 							aria-label="{{ $__t('Product enrichment preview') }}">
+							<section class="grocy-ai-barcode-ownership"
+								id="grocy-ai-barcode-ownership"
+								aria-labelledby="grocy-ai-barcode-heading">
+								<h5 id="grocy-ai-barcode-heading">{{ $__t('Barcode ownership') }}</h5>
+								<dl class="mb-0">
+									<dt>{{ $__t('Scanned barcode') }}</dt>
+									<dd id="grocy-ai-scanned-barcode"></dd>
+									<dt>{{ $__t('Canonical equivalents checked') }}</dt>
+									<dd id="grocy-ai-barcode-equivalents"></dd>
+								</dl>
+								<div id="grocy-ai-barcode-outcome"
+									role="status"
+									aria-live="polite"></div>
+								<a class="btn btn-primary d-none"
+									id="grocy-ai-open-existing-product"
+									href="#">{{ $__t('Open existing product') }}</a>
+								<button class="btn btn-outline-secondary d-none"
+									id="grocy-ai-remove-staged-barcode"
+									type="button">{{ $__t('Remove staged barcode') }}</button>
+							</section>
 							<section class="grocy-ai-review-section"
 								id="grocy-ai-field-review"
 								aria-labelledby="grocy-ai-review-heading">

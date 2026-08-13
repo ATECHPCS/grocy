@@ -134,6 +134,13 @@
 		stageButton: document.getElementById('grocy-ai-stage-selected-button'),
 		stagingFeedback: document.getElementById('grocy-ai-staging-feedback')
 	};
+	var barcodeUi = {
+		scanned: document.getElementById('grocy-ai-scanned-barcode'),
+		equivalents: document.getElementById('grocy-ai-barcode-equivalents'),
+		outcome: document.getElementById('grocy-ai-barcode-outcome'),
+		ownerLink: document.getElementById('grocy-ai-open-existing-product'),
+		removeButton: document.getElementById('grocy-ai-remove-staged-barcode')
+	};
 
 	function normalizeGtin(value)
 	{
@@ -423,6 +430,15 @@
 	function clearResults()
 	{
 		reviewState = null;
+		if (barcodeUi.scanned) barcodeUi.scanned.textContent = '';
+		if (barcodeUi.equivalents) barcodeUi.equivalents.textContent = '';
+		if (barcodeUi.outcome) barcodeUi.outcome.replaceChildren();
+		if (barcodeUi.ownerLink)
+		{
+			barcodeUi.ownerLink.removeAttribute('href');
+			barcodeUi.ownerLink.classList.add('d-none');
+		}
+		if (barcodeUi.removeButton) barcodeUi.removeButton.classList.add('d-none');
 		if (reviewUi.rows) reviewUi.rows.replaceChildren();
 		if (reviewUi.diffList) reviewUi.diffList.replaceChildren();
 		if (reviewUi.diff) reviewUi.diff.classList.add('d-none');
@@ -544,14 +560,29 @@
 
 	function validContract(data, requestedGtin)
 	{
+		var barcodeKeys = data && data.barcode && typeof data.barcode === 'object' && !Array.isArray(data.barcode)
+			? Object.keys(data.barcode).sort().join('|')
+			: '';
+		var requiredBarcodeKeys = ['scanned_gtin', 'canonical_gtin', 'equivalents_checked', 'status', 'owner_product_id'].sort().join('|');
+		var extendedBarcodeKeys = ['scanned_gtin', 'canonical_gtin', 'equivalents_checked', 'status', 'owner_product_id', 'owner_label'].sort().join('|');
 		if (!hasExactKeys(data, ['contract_version', 'outcome', 'barcode', 'suggestions', 'media', 'warnings', 'diagnostics'])
 			|| data.contract_version !== 2
 			|| ['found', 'not_found', 'timeout', 'provider_error'].indexOf(data.outcome) === -1
-			|| !hasExactKeys(data.barcode, ['scanned_gtin', 'canonical_gtin', 'equivalents_checked', 'status', 'owner_product_id'])
+			|| [requiredBarcodeKeys, extendedBarcodeKeys].indexOf(barcodeKeys) === -1
 			|| data.barcode.scanned_gtin !== requestedGtin
 			|| !/^\d{14}$/.test(data.barcode.canonical_gtin)
-			|| !Array.isArray(data.barcode.equivalents_checked)
+			|| data.barcode.canonical_gtin !== requestedGtin.padStart(14, '0')
+			|| !Array.isArray(data.barcode.equivalents_checked) || data.barcode.equivalents_checked.length < 1 || data.barcode.equivalents_checked.length > 4
+			|| data.barcode.equivalents_checked.some(function (value) { return typeof value !== 'string' || [8, 12, 13, 14].indexOf(value.length) === -1 || !/^\d+$/.test(value); })
+			|| data.barcode.equivalents_checked.indexOf(requestedGtin) === -1
+			|| data.barcode.equivalents_checked.indexOf(data.barcode.canonical_gtin) === -1
 			|| ['unused', 'owned_current', 'owned_other'].indexOf(data.barcode.status) === -1
+			|| (data.barcode.status === 'unused' && data.barcode.owner_product_id !== null)
+			|| (data.barcode.status !== 'unused' && (!Number.isInteger(data.barcode.owner_product_id) || data.barcode.owner_product_id <= 0))
+			|| (data.barcode.status !== 'unused' && (!Array.isArray(data.suggestions) || !Array.isArray(data.media) || data.suggestions.length !== 0 || data.media.length !== 0))
+			|| (Object.prototype.hasOwnProperty.call(data.barcode, 'owner_label')
+				&& data.barcode.owner_label !== null
+				&& (typeof data.barcode.owner_label !== 'string' || data.barcode.owner_label.length > 120 || /https?:\/\//i.test(data.barcode.owner_label)))
 			|| !Array.isArray(data.suggestions) || !Array.isArray(data.media) || !Array.isArray(data.warnings)
 			|| !hasExactKeys(data.diagnostics, ['trace_id']) || !TRACE_ID_PATTERN.test(data.diagnostics.trace_id))
 		{
@@ -681,9 +712,70 @@
 		return value;
 	}
 
+	function trustedProductHref(productId)
+	{
+		if (!Number.isInteger(productId) || productId <= 0) return null;
+		var template = root.dataset.productRouteTemplate || '';
+		if (template.indexOf('__PRODUCT_ID__') === -1) return null;
+		try
+		{
+			var target = new URL(template.replace('__PRODUCT_ID__', String(productId)), window.location.origin);
+			if (target.origin !== window.location.origin) return null;
+			return target.pathname + target.search + target.hash;
+		}
+		catch (error)
+		{
+			return null;
+		}
+	}
+
+	function appendOutcomeText(message, className)
+	{
+		barcodeUi.outcome.appendChild(textElement('span', className || '', message));
+	}
+
+	function renderBarcodeOwnership(barcode)
+	{
+		barcodeUi.scanned.textContent = barcode.scanned_gtin;
+		barcodeUi.equivalents.textContent = barcode.equivalents_checked.join(', ');
+		barcodeUi.outcome.replaceChildren();
+		barcodeUi.ownerLink.removeAttribute('href');
+		barcodeUi.ownerLink.classList.add('d-none');
+		barcodeUi.removeButton.classList.add('d-none');
+		reviewState.stagedBarcode = null;
+
+		if (barcode.status === 'unused')
+		{
+			reviewState.stagedBarcode = barcode.scanned_gtin;
+			appendOutcomeText(localized('unusedBarcodeMessage', 'This barcode is not assigned in Grocy.'), 'grocy-ai-barcode-message');
+			appendOutcomeText(localized('stagedBarcodeLabel', 'Ready to add on Save'), 'badge badge-success grocy-ai-barcode-badge');
+			barcodeUi.removeButton.classList.remove('d-none');
+		}
+		else if (barcode.status === 'owned_current')
+		{
+			appendOutcomeText(localized('ownedCurrentMessage', 'This barcode is already attached to this product.'), 'grocy-ai-barcode-message');
+		}
+		else
+		{
+			appendOutcomeText(localized('ownedOtherMessage', 'This barcode already belongs to an existing product.'), 'grocy-ai-barcode-message');
+			if (barcode.owner_label)
+			{
+				appendOutcomeText(barcode.owner_label, 'grocy-ai-owner-label');
+			}
+			var href = trustedProductHref(barcode.owner_product_id);
+			if (href)
+			{
+				barcodeUi.ownerLink.href = href;
+				barcodeUi.ownerLink.classList.remove('d-none');
+			}
+		}
+	}
+
 	function selectionCount()
 	{
-		return reviewState ? Object.keys(reviewState.rows).filter(function (field) { return reviewState.rows[field].selected; }).length : 0;
+		if (!reviewState) return 0;
+		var fieldCount = Object.keys(reviewState.rows).filter(function (field) { return reviewState.rows[field].selected; }).length;
+		return fieldCount + (reviewState.stagedBarcode ? 1 : 0);
 	}
 
 	function updateSelectionSummary()
@@ -821,7 +913,8 @@
 	{
 		clearResults();
 		var frozenData = deepFreeze(data);
-		reviewState = { data: frozenData, rows: {}, finalDiffVisible: false, staged: false };
+		reviewState = { data: frozenData, rows: {}, stagedBarcode: null, finalDiffVisible: false, staged: false };
+		renderBarcodeOwnership(frozenData.barcode);
 		frozenData.suggestions.forEach(function (suggestion)
 		{
 			var adapter = targetAdapter(suggestion);
@@ -850,11 +943,6 @@
 			var imageRow = mediaReviewRow(frozenData.media[0]);
 			reviewState.rows.product_image = imageRow;
 			renderReviewRow(imageRow);
-		}
-		if (Object.keys(reviewState.rows).length === 0)
-		{
-			clearResults();
-			return;
 		}
 		updateSelectionSummary();
 		results.classList.remove('d-none');
@@ -892,7 +980,29 @@
 	{
 		reviewUi.diffList.replaceChildren();
 		var rows = selectedRows();
-		if (rows.length === 0)
+		if (reviewState.stagedBarcode)
+		{
+			var barcodeItem = document.createElement('section');
+			barcodeItem.className = 'grocy-ai-diff-item';
+			barcodeItem.dataset.grocyAiDiffField = 'barcode';
+			barcodeItem.appendChild(textElement('h6', '', translated('Barcode')));
+			var barcodeGrid = document.createElement('div');
+			barcodeGrid.className = 'grocy-ai-diff-grid';
+			var barcodeCurrent = document.createElement('div');
+			barcodeCurrent.className = 'grocy-ai-value-cell';
+			barcodeCurrent.appendChild(textElement('strong', '', localized('currentLabel', 'Current')));
+			barcodeCurrent.appendChild(textElement('span', 'grocy-ai-value', translated('Not attached')));
+			var barcodeSuggested = document.createElement('div');
+			barcodeSuggested.className = 'grocy-ai-value-cell';
+			barcodeSuggested.appendChild(textElement('strong', '', localized('suggestedLabel', 'Suggested')));
+			barcodeSuggested.appendChild(textElement('span', 'grocy-ai-value', reviewState.stagedBarcode));
+			barcodeGrid.appendChild(barcodeCurrent);
+			barcodeGrid.appendChild(barcodeSuggested);
+			barcodeItem.appendChild(barcodeGrid);
+			barcodeItem.appendChild(textElement('div', 'grocy-ai-diff-provenance', translated('Grocy ownership check') + ' · ' + localized('explicitOrigin', 'Selected by you')));
+			reviewUi.diffList.appendChild(barcodeItem);
+		}
+		if (rows.length === 0 && !reviewState.stagedBarcode)
 		{
 			var empty = document.createElement('div');
 			empty.className = 'alert alert-secondary';
@@ -963,6 +1073,17 @@
 		reviewState.staged = true;
 		reviewUi.stagingFeedback.textContent = localized('stagingSuccess', "Selected changes are staged in the form. Review the form, then use Grocy's Save button to save them.");
 		reviewUi.stagingFeedback.classList.remove('d-none');
+		updateSelectionSummary();
+	}
+
+	function removeStagedBarcode()
+	{
+		if (!reviewState || !reviewState.stagedBarcode) return;
+		reviewState.stagedBarcode = null;
+		barcodeUi.removeButton.classList.add('d-none');
+		barcodeUi.outcome.replaceChildren();
+		appendOutcomeText(localized('unusedBarcodeMessage', 'This barcode is not assigned in Grocy.'), 'grocy-ai-barcode-message');
+		hideFinalDiff();
 		updateSelectionSummary();
 	}
 
@@ -1068,7 +1189,12 @@
 			deadlineTimer: null
 		};
 		activeRequest = request;
-		xhr.open('GET', U('/api/grocy-ai/products/enrich/upc/' + encodeURIComponent(request.gtin)), true);
+		var endpoint = '/api/grocy-ai/products/enrich/upc/' + encodeURIComponent(request.gtin);
+		if (/^[1-9][0-9]{0,9}$/.test(root.dataset.currentProductId || ''))
+		{
+			endpoint += '?current_product_id=' + encodeURIComponent(root.dataset.currentProductId);
+		}
+		xhr.open('GET', U(endpoint), true);
 		xhr.timeout = REQUEST_DEADLINE_MS;
 		xhr.setRequestHeader('traceparent', request.traceparent);
 		xhr.onload = function () { if (isCurrent(request)) handleResponse(request); };
@@ -1188,6 +1314,7 @@
 	if (reviewUi.reviewButton) reviewUi.reviewButton.addEventListener('click', openFinalDiff);
 	if (reviewUi.backButton) reviewUi.backButton.addEventListener('click', backToSuggestions);
 	if (reviewUi.stageButton) reviewUi.stageButton.addEventListener('click', stageSelectedRows);
+	if (barcodeUi.removeButton) barcodeUi.removeButton.addEventListener('click', removeStagedBarcode);
 	ui.retryButton.addEventListener('click', function () { search('retry'); });
 	cancelButton.addEventListener('click', cancelSearch);
 	ui.copyButton.addEventListener('click', copyDiagnostic);

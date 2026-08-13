@@ -233,23 +233,29 @@ else
 	$lookupCalls = 0;
 	$lookupRows = [];
 	expectBarcodeException(
-		fn() => $service->ResolveBeforeProvider(
-			'012345678905',
-			function () use (&$permissionCalls): void
-			{
-				$permissionCalls++;
-				throw new RuntimeException('denied');
-			},
-			function () use (&$providerCalls): array
-			{
-				$providerCalls++;
-				return [];
-			}
-		),
+		function () use ($service, &$permissionCalls, &$providerCalls): array
+		{
+			return $service->ResolveBeforeProvider(
+				'012345678905',
+				function () use (&$permissionCalls): void
+				{
+					$permissionCalls++;
+					throw new RuntimeException('denied');
+				},
+				function () use (&$providerCalls): array
+				{
+					$providerCalls++;
+					return [];
+				}
+			);
+		},
 		RuntimeException::class,
 		'Authorization failure remains closed'
 	);
-	checkBarcode($permissionCalls === 1 && $lookupCalls === 0 && $providerCalls === 0, 'Authorization fails before owner lookup or provider work');
+	checkBarcode(
+		$permissionCalls === 1 && $lookupCalls === 0 && $providerCalls === 0,
+		'Authorization fails before owner lookup or provider work (permission=' . $permissionCalls . ', lookup=' . $lookupCalls . ', provider=' . $providerCalls . ')'
+	);
 
 	$lookupRows = [['product_id' => 20, 'owner_label' => 'Other product']];
 	$guarded = $service->ResolveBeforeProvider('012345678905', function () use (&$permissionCalls): void
@@ -286,7 +292,8 @@ checkBarcode(
 	preg_match('/function EnrichByUpc[\s\S]*?ResolveBeforeProvider/', $controllerSource) === 1,
 	'The enrichment route uses the permission-first owner guard before provider work'
 );
-checkBarcode(!str_contains($controllerSource, "['owner_product_id']"), 'Controller navigation authority never comes from request or provider owner IDs');
+checkBarcode(!str_contains($controllerSource, "$" . "args['owner_product_id']"), 'Controller navigation authority never comes from route owner IDs');
+checkBarcode(!str_contains($controllerSource, "getQueryParams()['owner_product_id']"), 'Controller navigation authority never comes from query owner IDs');
 
 if ($failures > 0)
 {

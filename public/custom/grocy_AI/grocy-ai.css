@@ -116,6 +116,53 @@ details.grocy-ai-diagnostics:not([open]) > .grocy-ai-diagnostic-body {
 	min-width: 0;
 }
 
+.grocy-ai-barcode-ownership {
+	border: 1px solid #dee2e6;
+	padding: 16px;
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+
+.grocy-ai-barcode-ownership > h5 {
+	font-size: 20px;
+	font-weight: 500;
+	line-height: 1.2;
+	margin: 0 0 16px;
+}
+
+.grocy-ai-barcode-ownership dt,
+.grocy-ai-barcode-ownership dd {
+	font-size: 16px;
+	line-height: 1.5;
+}
+
+#grocy-ai-scanned-barcode,
+#grocy-ai-barcode-equivalents {
+	font-variant-numeric: tabular-nums;
+}
+
+#grocy-ai-barcode-outcome {
+	display: grid;
+	gap: 8px;
+	margin-top: 16px;
+}
+
+.grocy-ai-barcode-badge {
+	justify-self: start;
+	font-size: 14px;
+	font-weight: 400;
+}
+
+.grocy-ai-owner-label {
+	font-weight: 500;
+}
+
+#grocy-ai-open-existing-product,
+#grocy-ai-remove-staged-barcode {
+	min-height: 44px;
+	margin-top: 16px;
+}
+
 .grocy-ai-review-section > h5,
 .grocy-ai-final-diff > h5 {
 	font-size: 20px;
@@ -271,7 +318,8 @@ details.grocy-ai-diagnostics:not([open]) > .grocy-ai-diagnostic-body {
 .night-mode .grocy-ai-field-review,
 .night-mode .grocy-ai-diff-item,
 .night-mode .grocy-ai-value-cell,
-.night-mode .grocy-ai-final-diff {
+.night-mode .grocy-ai-final-diff,
+.night-mode .grocy-ai-barcode-ownership {
 	background: inherit;
 	border-color: #6c757d;
 }
@@ -298,13 +346,16 @@ details.grocy-ai-diagnostics:not([open]) > .grocy-ai-diagnostic-body {
 	.grocy-ai-field-review,
 	.grocy-ai-diff-item,
 	.grocy-ai-value-cell,
-	.grocy-ai-final-diff {
+	.grocy-ai-final-diff,
+	.grocy-ai-barcode-ownership {
 		padding: 8px;
 	}
 
 	#grocy-ai-review-selected-button,
 	#grocy-ai-back-to-suggestions-button,
-	#grocy-ai-stage-selected-button {
+	#grocy-ai-stage-selected-button,
+	#grocy-ai-open-existing-product,
+	#grocy-ai-remove-staged-barcode {
 		width: 100%;
 	}
 }

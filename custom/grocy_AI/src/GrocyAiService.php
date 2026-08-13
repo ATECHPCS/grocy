@@ -134,26 +134,7 @@ class GrocyAiService
 
 	public static function NormalizeUpc(string $barcode): string
 	{
-		$upc = str_replace([' ', '-'], '', trim($barcode));
-		if (!preg_match('/^\d{8}$|^\d{12,14}$/', $upc))
-		{
-			throw new \InvalidArgumentException('UPC must contain 8, 12, 13, or 14 digits');
-		}
-
-		$weightedSum = 0;
-		$body = substr($upc, 0, -1);
-		for ($offset = 0, $length = strlen($body); $offset < $length; $offset++)
-		{
-			$digit = (int)$body[$length - $offset - 1];
-			$weightedSum += $digit * ($offset % 2 === 0 ? 3 : 1);
-		}
-		$expectedCheckDigit = (10 - ($weightedSum % 10)) % 10;
-		if ((int)$upc[strlen($upc) - 1] !== $expectedCheckDigit)
-		{
-			throw new \InvalidArgumentException('UPC checksum is invalid');
-		}
-
-		return $upc;
+		return GrocyAiGtin::NormalizeOrThrow($barcode);
 	}
 
 	private function Request(string $url, array $headers): array

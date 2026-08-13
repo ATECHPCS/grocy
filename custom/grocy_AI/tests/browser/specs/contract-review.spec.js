@@ -296,7 +296,8 @@ test('@enr05 seven-family final diff @enr06 @enr09 is independent, stale-safe, s
 	await brandSelection.check();
 	await page.locator('#grocy-ai-review-selected-button').click();
 	await expect(page.locator('#grocy-ai-final-diff-heading')).toBeFocused();
-	await expect(page.locator('#grocy-ai-final-diff [data-grocy-ai-diff-field]')).toHaveCount(3);
+	await expect(page.locator('#grocy-ai-final-diff [data-grocy-ai-diff-field]')).toHaveCount(4);
+	await expect(page.locator('#grocy-ai-final-diff [data-grocy-ai-diff-field="barcode"]')).toContainText(validGtin);
 	await expect(page.locator('#grocy-ai-final-diff [data-grocy-ai-diff-field="name"]')).toContainText('Preselected');
 	await expect(page.locator('#grocy-ai-final-diff [data-grocy-ai-diff-field="brand"]')).toContainText('Selected by you');
 	await expect(page.locator('#grocy-ai-final-diff [data-grocy-ai-diff-field="quantity_unit"]')).toContainText('Selected by you');
@@ -308,7 +309,7 @@ test('@enr05 seven-family final diff @enr06 @enr09 is independent, stale-safe, s
 	await page.locator('#grocy-ai-stage-selected-button').click();
 
 	await expect(page.locator('#grocy-ai-staging-feedback')).toContainText("Selected changes are staged in the form. Review the form, then use Grocy's Save button to save them.");
-	await expect(page.locator('#grocy-ai-selection-status')).toContainText('3 changes selected');
+	await expect(page.locator('#grocy-ai-selection-status')).toContainText('4 changes selected');
 	expect(await page.locator('#name').inputValue()).toBe('Fixture rolled oats');
 	expect(await page.locator('#fixture-brand').inputValue()).toBe('Fixture Farms');
 	expect(await page.locator('#qu_id_stock').inputValue()).toBe('5');
@@ -346,6 +347,7 @@ test('@enr05 seven-family zero selection stays reversible, disabled, and zero-wr
 	await search(page);
 	await page.locator('[data-grocy-ai-field="name"] input[type="checkbox"]').uncheck();
 	await page.locator('[data-grocy-ai-field="brand"] input[type="checkbox"]').uncheck();
+	await page.locator('#grocy-ai-remove-staged-barcode').click();
 	await expect(page.locator('#grocy-ai-selection-status')).toContainText('0 changes selected');
 	await expect(page.locator('#grocy-ai-review-selected-button')).toBeDisabled();
 	const counters = await page.evaluate(function () { return window.__fixtureCounters; });

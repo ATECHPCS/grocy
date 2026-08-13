@@ -59,7 +59,7 @@ test('@enr03 owner handoff @enr02 @enr09 preserves the scan and routes only from
 		});
 	});
 
-	await page.goto('/fixtures/productform.html');
+	await page.goto('/fixtures/productform.html?owner_product_id=999999&product_id=999999');
 	await search(page);
 
 	await expect(page.locator('#grocy-ai-scanned-barcode')).toHaveText(scan);
@@ -96,6 +96,7 @@ test('@enr03 @enr09 owner-current suppresses staging and remains zero-write', as
 
 test('@enr02 @enr03 @enr09 unused barcode stages once transiently, is removable, and all non-Save paths write nothing', async ({ page }) =>
 {
+	await page.setViewportSize({ width: 320, height: 844 });
 	await page.route('**/api/grocy-ai/products/enrich/upc/**', async function (route)
 	{
 		await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(barcodeEnvelope('unused')) });
@@ -108,6 +109,10 @@ test('@enr02 @enr03 @enr09 unused barcode stages once transiently, is removable,
 	await expect(page.locator('#grocy-ai-barcode-outcome')).toContainText('Ready to add on Save');
 	await expect(page.locator('#grocy-ai-selection-status')).toContainText('1 changes selected');
 	await expect(page.locator('#grocy-ai-review-selected-button')).toBeEnabled();
+	const removeBox = await page.locator('#grocy-ai-remove-staged-barcode').boundingBox();
+	expect(removeBox).not.toBeNull();
+	expect(removeBox.height).toBeGreaterThanOrEqual(44);
+	expect(await page.evaluate(function () { return document.documentElement.scrollWidth - document.documentElement.clientWidth; })).toBeLessThanOrEqual(0);
 
 	await page.locator('#grocy-ai-review-selected-button').click();
 	const barcodeDiff = page.locator('[data-grocy-ai-diff-field="barcode"]');
