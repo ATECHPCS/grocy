@@ -53,20 +53,51 @@
 		</form>
 
 		<section>
-			<div class="row permission-MASTER_DATA_EDIT" id="grocy-ai-product-enrichment">
+			<div class="row permission-MASTER_DATA_EDIT"
+				id="grocy-ai-product-enrichment"
+				data-ready-message="GTIN ready."
+				data-busy-message="Searching product details…"
+				data-success-heading="Product details found"
+				data-success-body="Review the preview before applying anything. Changes are saved only when you save the product."
+				data-invalid-length="Enter an 8, 12, 13, or 14 digit GTIN."
+				data-invalid-checksum="That GTIN has an invalid check digit. Check the number and try again."
+				data-camera-unavailable="Camera scanning is unavailable. Enter the GTIN manually."
+				data-cancelled-message="Search cancelled. No changes were made."
+				data-timeout-message="The search took too long. Retry, or continue editing manually."
+				data-not-found-message="No exact product match was found. Check the GTIN or continue editing manually."
+				data-error-message="Product search is temporarily unavailable. Retry, or continue editing manually.">
 				<div class="col">
 					<div class="card grocy-ai-card">
 						<div class="card-body">
 							<h4 class="card-title">grocy_AI product enrichment</h4>
-							<p class="text-muted">Search product metadata and real package images by UPC. Results are previews and are not saved automatically.</p>
-							<div class="input-group">
-								<input class="form-control" id="grocy-ai-upc" type="text" inputmode="numeric" autocomplete="off" placeholder="UPC / EAN / GTIN">
-								<div class="input-group-append">
-									<button class="btn btn-outline-primary" id="grocy-ai-search-button" type="button">Search</button>
-								</div>
+							<p class="text-muted grocy-ai-description">Scan or enter a GTIN to search product details. Results are previews and are not saved automatically.</p>
+							<div class="form-group mb-0">
+								<label for="grocy-ai-upc">GTIN</label>
+								<input class="form-control barcodescanner-input"
+									id="grocy-ai-upc"
+									type="text"
+									inputmode="numeric"
+									autocomplete="off"
+									placeholder="8, 12, 13, or 14 digits"
+									aria-describedby="grocy-ai-error grocy-ai-status"
+									data-target="grocy-ai-upc">
 							</div>
-							<div class="invalid-feedback d-block d-none" id="grocy-ai-error"></div>
-							<div class="mt-3 d-none" id="grocy-ai-results" aria-live="polite"></div>
+							<div class="invalid-feedback d-block d-none" id="grocy-ai-error" role="alert"></div>
+							<div class="grocy-ai-actions">
+								<button class="btn btn-outline-primary" id="grocy-ai-scan-button" type="button">Scan barcode</button>
+								<button class="btn btn-primary" id="grocy-ai-search-button" type="button" disabled>Search product</button>
+								<button class="btn btn-outline-secondary d-none" id="grocy-ai-cancel-button" type="button">Cancel search</button>
+							</div>
+							<div class="grocy-ai-status alert alert-secondary mt-3 mb-0"
+								id="grocy-ai-status"
+								role="status"
+								aria-live="polite"
+								aria-atomic="true"
+								aria-busy="false">
+								<strong>No enrichment result yet</strong>
+								<span>Scan or enter a GTIN, then search. You can continue editing this product without enrichment.</span>
+							</div>
+							<div class="mt-3 d-none" id="grocy-ai-results" aria-label="Product enrichment preview"></div>
 						</div>
 					</div>
 				</div>
@@ -184,6 +215,13 @@
 			if (method !== 'GET') counters.save++;
 		}
 
+		var nativeXhrOpen = window.XMLHttpRequest.prototype.open;
+		window.XMLHttpRequest.prototype.open = function (method, url)
+		{
+			classifyApiCall(method, url);
+			return nativeXhrOpen.apply(this, arguments);
+		};
+
 		window.Grocy = {
 			Api: {},
 			FrontendHelpers: {
@@ -205,7 +243,6 @@
 		window.Grocy.Api.Get = function (apiFunction, success, error)
 		{
 			var url = window.U('/api/' + apiFunction);
-			classifyApiCall('GET', url);
 			var xhr = new XMLHttpRequest();
 			xhr.onreadystatechange = function ()
 			{

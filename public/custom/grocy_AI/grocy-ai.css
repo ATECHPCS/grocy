@@ -2,6 +2,54 @@
 	border-left: .25rem solid var(--primary);
 }
 
+.grocy-ai-card .card-body {
+	font-size: 16px;
+}
+
+.grocy-ai-card .card-title {
+	font-size: 24px;
+	font-weight: 500;
+	line-height: 1.2;
+}
+
+.grocy-ai-description {
+	font-size: 14px;
+	line-height: 1.5;
+	margin-bottom: 16px;
+}
+
+.grocy-ai-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin-top: 16px;
+}
+
+.grocy-ai-actions .btn {
+	min-height: 44px;
+}
+
+.grocy-ai-status {
+	font-size: 16px;
+	line-height: 1.5;
+	overflow-wrap: anywhere;
+}
+
+.grocy-ai-status-heading {
+	font-size: 20px;
+	font-weight: 500;
+	line-height: 1.2;
+	margin: 0 0 8px;
+}
+
+.grocy-ai-status span {
+	display: block;
+}
+
+#grocy-ai-upc + #camerabarcodescanner-start-button {
+	display: none;
+}
+
 .grocy-ai-summary {
 	display: grid;
 	gap: .25rem;
@@ -40,4 +88,25 @@
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
+}
+
+@media (max-width: 575.98px) {
+	.grocy-ai-actions .btn {
+		flex: 1 1 100%;
+		width: 100%;
+	}
+
+	.grocy-ai-card,
+	.grocy-ai-card .card-body,
+	.grocy-ai-status,
+	.grocy-ai-results {
+		max-width: 100%;
+		min-width: 0;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.grocy-ai-card .spinner-border {
+		animation: none;
+	}
 }

@@ -935,33 +935,68 @@
 		}
 		@endphp
 		<div class="row @if($mode == 'edit') mt-5 @endif permission-MASTER_DATA_EDIT"
-			id="grocy-ai-product-enrichment">
+			id="grocy-ai-product-enrichment"
+			data-ready-message="{{ $__t('GTIN ready.') }}"
+			data-busy-message="{{ $__t('Searching product details…') }}"
+			data-success-heading="{{ $__t('Product details found') }}"
+			data-success-body="{{ $__t('Review the preview before applying anything. Changes are saved only when you save the product.') }}"
+			data-invalid-length="{{ $__t('Enter an 8, 12, 13, or 14 digit GTIN.') }}"
+			data-invalid-checksum="{{ $__t('That GTIN has an invalid check digit. Check the number and try again.') }}"
+			data-camera-unavailable="{{ $__t('Camera scanning is unavailable. Enter the GTIN manually.') }}"
+			data-cancelled-message="{{ $__t('Search cancelled. No changes were made.') }}"
+			data-timeout-message="{{ $__t('The search took too long. Retry, or continue editing manually.') }}"
+			data-not-found-message="{{ $__t('No exact product match was found. Check the GTIN or continue editing manually.') }}"
+			data-error-message="{{ $__t('Product search is temporarily unavailable. Retry, or continue editing manually.') }}">
 			<div class="col">
 				<div class="card grocy-ai-card">
 					<div class="card-body">
-						<h4 class="card-title">grocy_AI product enrichment</h4>
-						<p class="text-muted">Search product metadata and real package images by UPC. Results are previews and are not saved automatically.</p>
-						<div class="input-group">
+						<h4 class="card-title">{{ $__t('grocy_AI product enrichment') }}</h4>
+						<p class="text-muted grocy-ai-description">{{ $__t('Scan or enter a GTIN to search product details. Results are previews and are not saved automatically.') }}</p>
+						<div class="form-group mb-0">
+							<label for="grocy-ai-upc">{{ $__t('GTIN') }}</label>
 							<input type="text"
-								class="form-control"
+								class="form-control barcodescanner-input"
 								id="grocy-ai-upc"
 								inputmode="numeric"
 								autocomplete="off"
-								placeholder="UPC / EAN / GTIN"
+								placeholder="{{ $__t('8, 12, 13, or 14 digits') }}"
+								aria-describedby="grocy-ai-error grocy-ai-status"
+								data-target="grocy-ai-upc"
 								value="{{ $grocyAiBarcode }}">
-							<div class="input-group-append">
-								<button class="btn btn-outline-primary"
-									type="button"
-									id="grocy-ai-search-button">
-									<i class="fa-solid fa-magnifying-glass"></i> Search
-								</button>
-							</div>
 						</div>
 						<div class="invalid-feedback d-block d-none"
-							id="grocy-ai-error"></div>
+							id="grocy-ai-error"
+							role="alert"></div>
+						<div class="grocy-ai-actions">
+							<button class="btn btn-outline-primary"
+								type="button"
+								id="grocy-ai-scan-button">
+								<i class="fa-solid fa-camera" aria-hidden="true"></i> {{ $__t('Scan barcode') }}
+							</button>
+							<button class="btn btn-primary"
+								type="button"
+								id="grocy-ai-search-button"
+								disabled>
+								<i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i> {{ $__t('Search product') }}
+							</button>
+							<button class="btn btn-outline-secondary d-none"
+								type="button"
+								id="grocy-ai-cancel-button">
+								{{ $__t('Cancel search') }}
+							</button>
+						</div>
+						<div class="grocy-ai-status alert alert-secondary mt-3 mb-0"
+							id="grocy-ai-status"
+							role="status"
+							aria-live="polite"
+							aria-atomic="true"
+							aria-busy="false">
+							<strong>{{ $__t('No enrichment result yet') }}</strong>
+							<span>{{ $__t('Scan or enter a GTIN, then search. You can continue editing this product without enrichment.') }}</span>
+						</div>
 						<div class="mt-3 d-none"
 							id="grocy-ai-results"
-							aria-live="polite"></div>
+							aria-label="{{ $__t('Product enrichment preview') }}"></div>
 					</div>
 				</div>
 			</div>

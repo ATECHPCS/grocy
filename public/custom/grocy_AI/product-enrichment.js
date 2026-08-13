@@ -9,11 +9,20 @@
 	}
 
 	var upcInput = document.getElementById('grocy-ai-upc');
+	var scanButton = document.getElementById('grocy-ai-scan-button');
 	var searchButton = document.getElementById('grocy-ai-search-button');
+	var cancelButton = document.getElementById('grocy-ai-cancel-button');
 	var errorBox = document.getElementById('grocy-ai-error');
+	var statusBox = document.getElementById('grocy-ai-status');
 	var results = document.getElementById('grocy-ai-results');
 	var productNameInput = document.getElementById('name');
 	var productPictureInput = document.getElementById('product-picture');
+	var activeRequest = null;
+
+	function localized(name, fallback)
+	{
+		return root.dataset[name] || fallback;
+	}
 
 	function textElement(tag, className, value)
 	{
@@ -26,19 +35,102 @@
 		return element;
 	}
 
+	function normalizeGtin(value)
+	{
+		return String(value || '').trim().replace(/[ -]/g, '');
+	}
+
+	function hasValidCheckDigit(gtin)
+	{
+		var sum = 0;
+		var weight = 3;
+		for (var index = gtin.length - 2; index >= 0; index--)
+		{
+			sum += Number(gtin.charAt(index)) * weight;
+			weight = weight === 3 ? 1 : 3;
+		}
+
+		return (10 - (sum % 10)) % 10 === Number(gtin.charAt(gtin.length - 1));
+	}
+
+	function validateGtin(value)
+	{
+		var gtin = normalizeGtin(value);
+		if (!/^\d+$/.test(gtin) || [8, 12, 13, 14].indexOf(gtin.length) === -1)
+		{
+			return { valid: false, gtin: gtin, error: 'length' };
+		}
+		if (!hasValidCheckDigit(gtin))
+		{
+			return { valid: false, gtin: gtin, error: 'checksum' };
+		}
+
+		return { valid: true, gtin: gtin, error: null };
+	}
+
+	function clearError()
+	{
+		errorBox.textContent = '';
+		errorBox.classList.add('d-none');
+		upcInput.setAttribute('aria-invalid', 'false');
+	}
+
 	function showError(message)
 	{
 		errorBox.textContent = message;
 		errorBox.classList.remove('d-none');
+		upcInput.setAttribute('aria-invalid', 'true');
+		statusBox.replaceChildren();
+		statusBox.classList.add('d-none');
+		statusBox.setAttribute('aria-busy', 'false');
 		results.classList.add('d-none');
 	}
 
-	function clearOutput()
+	function setStatus(heading, body, state, busy)
 	{
-		errorBox.textContent = '';
-		errorBox.classList.add('d-none');
+		statusBox.replaceChildren();
+		statusBox.className = 'grocy-ai-status alert mt-3 mb-0 alert-' + state;
+		statusBox.setAttribute('aria-busy', busy ? 'true' : 'false');
+
+		if (heading)
+		{
+			statusBox.appendChild(textElement('h5', 'grocy-ai-status-heading', heading));
+		}
+		if (body)
+		{
+			statusBox.appendChild(textElement('span', '', body));
+		}
+	}
+
+	function clearResults()
+	{
 		results.replaceChildren();
 		results.classList.add('d-none');
+	}
+
+	function setSearching(searching)
+	{
+		searchButton.disabled = searching;
+		cancelButton.classList.toggle('d-none', !searching);
+	}
+
+	function validateInput()
+	{
+		var validation = validateGtin(upcInput.value);
+		clearResults();
+		if (!validation.valid)
+		{
+			searchButton.disabled = true;
+			showError(validation.error === 'checksum'
+				? localized('invalidChecksum', 'That GTIN has an invalid check digit. Check the number and try again.')
+				: localized('invalidLength', 'Enter an 8, 12, 13, or 14 digit GTIN.'));
+			return validation;
+		}
+
+		clearError();
+		searchButton.disabled = activeRequest !== null;
+		setStatus('', localized('readyMessage', 'GTIN ready.'), 'secondary', false);
+		return validation;
 	}
 
 	function feedback(message, isError)
@@ -134,16 +226,39 @@
 		xhr.send();
 	}
 
+	function safeCandidateUrl(value)
+	{
+		try
+		{
+			var url = new URL(value, window.location.origin);
+			if (url.protocol === 'http:' || url.protocol === 'https:')
+			{
+				return url.href;
+			}
+		}
+		catch (error)
+		{
+			// Invalid provider URLs are omitted from the preview.
+		}
+		return null;
+	}
+
 	function renderResult(data)
 	{
 		results.replaceChildren();
 
 		if (!data.found)
 		{
-			results.appendChild(textElement('div', 'alert alert-warning mb-0', 'No exact product match was found for ' + data.upc + '.'));
-			results.classList.remove('d-none');
+			setStatus('', localized('notFoundMessage', 'No exact product match was found. Check the GTIN or continue editing manually.'), 'warning', false);
 			return;
 		}
+
+		setStatus(
+			localized('successHeading', 'Product details found'),
+			localized('successBody', 'Review the preview before applying anything. Changes are saved only when you save the product.'),
+			'success',
+			false
+		);
 
 		var product = data.product || {};
 		var summary = document.createElement('div');
@@ -174,23 +289,28 @@
 		results.appendChild(summary);
 
 		var images = Array.isArray(data.images) ? data.images.slice(0, 6) : [];
-		if (images.length > 0)
+		var safeImages = images.filter(function (candidate)
+		{
+			candidate.safeUrl = safeCandidateUrl(candidate.url);
+			return candidate.safeUrl !== null;
+		});
+		if (safeImages.length > 0)
 		{
 			results.appendChild(textElement('h5', '', 'Real image candidates'));
 			var imageGrid = document.createElement('div');
 			imageGrid.className = 'grocy-ai-images';
 
-			images.forEach(function (candidate)
+			safeImages.forEach(function (candidate)
 			{
 				var card = document.createElement('div');
 				card.className = 'grocy-ai-image-candidate img-thumbnail';
 
 				var originalLink = document.createElement('a');
-				originalLink.href = candidate.url;
+				originalLink.href = candidate.safeUrl;
 				originalLink.target = '_blank';
 				originalLink.rel = 'noopener noreferrer';
 				var image = document.createElement('img');
-				image.src = candidate.url;
+				image.src = candidate.safeUrl;
 				image.alt = product.name ? product.name + ' package candidate' : 'Product package candidate';
 				image.loading = 'lazy';
 				image.referrerPolicy = 'no-referrer';
@@ -223,43 +343,107 @@
 		results.classList.remove('d-none');
 	}
 
+	function finishRequest(xhr)
+	{
+		if (activeRequest !== xhr)
+		{
+			return false;
+		}
+		activeRequest = null;
+		setSearching(false);
+		return true;
+	}
+
 	function search()
 	{
-		clearOutput();
-		var upc = upcInput.value.trim().replace(/[ -]/g, '');
-		if (!/^(\d{8}|\d{12,14})$/.test(upc))
+		var validation = validateGtin(upcInput.value);
+		if (!validation.valid)
 		{
-			showError('Enter an 8, 12, 13, or 14 digit UPC, EAN, or GTIN.');
+			validateInput();
+			upcInput.focus();
+			return;
+		}
+		if (activeRequest !== null)
+		{
 			return;
 		}
 
-		searchButton.disabled = true;
-		var originalButtonContent = searchButton.innerHTML;
-		searchButton.textContent = 'Searching…';
+		clearError();
+		clearResults();
+		setSearching(true);
+		setStatus('', localized('busyMessage', 'Searching product details…'), 'secondary', true);
 
-		Grocy.Api.Get('grocy-ai/products/enrich/upc/' + encodeURIComponent(upc), function (data)
+		var gtin = validation.gtin;
+		var xhr = new XMLHttpRequest();
+		activeRequest = xhr;
+		xhr.open('GET', U('/api/grocy-ai/products/enrich/upc/' + encodeURIComponent(gtin)), true);
+		xhr.timeout = 15000;
+		xhr.onload = function ()
 		{
-			searchButton.disabled = false;
-			searchButton.innerHTML = originalButtonContent;
-			renderResult(data);
-		}, function (xhr)
-		{
-			searchButton.disabled = false;
-			searchButton.innerHTML = originalButtonContent;
-			var message = 'Product enrichment failed.';
+			if (!finishRequest(xhr) || normalizeGtin(upcInput.value) !== gtin)
+			{
+				return;
+			}
+			if (xhr.status < 200 || xhr.status >= 300)
+			{
+				setStatus('', localized('errorMessage', 'Product search is temporarily unavailable. Retry, or continue editing manually.'), 'danger', false);
+				return;
+			}
+
 			try
 			{
-				message = JSON.parse(xhr.responseText).error_message || message;
+				renderResult(JSON.parse(xhr.responseText));
 			}
 			catch (error)
 			{
-				// Keep the generic message when the server response is not JSON.
+				setStatus('', localized('errorMessage', 'Product search is temporarily unavailable. Retry, or continue editing manually.'), 'danger', false);
 			}
-			showError(message);
-		});
+		};
+		xhr.onerror = function ()
+		{
+			if (finishRequest(xhr))
+			{
+				setStatus('', localized('errorMessage', 'Product search is temporarily unavailable. Retry, or continue editing manually.'), 'danger', false);
+			}
+		};
+		xhr.ontimeout = function ()
+		{
+			if (finishRequest(xhr))
+			{
+				setStatus('', localized('timeoutMessage', 'The search took too long. Retry, or continue editing manually.'), 'warning', false);
+			}
+		};
+		xhr.onabort = function ()
+		{
+			if (finishRequest(xhr))
+			{
+				setStatus('', localized('cancelledMessage', 'Search cancelled. No changes were made.'), 'secondary', false);
+			}
+		};
+		xhr.send();
+	}
+
+	function cancelSearch()
+	{
+		if (activeRequest)
+		{
+			activeRequest.abort();
+		}
 	}
 
 	searchButton.addEventListener('click', search);
+	cancelButton.addEventListener('click', cancelSearch);
+	scanButton.addEventListener('click', function ()
+	{
+		var cameraControl = document.querySelector('#camerabarcodescanner-start-button[data-target="grocy-ai-upc"]');
+		if (cameraControl)
+		{
+			cameraControl.click();
+			return;
+		}
+		setStatus('', localized('cameraUnavailable', 'Camera scanning is unavailable. Enter the GTIN manually.'), 'secondary', false);
+	});
+	upcInput.addEventListener('input', validateInput);
 	upcInput.addEventListener('keydown', function (event)
 	{
 		if (event.key === 'Enter')
@@ -267,5 +451,33 @@
 			event.preventDefault();
 			search();
 		}
+		else if (event.key === 'Escape')
+		{
+			cancelSearch();
+		}
 	});
+
+	$(document).on('Grocy.BarcodeScanned', function (event, barcode, target)
+	{
+		if (target !== 'grocy-ai-upc')
+		{
+			return;
+		}
+		upcInput.value = String(barcode || '');
+		var validation = validateInput();
+		if (validation.valid)
+		{
+			search();
+		}
+	});
+
+	if (normalizeGtin(upcInput.value))
+	{
+		validateInput();
+	}
+	else
+	{
+		searchButton.disabled = true;
+		upcInput.setAttribute('aria-invalid', 'false');
+	}
 })();

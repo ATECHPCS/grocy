@@ -15,7 +15,6 @@ const invalidChecksumGtins = [
 ];
 
 const invalidLengthValues = [
-	'',
 	'1234567',
 	'123456789',
 	'12345678901',

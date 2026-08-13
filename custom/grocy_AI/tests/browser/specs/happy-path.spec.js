@@ -139,3 +139,35 @@ test('@smoke @mob01 @mob02 @mob04 @mob07 @mob08 phone enrichment happy path rema
 
 	expect(violations, 'Phase 1 phone happy-path behavior gaps').toEqual([]);
 });
+
+test('@mob01 enrichment card stays above Picture without phone-width overflow', async ({ page }) =>
+{
+	for (const width of [320, 390])
+	{
+		await page.setViewportSize({ width: width, height: 844 });
+		await page.goto('/fixtures/productform.html');
+
+		expect(await page.evaluate(function ()
+		{
+			return document.documentElement.scrollWidth <= document.documentElement.clientWidth;
+		})).toBe(true);
+
+		expect(await page.evaluate(function ()
+		{
+			var card = document.getElementById('grocy-ai-product-enrichment');
+			var picture = document.getElementById('product-picture');
+			return Boolean(card.compareDocumentPosition(picture) & Node.DOCUMENT_POSITION_FOLLOWING);
+		})).toBe(true);
+
+		for (const selector of ['#grocy-ai-scan-button', '#grocy-ai-search-button'])
+		{
+			const bounds = await page.locator(selector).boundingBox();
+			expect(bounds.height).toBeGreaterThanOrEqual(44);
+		}
+
+		for (const saveButton of await page.locator('.save-product-button').all())
+		{
+			await expect(saveButton).toBeEnabled();
+		}
+	}
+});
