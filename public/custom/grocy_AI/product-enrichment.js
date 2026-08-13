@@ -306,6 +306,7 @@
 	function clearError()
 	{
 		errorBox.textContent = '';
+		errorBox.classList.remove('d-block');
 		errorBox.classList.add('d-none');
 		upcInput.classList.remove('is-invalid');
 		upcInput.setAttribute('aria-invalid', 'false');
@@ -315,6 +316,7 @@
 	{
 		errorBox.textContent = message;
 		errorBox.classList.remove('d-none');
+		errorBox.classList.add('d-block');
 		upcInput.classList.add('is-invalid');
 		upcInput.setAttribute('aria-invalid', 'true');
 		statusBox.replaceChildren();
@@ -721,6 +723,7 @@
 	{
 		setStatus('', localized('cameraUnavailable', 'Camera scanning is unavailable. Enter the GTIN manually.'), 'secondary', false, 'fa-circle-info');
 		upcInput.focus();
+		window.setTimeout(function () { upcInput.focus(); }, 0);
 	}
 
 	function startCameraScan()
