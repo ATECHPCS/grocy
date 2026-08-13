@@ -18,15 +18,15 @@
 
 ### Product Enrichment and Barcode Handoff
 
-- [ ] **ENR-01**: User receives a strictly validated, versioned enrichment response in which every external suggestion includes source, confidence band, reason, and retrieval freshness.
+- [x] **ENR-01**: User receives a strictly validated, versioned enrichment response in which every external suggestion includes source, confidence band, reason, and retrieval freshness.
 - [ ] **ENR-02**: User sees the originally scanned barcode while Grocy checks canonical UPC/EAN/GTIN equivalents for duplicates.
 - [ ] **ENR-03**: User scanning a barcode already assigned in Grocy is routed to the existing owning product instead of creating a duplicate.
 - [ ] **ENR-04**: User can stage a previously unused barcode in Grocy's normal product/barcode workflow, and it is written exactly once only after Save.
-- [ ] **ENR-05**: User can independently review suggestions for name, brand, package size, product group, quantity unit, food type, and product image alongside current values.
+- [x] **ENR-05**: User can independently review suggestions for name, brand, package size, product group, quantity unit, food type, and product image alongside current values.
 - [ ] **ENR-06**: User sees one final diff of selected enrichment changes, and no unselected field is changed when the normal Grocy Save action runs.
 - [ ] **ENR-07**: User sees an exact structured-source front-package image first when available, while SearXNG candidates are clearly identified as unverified alternatives.
 - [ ] **ENR-08**: User can demand-load and select same-origin proxied thumbnails/full images using short-lived opaque handles with URL, redirect, byte, time, MIME, signature, and pixel/dimension safeguards.
-- [ ] **ENR-09**: Search, preview, cancel, timeout, and failed image retrieval produce no product, barcode, category, stock, conversion, or file persistence before normal Save.
+- [x] **ENR-09**: Search, preview, cancel, timeout, and failed image retrieval produce no product, barcode, category, stock, conversion, or file persistence before normal Save.
 
 ### Food Taxonomy and Single-Product Classification
 
@@ -119,15 +119,15 @@
 | MOB-06 | Phase 1 | Complete |
 | MOB-07 | Phase 1 | Complete |
 | MOB-08 | Phase 1 | Complete |
-| ENR-01 | Phase 2 | Pending |
+| ENR-01 | Phase 2 | Complete |
 | ENR-02 | Phase 2 | Pending |
 | ENR-03 | Phase 2 | Pending |
 | ENR-04 | Phase 2 | Pending |
-| ENR-05 | Phase 2 | Pending |
+| ENR-05 | Phase 2 | Complete |
 | ENR-06 | Phase 2 | Pending |
 | ENR-07 | Phase 2 | Pending |
 | ENR-08 | Phase 2 | Pending |
-| ENR-09 | Phase 2 | Pending |
+| ENR-09 | Phase 2 | Complete |
 | TAX-01 | Phase 3 | Pending |
 | TAX-02 | Phase 3 | Pending |
 | TAX-03 | Phase 3 | Pending |
