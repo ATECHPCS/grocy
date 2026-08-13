@@ -23,6 +23,7 @@ if (is_file($contractFile))
 use GrocyAI\Services\GrocyAiDiagnostic;
 use GrocyAI\Services\GrocyAiContract;
 use GrocyAI\Services\GrocyAiService;
+use GrocyAI\Services\GrocyAiServiceException;
 
 function expectedRed(string $marker, string $message): never
 {
@@ -90,6 +91,65 @@ if (($argv[1] ?? null) === '--case')
 
 	fwrite(STDERR, "Unknown test case: {$selectedCase}\n");
 	exit(2);
+}
+
+if (($argv[1] ?? null) === '--group' && ($argv[2] ?? null) === 'contract')
+{
+	if (!class_exists(GrocyAiContract::class))
+	{
+		fwrite(STDERR, "FAIL: The closed contract-v2 validator exists\n");
+		exit(1);
+	}
+
+	$fixtureDocument = json_decode(file_get_contents(__DIR__ . '/fixtures/enrichment-v2-cases.json'), true, 512, JSON_THROW_ON_ERROR);
+	$contractFailures = 0;
+	foreach ($fixtureDocument['cases'] ?? [] as $case)
+	{
+		$expected = $case['expected'] ?? 'contract_invalid';
+		try
+		{
+			$result = GrocyAiContract::DecodeAndValidateRaw((string)$case['raw_json'], $case['id'] === 'valid_name_review' ? '012345678905' : '');
+			if ($expected !== 'valid' || ($result['contract_version'] ?? null) !== 2)
+			{
+				$contractFailures++;
+				fwrite(STDERR, "FAIL: Contract fixture {$case['id']} is rejected wholesale\n");
+			}
+		}
+		catch (InvalidArgumentException)
+		{
+			if ($expected === 'valid')
+			{
+				$contractFailures++;
+				fwrite(STDERR, "FAIL: Contract fixture {$case['id']} is accepted\n");
+			}
+		}
+	}
+
+	$duplicateService = new GrocyAiService(fn(): array => [
+		'status' => 200,
+		'body' => enrichmentV2Fixture('duplicate_nested')
+	]);
+	try
+	{
+		$duplicateService->EnrichByUpc('012345678905');
+		$contractFailures++;
+		fwrite(STDERR, "FAIL: Service rejects duplicate members before lossy decode\n");
+	}
+	catch (GrocyAiServiceException $ex)
+	{
+		if ($ex->GetDiagnosticErrorCode() !== 'contract_invalid')
+		{
+			$contractFailures++;
+			fwrite(STDERR, "FAIL: Service maps contract defects to contract_invalid\n");
+		}
+	}
+
+	if ($contractFailures > 0)
+	{
+		exit(1);
+	}
+	printf("All %d contract-v2 fixture cases passed\n", count($fixtureDocument['cases'] ?? []) + 1);
+	exit(0);
 }
 
 $failures = 0;
@@ -189,39 +249,35 @@ BLADE;
 
 function companionBody(string $outcome = 'success', array $extra = []): string
 {
+	$contractOutcome = in_array($outcome, ['success', 'partial_image'], true) ? 'found' : $outcome;
+	$suggestions = $contractOutcome === 'found' ? [[
+		'id' => 'name:openfoodfacts:0',
+		'field' => 'name',
+		'value' => 'Test Product',
+		'display_value' => 'Test Product',
+		'source' => ['id' => 'openfoodfacts', 'label' => 'Open Food Facts'],
+		'confidence_band' => 'high',
+		'reason_code' => 'canonical_structured_match',
+		'evidence_kind' => 'structured_direct',
+		'retrieved_at' => '2026-08-13T12:00:00Z',
+		'source_updated_at' => null,
+		'target' => null
+	]] : [];
 	return json_encode(array_merge([
-		'found' => in_array($outcome, ['success', 'partial_image'], true),
-		'product' => [
-			'name' => 'Test Product',
-			'brand' => 'Test Brand',
-			'size' => '12 oz'
+		'contract_version' => 2,
+		'outcome' => $contractOutcome,
+		'barcode' => [
+			'scanned_gtin' => '012345678905',
+			'canonical_gtin' => '00012345678905',
+			'equivalents_checked' => ['012345678905', '00012345678905'],
+			'status' => 'unused',
+			'owner_product_id' => null
 		],
-		'images' => [
-			['url' => 'https://images.example/front.png', 'download_token' => 'abcdefghijklmnopqrstuvwx', 'source' => 'openfoodfacts', 'score' => 99],
-			['url' => 'javascript:alert(1)', 'source' => 'unsafe'],
-			['url' => 'not a URL', 'source' => 'invalid']
-		],
-		'sources' => ['openfoodfacts', 'searxng', 'searxng'],
-		'warnings' => ['Review before applying'],
-		'outcome' => $outcome,
+		'suggestions' => $suggestions,
+		'media' => [],
+		'warnings' => [],
 		'diagnostics' => [
-			'schema_version' => 1,
-			'contract_version' => '1',
-			'companion_version' => '0.1.0',
-			'trace_id' => '4bf92f3577b34da6a3ce929d0e0e4736',
-			'outcome' => $outcome,
-			'stages' => [
-				[
-					'name' => 'federation',
-					'status' => $outcome === 'timeout' ? 'timeout' : 'ok',
-					'error_code' => $outcome === 'timeout' ? 'deadline' : null,
-					'cache' => 'miss',
-					'duration_ms' => 12.6,
-					'url' => 'https://provider.invalid/search?q=url-canary'
-				]
-			],
-			'overall_duration_ms' => 13.4,
-			'payload' => 'payload-canary'
+			'trace_id' => '4bf92f3577b34da6a3ce929d0e0e4736'
 		]
 	], $extra), JSON_THROW_ON_ERROR);
 }
@@ -359,20 +415,13 @@ check(($captured['options']['timeout'] ?? null) === 12.0, 'The total companion t
 check(($captured['options']['connect_timeout'] ?? null) === 2.0, 'The companion connect timeout is exactly 2 seconds');
 check(($captured['options']['allow_redirects'] ?? null) === false, 'Companion redirects are disabled');
 check(is_callable($captured['options']['on_stats'] ?? null), 'The transport receives a timing capture callback');
-check(($result['upc'] ?? null) === '012345678905', 'The requested UPC remains authoritative in the preview response');
-check(($result['product']['name'] ?? null) === 'Test Product', 'Product metadata is normalized');
-check(count($result['images'] ?? []) === 1, 'Unsafe and invalid image URLs are removed');
-check(($result['images'][0]['download_token'] ?? null) === 'abcdefghijklmnopqrstuvwx', 'Opaque image tokens remain available only in preview data');
-check(($result['sources'] ?? null) === ['openfoodfacts', 'searxng'], 'Sources are de-duplicated');
-check(($result['outcome'] ?? null) === 'success', 'Companion success is preserved as a finite outcome');
+check(($result['barcode']['scanned_gtin'] ?? null) === '012345678905', 'The requested GTIN remains authoritative in the review contract');
+check(($result['suggestions'][0]['value'] ?? null) === 'Test Product', 'Structured product metadata is a closed suggestion');
+check(($result['media'] ?? null) === [], 'No raw media URL enters contract v2');
+check(($result['warnings'] ?? null) === [], 'Warnings are a closed code list');
+check(($result['outcome'] ?? null) === 'found', 'Companion success maps to the finite found outcome');
 check(($result['diagnostics']['trace_id'] ?? null) === $traceContext['trace_id'], 'Diagnostics use the trusted owned trace ID');
-check(($result['diagnostics']['versions'] ?? null) === [
-	'grocy' => '4.6.0',
-	'module' => $moduleVersion,
-	'companion' => '0.1.0',
-	'contract' => '1'
-], 'Diagnostics contain only portable version values');
-check(($result['diagnostics']['overall_duration_ms'] ?? null) === 25, 'Overall transfer timing is safely rounded in milliseconds');
+check(array_keys($result['diagnostics'] ?? []) === ['trace_id'], 'Contract diagnostics expose only the owned trace ID');
 
 $serializedDiagnostics = json_encode($result['diagnostics'] ?? [], JSON_THROW_ON_ERROR);
 foreach ([
@@ -391,7 +440,7 @@ foreach ([
 	check(!str_contains($serializedDiagnostics, $canary), "Diagnostic JSON excludes privacy canary {$canary}");
 }
 
-foreach (['success', 'partial_image', 'not_found', 'timeout', 'provider_error'] as $outcome)
+foreach (['found', 'not_found', 'timeout', 'provider_error'] as $outcome)
 {
 	$outcomeService = new GrocyAiService(function (string $url, array $headers, $options) use ($outcome): array
 	{
@@ -401,7 +450,7 @@ foreach (['success', 'partial_image', 'not_found', 'timeout', 'provider_error'] 
 	{
 		$outcomeResult = $outcomeService->EnrichByUpc('012345678905', $traceContext);
 		check(($outcomeResult['outcome'] ?? null) === $outcome, "Finite companion outcome {$outcome} is preserved");
-		check(($outcomeResult['diagnostics']['outcome'] ?? null) === $outcome, "Diagnostic outcome {$outcome} matches the response");
+		check(($outcomeResult['diagnostics']['trace_id'] ?? null) === $traceContext['trace_id'], "Finite outcome {$outcome} retains only owned correlation");
 	}
 	catch (Throwable)
 	{
@@ -409,11 +458,11 @@ foreach (['success', 'partial_image', 'not_found', 'timeout', 'provider_error'] 
 	}
 }
 
-$malformedImagesService = new GrocyAiService(fn(): array => [
+$malformedSuggestionsService = new GrocyAiService(fn(): array => [
 	'status' => 200,
-	'body' => companionBody('success', ['images' => 'not-a-list'])
+	'body' => companionBody('found', ['suggestions' => 'not-a-list'])
 ]);
-check($malformedImagesService->EnrichByUpc('012345678905', $traceContext)['images'] === [], 'Malformed image collections are ignored safely');
+expectException(fn() => $malformedSuggestionsService->EnrichByUpc('012345678905', $traceContext), GrocyAiServiceException::class, 'Malformed suggestion collections reject the whole contract');
 
 $statusJson = json_encode($service->GetStatus(), JSON_THROW_ON_ERROR);
 check(!str_contains($statusJson, GROCY_AI_SERVICE_API_KEY), 'Status never exposes the API key');

@@ -3,7 +3,6 @@
 namespace GrocyAI\Services;
 
 use GuzzleHttp\Client;
-use JsonException;
 
 class GrocyAiService
 {
@@ -72,19 +71,17 @@ class GrocyAiService
 
 		try
 		{
-			$data = json_decode($result['body'], true, 512, JSON_THROW_ON_ERROR);
+			$data = GrocyAiContract::DecodeAndValidateRaw((string)$result['body'], $upc);
+			if (!hash_equals($traceContext['trace_id'], $data['diagnostics']['trace_id']))
+			{
+				throw new GrocyAiContractException();
+			}
+			return $data;
 		}
-		catch (JsonException $ex)
+		catch (GrocyAiContractException $ex)
 		{
-			throw new GrocyAiServiceException('provider_error', 'malformed', 'invalid_response', 502, $ex);
+			throw new GrocyAiServiceException('provider_error', 'malformed', 'contract_invalid', 502, $ex);
 		}
-
-		if (!is_array($data))
-		{
-			throw new GrocyAiServiceException('provider_error', 'malformed', 'invalid_response', 502);
-		}
-
-		return $this->NormalizeResponse($upc, $data, $traceContext, $result['timing'] ?? []);
 	}
 
 	public function FetchImage(string $token): array
@@ -229,69 +226,6 @@ class GrocyAiService
 		];
 	}
 
-	private function NormalizeResponse(string $upc, array $data, array $traceContext, array $transportTiming): array
-	{
-		$product = is_array($data['product'] ?? null) ? $data['product'] : [];
-		$images = [];
-		$imageCandidates = is_array($data['images'] ?? null) ? $data['images'] : [];
-		foreach ($imageCandidates as $image)
-		{
-			if (!is_array($image) || !isset($image['url']) || filter_var($image['url'], FILTER_VALIDATE_URL) === false)
-			{
-				continue;
-			}
-
-			$scheme = strtolower((string)parse_url($image['url'], PHP_URL_SCHEME));
-			if (!in_array($scheme, ['http', 'https'], true))
-			{
-				continue;
-			}
-
-			$images[] = [
-				'url' => $image['url'],
-				'download_token' => self::ImageToken($image['download_token'] ?? ''),
-				'source' => self::ScalarString($image['source'] ?? ''),
-				'score' => is_numeric($image['score'] ?? null) ? (float)$image['score'] : null,
-				'match_confidence' => is_numeric($image['match_confidence'] ?? null) ? (float)$image['match_confidence'] : null
-			];
-		}
-
-		$outcome = array_key_exists('outcome', $data)
-			? GrocyAiDiagnostic::NormalizeOutcome($data['outcome'])
-			: ((bool)($data['found'] ?? !empty($product)) ? 'success' : 'not_found');
-		$companionDiagnostics = is_array($data['diagnostics'] ?? null) ? $data['diagnostics'] : [];
-
-		return [
-			'found' => (bool)($data['found'] ?? !empty($product)),
-			'upc' => $upc,
-			'product' => [
-				'name' => self::ScalarString($product['name'] ?? ''),
-				'brand' => self::ScalarString($product['brand'] ?? ''),
-				'size' => self::ScalarString($product['size'] ?? '')
-			],
-			'images' => array_slice($images, 0, 20),
-			'sources' => self::StringList($data['sources'] ?? []),
-			'warnings' => self::StringList($data['warnings'] ?? []),
-			'outcome' => $outcome,
-			'diagnostics' => GrocyAiDiagnostic::NormalizeCompanionDiagnostics(
-				$companionDiagnostics,
-				$traceContext['trace_id'],
-				$outcome,
-				$transportTiming
-			)
-		];
-	}
-
-	private static function ScalarString($value): string
-	{
-		return is_scalar($value) ? trim((string)$value) : '';
-	}
-
-	private static function ImageToken($value): string
-	{
-		$value = self::ScalarString($value);
-		return preg_match('/^[A-Za-z0-9_-]{20,200}$/', $value) ? $value : '';
-	}
 
 	private static function HasImageSignature(string $body, string $contentType): bool
 	{
@@ -308,25 +242,6 @@ class GrocyAiService
 			return strlen($body) >= 12 && str_starts_with($body, 'RIFF') && substr($body, 8, 4) === 'WEBP';
 		}
 		return false;
-	}
-
-	private static function StringList($values): array
-	{
-		if (!is_array($values))
-		{
-			return [];
-		}
-
-		$result = [];
-		foreach ($values as $value)
-		{
-			if (is_scalar($value) && trim((string)$value) !== '')
-			{
-				$result[] = trim((string)$value);
-			}
-		}
-
-		return array_values(array_unique($result));
 	}
 
 	private function GetServiceUrl(): string
