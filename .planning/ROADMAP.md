@@ -67,7 +67,7 @@ Plans:
 
 **Wave 7** *(blocked on Wave 6 completion)*
 
-- [ ] 01-07-PLAN.md — Add mobile/a11y, latency-evidence, and dual-branch release gates.
+- [x] 01-07-PLAN.md — Add mobile/a11y, latency-evidence, and dual-branch release gates.
 
 **Wave 8** *(blocked on Wave 7 completion)*
 
@@ -191,7 +191,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7. Dual-bra
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Safety Baseline & Mobile Diagnostics | 6/10 | In Progress|  |
+| 1. Safety Baseline & Mobile Diagnostics | 7/10 | In Progress|  |
 | 2. Enrichment Contract, Barcode Handoff & Secure Media | 0/TBD | Not started | - |
 | 3. Food Taxonomy & Categorization Pilot | 0/TBD | Not started | - |
 | 4. Reusable Conversion Model | 0/TBD | Not started | - |
