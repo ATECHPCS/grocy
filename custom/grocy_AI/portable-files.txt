@@ -2,6 +2,7 @@ custom/grocy_AI/module-version.json
 custom/grocy_AI/src/GrocyAiDiagnostic.php
 custom/grocy_AI/src/GrocyAiContract.php
 custom/grocy_AI/src/GrocyAiService.php
+custom/grocy_AI/src/GrocyAiGtin.php
 custom/grocy_AI/tests/run.php
 custom/grocy_AI/README.md
 public/custom/grocy_AI/product-enrichment.js

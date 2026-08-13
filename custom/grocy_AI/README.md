@@ -40,10 +40,19 @@ Product enrichment always uses a 12-second total request limit and a 2-second co
 ## Grocy routes
 
 - `GET /api/grocy-ai/status`
+- `GET /api/grocy-ai/barcodes/resolve/{barcode}`
 - `GET /api/grocy-ai/products/enrich/upc/{upc}`
 - `GET /api/grocy-ai/images/{selection-token}`
 
-All routes use Grocy authentication. UPC enrichment and selected-image retrieval also require the `MASTER_DATA_EDIT` permission.
+All routes use Grocy authentication. Barcode ownership resolution, UPC enrichment, and selected-image retrieval also require the `MASTER_DATA_EDIT` permission.
+
+## Barcode ownership handoff
+
+`GrocyAiGtin` is the single predicate owner for both PHP and generated SQLite expressions. It accepts only checksum-valid digit strings whose exact lengths are GTIN-8, GTIN-12, GTIN-13, or GTIN-14. The exact scanned string remains the display value; ownership comparisons use its left-zero-padded 14-character canonical key. Unsupported lengths, text, and checksum-invalid numeric-looking values return no canonical key and remain ordinary arbitrary Grocy barcodes outside this enrichment boundary.
+
+The authenticated barcode route is read-only and checks `MASTER_DATA_EDIT` before any ownership lookup. It searches locally before provider enrichment, returns only a bounded database-owned product ID for an existing owner, and never accepts an owner ID or destination from browser or companion input. An existing owner suppresses provider work. An unused valid GTIN may be staged once in transient browser state as `Ready to add on Save`, where it remains removable and disappears on invalidation, cancellation, stale results, or navigation.
+
+This slice does not insert or update barcode rows and does not enforce canonical uniqueness in the production schema. Normal-Save attachment and database uniqueness enforcement remain owned by Plan 02-05. Nutrition Facts, allergen, dietary, and medical data remain rejected and deferred.
 
 ## Companion-service contract
 
@@ -96,7 +105,7 @@ Contract v2 contains no external image URL or provider dictionary. Secure media 
 
 The only Phase 2 brand destination is the revalidated `products.brand` single-line product userfield. Package size and food type remain visible evidence with no destination; this module does not create userfields or a Phase 3 taxonomy surrogate. Product-group and quantity-unit suggestions must name an active local option. Nutrition Facts, allergen, dietary, and medical members remain rejected and deferred.
 
-Selection state, captured current values, and the selected-only final diff are transient. The browser re-reads each native control before opening the diff and again before staging. A changed value is marked `Needs review`, removed from the diff, and cannot stage until the user explicitly selects it against the new current value. `Stage selected changes` dispatches only local native input/change behavior for selected live rows and makes no API request. Barcode attachment remains assigned to the normal-Save handoff slice, and secure image-file staging remains assigned to the secure-media slice. Grocy's unchanged normal Save buttons are the sole persistence authority.
+Selection state, captured current values, and the selected-only final diff are transient. The browser re-reads each native control before opening the diff and again before staging. A changed value is marked `Needs review`, removed from the diff, and cannot stage until the user explicitly selects it against the new current value. `Stage selected changes` dispatches only local native input/change behavior for selected live rows and makes no API request. An unused checksum-valid barcode can join that transient review state, but normal-Save barcode attachment remains assigned to Plan 02-05 and secure image-file staging remains assigned to the secure-media slice. Grocy's unchanged normal Save buttons are the sole persistence authority.
 
 ## Diagnostic and privacy contract
 
@@ -175,4 +184,4 @@ Perform this smoke only after the portable and adapter commits exist in `/Users/
 
 ## Next phase
 
-Add an optional create-product barcode handoff and broader structured field mappings after the review-before-save workflow is verified on desktop and mobile.
+Attach the reviewed transient barcode through Grocy's normal Save boundary and enforce canonical uniqueness only after the migration and rollback gates pass.
