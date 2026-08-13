@@ -29,6 +29,12 @@ The module implementation and contract are documented in [`custom/grocy_AI/READM
 
 The production container is built with `Dockerfile.atech`. It pins the matching LinuxServer Grocy 4.6 runtime and overlays only the integration surface listed above.
 
+### Phase 1 portable and stable adapter boundary
+
+- Commit `217a7a0e98889cf4953d3fb7bdc2bf038be4ce7f` is the portable baseline. Its seven paths match `atech-main` byte-for-byte: the module/diagnostic versions, diagnostic and service classes, native contract tests, module documentation, browser behavior, and module CSS.
+- The stable adapter commit changes only `custom/grocy_AI/src/GrocyAiApiController.php`, `custom/grocy_AI/routes.php`, `views/productform.blade.php`, `custom/grocy_AI/version.json`, and this file. The controller retains `Grocy\Controllers\BaseApiController`, routes retain class-based `JsonMiddleware::class`, and the product form retains the stable Save lifecycle.
+- `Customization` is `ATECHPCS-grocy_AI-3` so the unchanged `Dockerfile.atech` overlay invalidates persisted route/view caches after the diagnostic route and view integration update.
+
 ## Unused Grocy features
 
 Chores and batteries remain in upstream source code, but their fork defaults are off. Keep these settings in the deployment configuration so the intent is explicit:
