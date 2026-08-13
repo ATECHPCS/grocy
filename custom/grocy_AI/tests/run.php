@@ -77,6 +77,100 @@ function runDuplicateContractCase(string $caseId, string $marker): never
 	exit(0);
 }
 
+function phase2BladeRender(): array
+{
+	$repoRoot = dirname(__DIR__, 3);
+	$autoload = getenv('GROCY_BLADE_AUTOLOAD');
+	if ((!is_string($autoload) || $autoload === '') && is_file($repoRoot . '/packages/autoload.php'))
+	{
+		$autoload = $repoRoot . '/packages/autoload.php';
+	}
+	if (!is_string($autoload) || $autoload === '')
+	{
+		return [false, 'The real Blade autoloader is unavailable', ''];
+	}
+	require_once $autoload;
+
+	$template = file_get_contents($repoRoot . '/views/productform.blade.php');
+	$compiler = new Illuminate\View\Compilers\BladeCompiler(new Illuminate\Filesystem\Filesystem(), sys_get_temp_dir());
+	try
+	{
+		$compiledTemplate = $compiler->compileString($template);
+		token_get_all($compiledTemplate, TOKEN_PARSE);
+
+		$rootOffset = strpos($template, 'id="grocy-ai-product-enrichment"');
+		$pictureOffset = strpos($template, '<div class="row @if($mode == \'edit\' && !GROCY_FEATURE_FLAG_GROCY_AI)', $rootOffset ?: 0);
+		$startOffset = $rootOffset === false ? false : strrpos(substr($template, 0, $rootOffset), '@if(GROCY_FEATURE_FLAG_GROCY_AI)');
+		if ($startOffset === false || $pictureOffset === false)
+		{
+			return [false, 'The actual feature-hook block could not be isolated', ''];
+		}
+		$hook = substr($template, $startOffset, $pictureOffset - $startOffset);
+		$compiledHook = $compiler->compileString($hook);
+		token_get_all($compiledHook, TOKEN_PARSE);
+
+		$mode = 'create';
+		$product = (object)['id' => 91];
+		$barcodes = [];
+		$userfields = [(object)[
+			'id' => 27,
+			'entity' => 'products',
+			'name' => 'products.brand',
+			'type' => 'text-single-line',
+			'caption' => 'Brand "quoted" <verified>',
+			'input_required' => 0
+		]];
+		$__t = static fn(string $value): string => 'L10N:' . $value;
+		$U = static fn(string $value): string => $value;
+		$bufferLevel = ob_get_level();
+		ob_start();
+		eval('?>' . $compiledHook);
+		$rendered = (string)ob_get_clean();
+		return [true, '', $rendered];
+	}
+	catch (Throwable $ex)
+	{
+		$bufferLevel ??= ob_get_level();
+		while (ob_get_level() > $bufferLevel)
+		{
+			ob_end_clean();
+		}
+		return [false, $ex->getMessage(), ''];
+	}
+}
+
+function runBladePhase2TargetsCase(): never
+{
+	[$renderedOk, $message, $rendered] = phase2BladeRender();
+	$required = [
+		'id="grocy-ai-field-review"',
+		'id="grocy-ai-field-rows"',
+		'id="grocy-ai-selection-status"',
+		'id="grocy-ai-final-diff"',
+		'id="grocy-ai-stage-selected-button"',
+		'data-brand-target-id="27"',
+		'data-brand-target-name="products.brand"',
+		'data-package-size-target-available="false"',
+		'data-food-type-target-available="false"',
+		'L10N:Use suggested value',
+		'Brand &quot;quoted&quot; &lt;verified&gt;'
+	];
+	foreach ($required as $expected)
+	{
+		if (!$renderedOk || !str_contains($rendered, $expected))
+		{
+			expectedRed('EXPECTED_RED: blade.phase2_targets', $renderedOk ? "Rendered feature hook is missing {$expected}" : $message);
+		}
+	}
+	if (str_contains($rendered, '<verified>'))
+	{
+		expectedRed('EXPECTED_RED: blade.phase2_targets', 'Target metadata was not HTML-escaped');
+	}
+
+	fwrite(STDOUT, "Blade phase2 target rendering passed\n");
+	exit(0);
+}
+
 if (($argv[1] ?? null) === '--case')
 {
 	$selectedCase = $argv[2] ?? '';
@@ -87,6 +181,10 @@ if (($argv[1] ?? null) === '--case')
 	if ($selectedCase === 'contract.duplicate_nested')
 	{
 		runDuplicateContractCase('duplicate_nested', 'EXPECTED_RED: contract.duplicate_nested');
+	}
+	if ($selectedCase === 'blade.phase2_targets')
+	{
+		runBladePhase2TargetsCase();
 	}
 
 	fwrite(STDERR, "Unknown test case: {$selectedCase}\n");
@@ -246,6 +344,26 @@ BLADE;
 		check(false, 'The real Blade compiler renders the block-form asset token (' . $ex->getMessage() . ')');
 	}
 }
+
+[$phase2BladeOk, $phase2BladeMessage, $phase2BladeHtml] = phase2BladeRender();
+check($phase2BladeOk, 'The real Blade compiler renders the actual Phase 2 feature hook' . ($phase2BladeMessage === '' ? '' : ' (' . $phase2BladeMessage . ')'));
+foreach ([
+	'id="grocy-ai-field-review"',
+	'id="grocy-ai-field-rows"',
+	'id="grocy-ai-selection-status"',
+	'id="grocy-ai-final-diff"',
+	'id="grocy-ai-stage-selected-button"',
+	'data-brand-target-id="27"',
+	'data-brand-target-name="products.brand"',
+	'data-package-size-target-available="false"',
+	'data-food-type-target-available="false"',
+	'L10N:Use suggested value',
+	'Brand &quot;quoted&quot; &lt;verified&gt;'
+] as $expectedPhase2Markup)
+{
+	check(str_contains($phase2BladeHtml, $expectedPhase2Markup), "The rendered Phase 2 hook contains {$expectedPhase2Markup}");
+}
+check(!str_contains($phase2BladeHtml, '<verified>'), 'The rendered Phase 2 target metadata remains escaped');
 
 function companionBody(string $outcome = 'success', array $extra = []): string
 {
