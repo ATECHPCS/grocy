@@ -132,9 +132,18 @@ Each task was committed atomically:
 - **Verification:** All 11 focused Chromium-mobile cases pass.
 - **Committed in:** Not applicable (runtime permission only).
 
+**5. [Rule 1 - State serialization] Corrected the SDK-written progress percentage**
+
+- **Found during:** Plan close-out
+- **Issue:** `state.update-progress` correctly reported 14 of 24 plans and rendered the 58% body progress bar, but serialized `progress.percent: 0` in STATE frontmatter.
+- **Fix:** Corrected the frontmatter to 58% and removed the stale empty velocity scaffold so STATE remains below its 150-line limit.
+- **Files modified:** `.planning/STATE.md`
+- **Verification:** STATE frontmatter/body report 14 of 24 plans (58%), Plan 6 of 14 is next, and the file is below 150 lines.
+- **Committed in:** Plan tracking commit.
+
 ---
 
-**Total deviations:** 4 auto-fixed (2 bugs, 1 missing critical deployment behavior, 1 blocking runtime issue).
+**Total deviations:** 5 auto-fixed (3 bugs, 1 missing critical deployment behavior, 1 blocking runtime issue).
 **Impact on plan:** The fixes made test accounting accurate, completed the specified conflict recovery, and ensured deployed asset freshness. They added no dependency, write route, persistence authority, or product scope.
 
 ## Issues Encountered
@@ -178,6 +187,7 @@ None - no package, environment variable, userfield, taxonomy, or external servic
 - All 84 exact migration/ownership checks and all 105 native module checks pass; PHP lint, JavaScript syntax, and `git diff --check` pass.
 - All 11 focused Chromium-mobile `@enr04|@enr06|@enr09` cases pass, including exactly-once Save, delayed coalescing, same/other-owner races, barcode-only retry, and pre-Save zero writes.
 - The redacted execution preflight remains `canonical_collision_groups: 0`; no production row value or mutation was read or recorded by this plan.
+- STATE frontmatter and body report 14 of 24 plans complete (58%), ROADMAP reports Phase 2 at 5 of 14, and ENR-04/ENR-06/ENR-09 are complete.
 
 ---
 *Phase: 02-enrichment-contract-barcode-handoff-secure-media*

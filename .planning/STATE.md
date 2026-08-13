@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 02-04-PLAN.md
-last_updated: "2026-08-13T22:23:11.178Z"
+stopped_at: Completed 02-05-PLAN.md
+last_updated: "2026-08-13T22:39:32.257Z"
 last_activity: 2026-08-13
 progress:
   total_phases: 7
   completed_phases: 0
   total_plans: 24
-  completed_plans: 13
-  percent: 54
+  completed_plans: 14
+  percent: 58
 ---
 
 # Project State
@@ -26,30 +26,13 @@ See: .planning/PROJECT.md (updated 2026-08-12)
 ## Current Position
 
 Phase: 02 (Enrichment Contract, Barcode Handoff & Secure Media) — EXECUTING
-Plan: 5 of 14
+Plan: 6 of 14
 Status: Ready to execute
 Last activity: 2026-08-13
 
-Progress: [█████░░░░░] 54%
+Progress: [██████░░░░] 58%
 
 ## Performance Metrics
-
-**Velocity:**
-
-- Total plans completed: 0
-- Average duration: -
-- Total execution time: 0.0 hours
-
-**By Phase:**
-
-| Phase | Plans | Total | Avg/Plan |
-|-------|-------|-------|----------|
-| - | - | - | - |
-
-**Recent Trend:**
-
-- Last 5 plans: -
-- Trend: Not started
 
 *Updated after each plan completion*
 | Phase 01 P01 | 3 min | 1 tasks | 1 files |
@@ -65,6 +48,7 @@ Progress: [█████░░░░░] 54%
 | Phase 02 P02 | 16 min | 2 tasks | 16 files |
 | Phase 02 P03 | 20min | 2 tasks | 8 files |
 | Phase 02 P04 | 20 min | 3 tasks | 17 files |
+| Phase 02 P05 | 11 min | 2 tasks | 10 files |
 
 ## Accumulated Context
 
@@ -113,6 +97,9 @@ Recent decisions affecting current work:
 - [Phase 02]: Canonicalize only checksum-valid digit strings of exact GTIN-8/12/13/14 lengths; preserve the exact scan and leave invalid numeric-looking values outside enrichment ownership. — One shared PHP and generated SQLite predicate prevents drift while preserving Grocy's arbitrary barcode support.
 - [Phase 02]: Resolve MASTER_DATA_EDIT and local ownership before provider work; owner navigation uses only the bounded database product ID. — This suppresses duplicate provider work and prevents browser or companion input from controlling local navigation.
 - [Phase 02]: Keep unused barcode staging in reducer state only; Plan 02-05 owns normal-Save attachment and uniqueness enforcement. — Plan 02-04 is read-only and preserves Grocy's unchanged Save authority.
+- [Phase 02]: Use only the generated checksum-valid GTIN expression for lookup, collision audit, and migration uniqueness — Nonzero collisions block transactionally without deleting, rewriting, or reassigning rows.
+- [Phase 02]: Attach the staged barcode only after normal Save establishes a trusted product ID — Duplicate continuations coalesce and existing Grocy object APIs remain the sole write boundary.
+- [Phase 02]: Use barcode-only recovery after partial product creation — Same-product ownership is success; another owner clears staging and routes only from the database-owned ID.
 
 ### Pending Todos
 
@@ -144,6 +131,6 @@ Items acknowledged for v2 after the preview/audit model is proven:
 
 ## Session Continuity
 
-Last session: 2026-08-13T22:23:11.086Z
-Stopped at: Completed 02-04-PLAN.md
+Last session: 2026-08-13T22:38:55.469Z
+Stopped at: Completed 02-05-PLAN.md
 Resume file: None

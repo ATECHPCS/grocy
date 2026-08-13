@@ -21,7 +21,7 @@
 - [x] **ENR-01**: User receives a strictly validated, versioned enrichment response in which every external suggestion includes source, confidence band, reason, and retrieval freshness.
 - [x] **ENR-02**: User sees the originally scanned barcode while Grocy checks canonical UPC/EAN/GTIN equivalents for duplicates.
 - [x] **ENR-03**: User scanning a barcode already assigned in Grocy is routed to the existing owning product instead of creating a duplicate.
-- [ ] **ENR-04**: User can stage a previously unused barcode in Grocy's normal product/barcode workflow, and it is written exactly once only after Save.
+- [x] **ENR-04**: User can stage a previously unused barcode in Grocy's normal product/barcode workflow, and it is written exactly once only after Save.
 - [x] **ENR-05**: User can independently review suggestions for name, brand, package size, product group, quantity unit, food type, and product image alongside current values.
 - [x] **ENR-06**: User sees one final diff of selected enrichment changes, and no unselected field is changed when the normal Grocy Save action runs.
 - [ ] **ENR-07**: User sees an exact structured-source front-package image first when available, while SearXNG candidates are clearly identified as unverified alternatives.
@@ -122,7 +122,7 @@
 | ENR-01 | Phase 2 | Complete |
 | ENR-02 | Phase 2 | Complete |
 | ENR-03 | Phase 2 | Complete |
-| ENR-04 | Phase 2 | Pending |
+| ENR-04 | Phase 2 | Complete |
 | ENR-05 | Phase 2 | Complete |
 | ENR-06 | Phase 2 | Complete |
 | ENR-07 | Phase 2 | Pending |
