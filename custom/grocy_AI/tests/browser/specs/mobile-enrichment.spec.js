@@ -75,9 +75,11 @@ test('@mob01 invalid styling and accessibility state clear on a valid edit', asy
 	{
 		await input.fill(invalid.value);
 		await expect(error).toHaveText(invalid.message, { timeout: 250 });
+		await expect(error).toHaveCSS('display', 'block');
 		await expect(input).toHaveClass(/\bis-invalid\b/);
 		await expect(input).toHaveAttribute('aria-invalid', 'true');
 		await expect(input).toHaveCSS('border-color', 'rgb(220, 53, 69)');
+		await expect(input).toHaveCSS('box-shadow', /rgba\(220, 53, 69, 0\.25\)/);
 		await expect(search).toBeDisabled();
 		await input.press('Enter');
 	}
@@ -86,6 +88,8 @@ test('@mob01 invalid styling and accessibility state clear on a valid edit', asy
 	await input.fill(validGtin);
 	await expect(input).not.toHaveClass(/\bis-invalid\b/);
 	await expect(input).toHaveAttribute('aria-invalid', 'false');
+	await expect(error).toHaveText('');
+	await expect(error).toHaveCSS('display', 'none');
 	await expect(error).toBeHidden();
 	await expect(search).toBeEnabled();
 });
@@ -99,6 +103,7 @@ test('@mob08 already-denied camera permission recovers to manual entry without d
 	await page.getByRole('button', { name: 'Scan barcode' }).click();
 
 	await expect(page.locator('#grocy-ai-status')).toHaveText(cameraUnavailable);
+	await page.waitForTimeout(50);
 	await expect(input).toBeFocused();
 	expect(await input.inputValue()).toBe(validGtin);
 	expect(await page.evaluate(function () { return window.__fixtureCounters.cameraDelegations; })).toBe(0);
@@ -122,6 +127,7 @@ test('@mob08 prompt-to-denied camera permission recovers once after one scanner 
 	await page.evaluate(function () { window.__cameraPermissionStatus.changeTo('denied'); });
 	await expect(page.locator('#grocy-ai-status')).toHaveText(cameraUnavailable);
 	await expect(page.getByText(cameraUnavailable, { exact: true })).toHaveCount(1);
+	await page.waitForTimeout(50);
 	await expect(input).toBeFocused();
 	expect(await input.inputValue()).toBe(validGtin);
 	expect(await page.evaluate(function () { return window.__fixtureCounters.cameraDelegations; })).toBe(1);

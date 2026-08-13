@@ -105,6 +105,11 @@ details.grocy-ai-diagnostics:not([open]) > .grocy-ai-diagnostic-body {
 	min-height: 44px;
 }
 
+#grocy-ai-upc.is-invalid:focus {
+	border-color: #dc3545;
+	box-shadow: 0 0 0 .2rem rgba(220, 53, 69, .25);
+}
+
 .grocy-ai-summary {
 	display: grid;
 	gap: .25rem;

@@ -18,6 +18,7 @@
 		.input-group-append { display: flex; }
 		.form-control { min-width: 0; flex: 1 1 auto; padding: 8px; border: 1px solid #ced4da; }
 		.form-control.is-invalid { border-color: #dc3545; }
+		.form-control:focus { border-color: #80bdff; box-shadow: 0 0 0 .2rem rgba(0, 123, 255, .25); outline: 0; }
 		.btn { min-height: 44px; padding: 8px 12px; border: 1px solid transparent; border-radius: 4px; background: #f8f9fa; }
 		.btn:disabled { opacity: .65; }
 		.btn-outline-primary { color: #007bff; border-color: #007bff; }
@@ -25,6 +26,7 @@
 		.btn-info { color: #fff; background: #17a2b8; }
 		.invalid-feedback { color: #dc3545; }
 		.d-none { display: none !important; }
+		.d-block { display: block !important; }
 		.mt-3 { margin-top: 16px; }
 		.mb-0 { margin-bottom: 0; }
 		.alert { padding: 12px; border: 1px solid transparent; border-radius: 4px; }
@@ -307,6 +309,15 @@
 			window.__fixtureCounters.cameraDelegations++;
 		});
 		document.body.appendChild(cameraControl);
+
+		document.getElementById('grocy-ai-scan-button').addEventListener('click', function ()
+		{
+			// Model Chrome's late click-default focus transition after permission handling.
+			window.setTimeout(function ()
+			{
+				if (document.activeElement) document.activeElement.blur();
+			}, 0);
+		});
 	})();
 	</script>
 	<script src="/assets/product-enrichment.js"></script>
