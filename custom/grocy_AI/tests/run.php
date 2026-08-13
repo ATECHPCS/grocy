@@ -187,6 +187,72 @@ function runBladePhase2TargetsCase(): never
 	exit(0);
 }
 
+function pngDimensionFixture(int $width, int $height): string
+{
+	$header = "\x89PNG\r\n\x1a\n";
+	$ihdr = pack('N', 13) . 'IHDR' . pack('NNCCCCC', $width, $height, 8, 2, 0, 0, 0) . pack('N', 0);
+	return $header . $ihdr . str_repeat('x', 2200);
+}
+
+function runMediaPixelLimitCase(): never
+{
+	$marker = 'EXPECTED_RED: media.pixel_limit';
+	$validDimensions = [
+		[32, 32],
+		[4000, 4000],
+		[4096, 3906]
+	];
+	foreach ($validDimensions as [$width, $height])
+	{
+		$body = pngDimensionFixture($width, $height);
+		$service = new GrocyAiService(fn(): array => [
+			'status' => 200,
+			'body' => $body,
+			'content_type' => 'image/png'
+		]);
+		try
+		{
+			$result = $service->FetchImage('opaquevariantboundhandle01');
+			if (($result['body'] ?? null) !== $body)
+			{
+				expectedRed($marker, "Valid {$width}x{$height} PNG bytes were changed");
+			}
+		}
+		catch (Throwable $ex)
+		{
+			expectedRed($marker, "Valid inclusive {$width}x{$height} PNG was rejected");
+		}
+	}
+
+	$invalidBodies = [
+		'zero_width' => pngDimensionFixture(0, 32),
+		'below_minimum_width' => pngDimensionFixture(31, 32),
+		'above_maximum_width' => pngDimensionFixture(4097, 32),
+		'above_pixel_limit' => pngDimensionFixture(4000, 4001),
+		'malformed_dimensions' => "\x89PNG\r\n\x1a\n" . str_repeat('x', 2200)
+	];
+	foreach ($invalidBodies as $caseId => $body)
+	{
+		$service = new GrocyAiService(fn(): array => [
+			'status' => 200,
+			'body' => $body,
+			'content_type' => 'image/png'
+		]);
+		try
+		{
+			$service->FetchImage('opaquevariantboundhandle01');
+			expectedRed($marker, "Invalid decoded dimension case {$caseId} was accepted");
+		}
+		catch (RuntimeException)
+		{
+			// Exact MIME, magic, dimensions, and pixel bounds rejected the bytes.
+		}
+	}
+
+	fwrite(STDOUT, "Grocy decoded media dimension bounds passed\n");
+	exit(0);
+}
+
 if (($argv[1] ?? null) === '--case')
 {
 	$selectedCase = $argv[2] ?? '';
@@ -201,6 +267,10 @@ if (($argv[1] ?? null) === '--case')
 	if ($selectedCase === 'blade.phase2_targets')
 	{
 		runBladePhase2TargetsCase();
+	}
+	if ($selectedCase === 'media.pixel_limit')
+	{
+		runMediaPixelLimitCase();
 	}
 
 	fwrite(STDERR, "Unknown test case: {$selectedCase}\n");

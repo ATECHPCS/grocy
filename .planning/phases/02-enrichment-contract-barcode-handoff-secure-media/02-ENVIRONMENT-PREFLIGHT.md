@@ -3,7 +3,7 @@
 ## Resolved preflight
 
 status: PASS
-rechecked_at_utc: 2026-08-13T22:08:57Z
+rechecked_at_utc: 2026-08-13T23:05:00Z
 contract_version: 2
 
 ### Product destinations
@@ -39,6 +39,8 @@ media_fixture_failures: 0
 media_fixture_bounds_sha256: 26907b92c2dcf5de48061a319399ef2864361b1f4b8aee426dc1a935634264bb
 
 Deterministic in-memory JPEG, PNG, and WebP fixtures, including the minimum dimension and a maximum-bound image below 16 megapixels, fit the locked byte, signature, decoded-dimension, and MIME envelope. Incompatibility would block execution; these limits were not widened.
+
+Plan 02-06 revalidated the same four-case redacted corpus against the locked R-02/R-03 bounds before adding the RED specification. Only the aggregate case/failure counts and bounds hash remain recorded; no URL, handle, source payload, or fixture bytes were retained.
 
 ### Companion dependency set
 
