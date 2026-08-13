@@ -5,6 +5,7 @@ use Grocy\Middleware\JsonMiddleware;
 use GrocyAI\Controllers\Api\GrocyAiApiController;
 use Slim\Routing\RouteCollectorProxy;
 
+require_once __DIR__ . '/src/GrocyAiDiagnostic.php';
 require_once __DIR__ . '/src/GrocyAiService.php';
 require_once __DIR__ . '/src/GrocyAiApiController.php';
 
