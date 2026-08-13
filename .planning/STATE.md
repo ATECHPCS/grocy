@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 01-07-PLAN.md
-last_updated: "2026-08-13T02:09:14.662Z"
+stopped_at: Completed 01-08-PLAN.md
+last_updated: "2026-08-13T02:19:52.120Z"
 last_activity: 2026-08-13
 progress:
   total_phases: 7
   completed_phases: 0
   total_plans: 10
-  completed_plans: 7
-  percent: 70
+  completed_plans: 8
+  percent: 80
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-08-12)
 ## Current Position
 
 Phase: 01 (Safety Baseline & Mobile Diagnostics) — EXECUTING
-Plan: 8 of 10
+Plan: 9 of 10
 Status: Ready to execute
 Last activity: 2026-08-13
 
-Progress: [███████░░░] 70%
+Progress: [████████░░] 80%
 
 ## Performance Metrics
 
@@ -59,6 +59,7 @@ Progress: [███████░░░] 70%
 | Phase 01 P05 | 10 min | 2 tasks | 7 files |
 | Phase 01 P06 | 24 min | 3 tasks | 9 files |
 | Phase 01 P07 | 17 min | 3 tasks | 10 files |
+| Phase 01 P08 | 3 min | 2 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -91,6 +92,8 @@ Recent decisions affecting current work:
 - [Phase 01]: Require one supplied full 40-hex stable commit and read blobs with git show; never infer or move a stable ref during parity. — This keeps parity reproducible and prevents the release gate from mutating the main checkout.
 - [Phase 01]: Keep physical evidence empty and failing until stable deployment and real phone sampling provide all locked samples. — Synthetic or partial evidence must not satisfy the physical-device release gate.
 - [Phase 01]: Treat orientation change as request invalidation and the diagnostics disclosure as a touch action subject to the 44px contract. — Both interactions participate in the locked mobile lifecycle and accessibility requirements.
+- [Phase 01]: Mirror and commit the exact seven-file portable manifest before any stable-only controller, route, view, cache-marker, customization, deployment, or phone-evidence work. — This keeps stable framework adaptation reviewable and separate from portable bytes.
+- [Phase 01]: Pin downstream stable parity and adaptation to portable commit 217a7a0e98889cf4953d3fb7bdc2bf038be4ce7f. — A full immutable commit reproduces the seven-file baseline without moving either checkout.
 
 ### Pending Todos
 
@@ -116,6 +119,6 @@ Items acknowledged for v2 after the preview/audit model is proven:
 
 ## Session Continuity
 
-Last session: 2026-08-13T02:09:14.638Z
-Stopped at: Completed 01-07-PLAN.md
+Last session: 2026-08-13T02:19:52.100Z
+Stopped at: Completed 01-08-PLAN.md
 Resume file: None
