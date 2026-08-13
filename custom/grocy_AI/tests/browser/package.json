@@ -1,0 +1,13 @@
+{
+	"name": "grocy-ai-browser-tests",
+	"version": "1.0.0",
+	"private": true,
+	"scripts": {
+		"test": "playwright test",
+		"test:smoke": "playwright test --grep @smoke",
+		"test:install": "playwright install chromium webkit"
+	},
+	"devDependencies": {
+		"@playwright/test": "1.62.1"
+	}
+}
