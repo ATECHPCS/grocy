@@ -1,6 +1,6 @@
 # Phase 01 Physical-Phone Acceptance
 
-Status: awaiting stable deployment and physical evidence in Plans 01-09 and 01-10.
+Status: stable deployment prerequisites recorded by Plan 01-09; physical evidence remains pending for Plan 01-10.
 
 This procedure validates the real household phone, browser, Wi-Fi/LAN path, stable Grocy deployment, and locked latency baseline. Browser emulation is necessary but does not replace this record.
 
@@ -14,12 +14,43 @@ This procedure validates the real household phone, browser, Wi-Fi/LAN path, stab
 
 ## Preconditions
 
-- [ ] The exact stable deployment commit is recorded as a full 40-hex SHA.
-- [ ] The portable parity command has been run against that SHA without switching the `atech-main` checkout.
-- [ ] The stable route/render/image smoke in `custom/grocy_AI/README.md` is green.
-- [ ] The Grocy, grocy_AI module, companion, and diagnostic contract versions are visible and recorded without host URLs or credentials.
+- [x] The exact stable deployment commit is recorded as a full 40-hex SHA.
+- [x] The portable parity command has been run against that SHA without switching the `atech-main` checkout.
+- [x] The stable route/render/image smoke in `custom/grocy_AI/README.md` is green.
+- [x] The Grocy, grocy_AI module, companion, and diagnostic contract versions are visible and recorded without host URLs or credentials.
 - [ ] The household phone is on the intended Wi-Fi/LAN or approved VPN route.
 - [ ] Normal Grocy Save controls work before enrichment testing begins.
+
+## Stable deployment prerequisites (Plan 01-09)
+
+This section contains deployment and redacted route prerequisites only. It does not contain phone timings, device/browser metadata, product or GTIN values, credentials, cookies, response bodies, or normal-Save mutation evidence.
+
+| Field | Recorded prerequisite |
+|---|---|
+| `portable_stable_sha` | `217a7a0e98889cf4953d3fb7bdc2bf038be4ce7f` |
+| `stable_adapter_sha` | `770ba4f11b362061fbd7bf5c66549840235f1152` |
+| `stable_image_digest` | `sha256:d1c133275fe5d458ff5ecc83d25b0435f52e0236d8a810feec8352e972686957` |
+| Image revision label | `770ba4f11b362061fbd7bf5c66549840235f1152` |
+| Deployment timestamp | `2026-08-13T02:50:16.745276376Z` |
+| `cache_marker` | `ATECHPCS-grocy_AI-3` (changed from portable parent marker `ATECHPCS-grocy_AI-2`) |
+| Versions | Grocy `4.6.0`; grocy_AI module `1.0.0`; diagnostic contract `1`; companion reported closed value `unknown` |
+| `persistent_volume` | PASS — `/etc/komodo/grocy:/config` remains a read-write mount; database present after restart |
+| Existing data continuity | PASS — aggregate counts remain 220 products and 979 product-picture files |
+| `authenticated_route_smoke` | PASS — status, enrichment, selected-image, and product-form routes returned HTTP 200 |
+| Unauthorized route smoke | PASS — status, enrichment, and selected-image routes each returned HTTP 401 without authentication |
+| Route/view cache invalidation | PASS — the new product-enrichment card rendered; JavaScript and CSS references were present; both assets returned HTTP 200; deployed route, controller, view, version, JavaScript, and CSS hashes matched the stable source |
+| `degraded_smoke` | PASS — deployed authenticated status/enrichment/image boundaries were exercised live; finite timeout, companion-unavailable, provider-error, and partial-image states were verified by the deterministic release suites because changing the household companion to shape live failures was not safe |
+| `zero_enrichment_writes` | PASS — before/after row counts and SHA-256 fingerprints for products, product barcodes, stock, and stock log were identical; the product-picture count and tree fingerprint were also identical |
+| Rollback readiness | PASS — the pre-deployment Compose backup and previous image remain present; the temporary build directory was removed after verification |
+
+### Redacted smoke evidence
+
+- SHA-pinned portable parity: PASS — 7 identical, 0 mismatched, 0 missing.
+- Stable native contract: PASS — all 84 checks passed.
+- Browser smoke suite: PASS — 4 tests passed across the locked mobile browser projects.
+- Full deterministic browser release suite: PASS — all 78 tests passed, including timeout, unavailable-companion, provider-error, partial-image, recovery, and zero-write behavior.
+- Live enrichment returned a closed `success` outcome and six image candidates; selected-image retrieval returned an allowlisted JPEG of 43,568 bytes. No candidate values or handles were recorded.
+- Product, barcode, stock, stock-log, and product-picture aggregate fingerprints were unchanged across all authenticated and unauthorized live route requests.
 
 ## Run metadata
 
