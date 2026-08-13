@@ -776,6 +776,7 @@
 	});
 
 	window.addEventListener('pagehide', function () { lifecycleCancel('pagehide'); });
+	window.addEventListener('orientationchange', function () { lifecycleCancel('orientationchange'); });
 	document.addEventListener('visibilitychange', function ()
 	{
 		if (document.visibilityState === 'hidden') lifecycleCancel('hidden');

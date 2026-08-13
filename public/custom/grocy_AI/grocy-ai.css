@@ -61,6 +61,9 @@
 }
 
 .grocy-ai-diagnostics summary {
+	display: flex;
+	align-items: center;
+	min-height: 44px;
 	color: var(--primary);
 	cursor: pointer;
 	font-variant-numeric: tabular-nums;
@@ -155,7 +158,8 @@ details.grocy-ai-diagnostics:not([open]) > .grocy-ai-diagnostic-body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-	.grocy-ai-card .spinner-border {
+	.grocy-ai-card .spinner-border,
+	.grocy-ai-card .fa-spin {
 		animation: none;
 	}
 }
