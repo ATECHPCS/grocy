@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 01-08-PLAN.md
-last_updated: "2026-08-13T02:19:52.120Z"
+stopped_at: Completed 01-09-PLAN.md
+last_updated: "2026-08-13T03:07:34.414Z"
 last_activity: 2026-08-13
 progress:
   total_phases: 7
   completed_phases: 0
   total_plans: 10
-  completed_plans: 8
-  percent: 80
+  completed_plans: 9
+  percent: 90
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-08-12)
 ## Current Position
 
 Phase: 01 (Safety Baseline & Mobile Diagnostics) — EXECUTING
-Plan: 9 of 10
+Plan: 10 of 10
 Status: Ready to execute
 Last activity: 2026-08-13
 
-Progress: [████████░░] 80%
+Progress: [█████████░] 90%
 
 ## Performance Metrics
 
@@ -60,6 +60,7 @@ Progress: [████████░░] 80%
 | Phase 01 P06 | 24 min | 3 tasks | 9 files |
 | Phase 01 P07 | 17 min | 3 tasks | 10 files |
 | Phase 01 P08 | 3 min | 2 tasks | 7 files |
+| Phase 01 P09 | 43 min | 2 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -94,6 +95,9 @@ Recent decisions affecting current work:
 - [Phase 01]: Treat orientation change as request invalidation and the diagnostics disclosure as a touch action subject to the 44px contract. — Both interactions participate in the locked mobile lifecycle and accessibility requirements.
 - [Phase 01]: Mirror and commit the exact seven-file portable manifest before any stable-only controller, route, view, cache-marker, customization, deployment, or phone-evidence work. — This keeps stable framework adaptation reviewable and separate from portable bytes.
 - [Phase 01]: Pin downstream stable parity and adaptation to portable commit 217a7a0e98889cf4953d3fb7bdc2bf038be4ce7f. — A full immutable commit reproduces the seven-file baseline without moving either checkout.
+- [Phase 01]: Preserve stable framework seams across exactly five adapter paths while keeping the seven portable files byte-identical. — This keeps stable release integration reviewable without weakening the portable parity gate.
+- [Phase 01]: Combine live deployed boundary smoke with deterministic forced-degradation fixtures when changing the household companion would be unsafe. — Live status, enrichment, image, form, and asset boundaries were exercised without risking household provider availability; deterministic suites prove the forced finite outcomes.
+- [Phase 01]: Record only aggregate counts, hashes, HTTP statuses, finite outcomes, and versions in deployment evidence; physical phone and normal-Save evidence remain Plan 01-10. — This satisfies deployment provenance and zero-write evidence while preserving the locked privacy boundary and physical acceptance ownership.
 
 ### Pending Todos
 
@@ -119,6 +123,6 @@ Items acknowledged for v2 after the preview/audit model is proven:
 
 ## Session Continuity
 
-Last session: 2026-08-13T02:19:52.100Z
-Stopped at: Completed 01-08-PLAN.md
+Last session: 2026-08-13T03:07:13.831Z
+Stopped at: Completed 01-09-PLAN.md
 Resume file: None

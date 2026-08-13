@@ -75,7 +75,7 @@ Plans:
 
 **Wave 9** *(blocked on Wave 8 completion)*
 
-- [ ] 01-09-PLAN.md — Adapt stable seams, deploy the immutable image, and verify persistent-data continuity.
+- [x] 01-09-PLAN.md — Adapt stable seams, deploy the immutable image, and verify persistent-data continuity.
 
 **Wave 10** *(blocked on Wave 9 completion)*
 
@@ -191,7 +191,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7. Dual-bra
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Safety Baseline & Mobile Diagnostics | 8/10 | In Progress|  |
+| 1. Safety Baseline & Mobile Diagnostics | 9/10 | In Progress|  |
 | 2. Enrichment Contract, Barcode Handoff & Secure Media | 0/TBD | Not started | - |
 | 3. Food Taxonomy & Categorization Pilot | 0/TBD | Not started | - |
 | 4. Reusable Conversion Model | 0/TBD | Not started | - |
