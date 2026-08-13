@@ -307,6 +307,7 @@
 	{
 		errorBox.textContent = '';
 		errorBox.classList.add('d-none');
+		upcInput.classList.remove('is-invalid');
 		upcInput.setAttribute('aria-invalid', 'false');
 	}
 
@@ -314,6 +315,7 @@
 	{
 		errorBox.textContent = message;
 		errorBox.classList.remove('d-none');
+		upcInput.classList.add('is-invalid');
 		upcInput.setAttribute('aria-invalid', 'true');
 		statusBox.replaceChildren();
 		statusBox.className = 'grocy-ai-status alert mt-3 mb-0 alert-secondary d-none';
@@ -715,6 +717,67 @@
 		renderState('ready');
 	}
 
+	function showCameraUnavailable()
+	{
+		setStatus('', localized('cameraUnavailable', 'Camera scanning is unavailable. Enter the GTIN manually.'), 'secondary', false, 'fa-circle-info');
+		upcInput.focus();
+	}
+
+	function startCameraScan()
+	{
+		var cameraControl = document.querySelector('#camerabarcodescanner-start-button[data-target="grocy-ai-upc"]');
+		if (!cameraControl)
+		{
+			showCameraUnavailable();
+			return;
+		}
+
+		var delegated = false;
+		function delegateOnce()
+		{
+			if (delegated) return;
+			delegated = true;
+			cameraControl.click();
+		}
+
+		if (!navigator.permissions || typeof navigator.permissions.query !== 'function')
+		{
+			delegateOnce();
+			return;
+		}
+
+		var permissionQuery;
+		try
+		{
+			permissionQuery = navigator.permissions.query({ name: 'camera' });
+		}
+		catch (error)
+		{
+			delegateOnce();
+			return;
+		}
+
+		Promise.resolve(permissionQuery).then(function (permissionStatus)
+		{
+			if (!permissionStatus || permissionStatus.state === 'denied')
+			{
+				showCameraUnavailable();
+				return;
+			}
+
+			if (typeof permissionStatus.addEventListener === 'function')
+			{
+				var handlePermissionChange = function ()
+				{
+					permissionStatus.removeEventListener('change', handlePermissionChange);
+					if (permissionStatus.state === 'denied') showCameraUnavailable();
+				};
+				permissionStatus.addEventListener('change', handlePermissionChange);
+			}
+			delegateOnce();
+		}).catch(delegateOnce);
+	}
+
 	function copyDiagnostic()
 	{
 		var report = diagnosticJson();
@@ -739,16 +802,7 @@
 	ui.retryButton.addEventListener('click', function () { search('retry'); });
 	cancelButton.addEventListener('click', cancelSearch);
 	ui.copyButton.addEventListener('click', copyDiagnostic);
-	scanButton.addEventListener('click', function ()
-	{
-		var cameraControl = document.querySelector('#camerabarcodescanner-start-button[data-target="grocy-ai-upc"]');
-		if (cameraControl)
-		{
-			cameraControl.click();
-			return;
-		}
-		setStatus('', localized('cameraUnavailable', 'Camera scanning is unavailable. Enter the GTIN manually.'), 'secondary', false, 'fa-circle-info');
-	});
+	scanButton.addEventListener('click', startCameraScan);
 	upcInput.addEventListener('input', validateInput);
 	upcInput.addEventListener('keydown', function (event)
 	{

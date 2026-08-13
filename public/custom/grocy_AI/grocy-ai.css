@@ -101,6 +101,10 @@ details.grocy-ai-diagnostics:not([open]) > .grocy-ai-diagnostic-body {
 	display: none;
 }
 
+#grocy-ai-upc {
+	min-height: 44px;
+}
+
 .grocy-ai-summary {
 	display: grid;
 	gap: .25rem;
