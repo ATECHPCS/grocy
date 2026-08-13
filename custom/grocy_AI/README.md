@@ -109,6 +109,8 @@ Run the standalone module checks with:
 php custom/grocy_AI/tests/run.php
 ```
 
+When `packages/autoload.php` is present, the native suite also compiles the complete product form and renders the custom asset-version fixture with Grocy's installed Blade engine. To point the same regression at an exact external Composer runtime, set `GROCY_BLADE_AUTOLOAD` to that runtime's `autoload.php`.
+
 ## Deterministic release gates
 
 Run the main-repository contracts from `/Users/ian/Documents/Repos/grocy` on `atech-main`:

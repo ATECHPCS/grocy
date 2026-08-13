@@ -58,6 +58,60 @@ check(substr_count($productFormTemplate, '{{ $grocyAiAssetVersion }}') === 2, 'B
 check(!str_contains($productFormTemplate, 'grocy-ai.css?v=\', true) }}{{ $version }}'), 'Custom CSS is independent from the Grocy core version');
 check(!str_contains($productFormTemplate, 'product-enrichment.js?v=\', true) }}{{ $version }}'), 'Custom JavaScript is independent from the Grocy core version');
 
+$bladeAutoload = getenv('GROCY_BLADE_AUTOLOAD');
+if ((!is_string($bladeAutoload) || $bladeAutoload === '') && is_file($repoRoot . '/packages/autoload.php'))
+{
+	$bladeAutoload = $repoRoot . '/packages/autoload.php';
+}
+if (is_string($bladeAutoload) && $bladeAutoload !== '')
+{
+	require_once $bladeAutoload;
+
+	$bladeCompiler = new Illuminate\View\Compilers\BladeCompiler(
+		new Illuminate\Filesystem\Filesystem(),
+		sys_get_temp_dir()
+	);
+
+	try
+	{
+		$compiledProductForm = $bladeCompiler->compileString($productFormTemplate);
+		token_get_all($compiledProductForm, TOKEN_PARSE);
+		check(true, 'The real Blade compiler produces parseable PHP for the complete product form');
+	}
+	catch (Throwable $ex)
+	{
+		check(false, 'The real Blade compiler produces parseable PHP for the complete product form (' . $ex->getMessage() . ')');
+	}
+
+	$assetVersionFixture = <<<'BLADE'
+@if(true)
+@php
+$grocyAiAssetVersion = '1.0.1';
+@endphp
+asset={{ $grocyAiAssetVersion }}
+@endif
+BLADE;
+
+	try
+	{
+		$compiledFixture = $bladeCompiler->compileString($assetVersionFixture);
+		$bufferLevel = ob_get_level();
+		ob_start();
+		eval('?>' . $compiledFixture);
+		$renderedFixture = trim((string)ob_get_clean());
+		check($renderedFixture === 'asset=1.0.1', 'The real Blade compiler renders the block-form asset token');
+	}
+	catch (Throwable $ex)
+	{
+		$bufferLevel ??= ob_get_level();
+		while (ob_get_level() > $bufferLevel)
+		{
+			ob_end_clean();
+		}
+		check(false, 'The real Blade compiler renders the block-form asset token (' . $ex->getMessage() . ')');
+	}
+}
+
 function companionBody(string $outcome = 'success', array $extra = []): string
 {
 	return json_encode(array_merge([
