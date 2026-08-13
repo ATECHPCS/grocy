@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 01-03-PLAN.md
-last_updated: "2026-08-13T00:41:19.249Z"
+stopped_at: Completed 01-04-PLAN.md
+last_updated: "2026-08-13T00:58:27.110Z"
 last_activity: 2026-08-13
 progress:
   total_phases: 7
   completed_phases: 0
   total_plans: 10
-  completed_plans: 3
+  completed_plans: 4
   percent: 0
 ---
 
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-08-12)
 ## Current Position
 
 Phase: 01 (Safety Baseline & Mobile Diagnostics) — EXECUTING
-Plan: 4 of 10
+Plan: 5 of 10
 Status: Ready to execute
 Last activity: 2026-08-13
 
-Progress: [███░░░░░░░] 30%
+Progress: [████░░░░░░] 40%
 
 ## Performance Metrics
 
@@ -55,6 +55,7 @@ Progress: [███░░░░░░░] 30%
 | Phase 01 P01 | 3 min | 1 tasks | 1 files |
 | Phase 01 P02 | 10 min | 1 tasks | 7 files |
 | Phase 01 P03 | 9 min | 2 tasks | 6 files |
+| Phase 01 P04 | 11 min | 2 tasks | 8 files |
 
 ## Accumulated Context
 
@@ -75,6 +76,9 @@ Recent decisions affecting current work:
 - [Phase 01]: Treat every GTIN as text and validate accepted lengths with one GS1 modulo-10 algorithm so leading zeroes survive manual and camera paths. — One string-preserving validator covers every supported length and intent source.
 - [Phase 01]: Own enrichment transport inside the module with a direct same-origin XMLHttpRequest and exact 15,000ms timeout; leave shared Grocy.Api.Get and productform Save handlers unchanged. — The module needs a cancellable bounded read without changing application-wide transport behavior.
 - [Phase 01]: Keep enrichment output review-only; preview actions stage the existing form and durable writes remain behind normal Grocy Save controls. — This preserves Grocy as the sole mutation authority and keeps enrichment optional.
+- [Phase 01]: Validate string-preserving GS1 GTINs at the companion endpoint and orchestration entry before provider work. — This rejects invalid inputs before any federation, Open Food Facts, or image work and preserves leading zeroes.
+- [Phase 01]: Terminate strict W3C trace context at the companion. — External providers are timed locally but never receive traceparent or tracestate.
+- [Phase 01]: Use closed diagnostics with a 10.5-second outer provider budget, 2-second connect, and 6-second read limits. — Finite allowlisted values localize failures without leaking provider details or overrunning Grocy's boundary.
 
 ### Pending Todos
 
@@ -100,6 +104,6 @@ Items acknowledged for v2 after the preview/audit model is proven:
 
 ## Session Continuity
 
-Last session: 2026-08-13T00:41:19.170Z
-Stopped at: Completed 01-03-PLAN.md
+Last session: 2026-08-13T00:57:44.695Z
+Stopped at: Completed 01-04-PLAN.md
 Resume file: None
