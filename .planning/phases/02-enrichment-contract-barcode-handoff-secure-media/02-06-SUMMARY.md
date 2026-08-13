@@ -73,8 +73,7 @@ Each task was committed atomically in its owning repository:
 2. **Task 2: Create the explicit same-origin media happy-path RED**
    - `grocy@5e25025f` — loopback fixture support, request counters, and browser secure-media RED suite
 
-**Summary commit:** pending
-**Plan tracking commit:** pending
+**Summary commit:** `d559b248`
 
 ## Files Created/Modified
 
@@ -118,14 +117,23 @@ Each task was committed atomically in its owning repository:
 - **Verification:** The wrapper accepted exactly one `EXPECTED_RED: media.same_origin_happy_path` after the fixture server and Chromium launched successfully.
 - **Committed in:** Not applicable (runtime permission only).
 
+**3. [Rule 1 - State serialization] Corrected SDK progress and metric placement**
+
+- **Found during:** Plan close-out
+- **Issue:** `state.update-progress` reported 15 of 24 plans and 63%, but serialized `progress.percent: 0`; `state.record-metric` appended the Phase 02 P06 row to Quick Tasks instead of Performance Metrics.
+- **Fix:** Set the frontmatter percentage to 63 and moved the metric row into the Performance Metrics table while keeping STATE below 150 lines.
+- **Files modified:** `.planning/STATE.md`
+- **Verification:** STATE frontmatter/body report 15 of 24 plans (63%), Plan 7 of 14 is next, the P06 metric appears once under Performance Metrics, and STATE is 140 lines.
+- **Committed in:** Plan tracking commit.
+
 ---
 
-**Total deviations:** 2 auto-fixed (1 test contract bug, 1 blocking runtime issue).
-**Impact on plan:** Both fixes preserve the locked contract and deterministic test infrastructure. No production secure-media behavior, dependency, persistence route, or security limit was added or widened.
+**Total deviations:** 3 auto-fixed (2 state/test contract bugs, 1 blocking runtime issue).
+**Impact on plan:** The fixes preserve the locked contract, deterministic test infrastructure, and accurate planning state. No production secure-media behavior, dependency, persistence route, or security limit was added or widened.
 
 ## Issues Encountered
 
-None beyond the auto-fixed contract discriminator and deterministic loopback permission above.
+None beyond the auto-fixed contract discriminator, deterministic loopback permission, and state serialization issues above.
 
 ## Authentication Gates
 
@@ -166,6 +174,7 @@ None - no package, dependency, environment variable, deployment setting, or exte
 - `media.peer_binding`, `media.stream_overflow`, `media.pixel_limit`, `media.contract_handles`, `media.auth_before_work`, and `media.same_origin_happy_path` each emit exactly one accepted standalone RED marker after infrastructure gates.
 - The browser discovery gate lists four new secure-media cases for both Chromium-mobile and WebKit-mobile; the named Chromium-mobile happy path reaches only its intentional missing-UI assertion.
 - Both Grocy and `grocy-mcp` working trees are clean after their task commits.
+- STATE reports 15 of 24 plans (63%) with Plan 7 next, ROADMAP reports Phase 2 at 6 of 14, and ENR-07/ENR-08/ENR-09 are marked complete by the plan tracker.
 
 ---
 *Phase: 02-enrichment-contract-barcode-handoff-secure-media*
