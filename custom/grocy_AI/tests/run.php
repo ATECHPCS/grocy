@@ -20,6 +20,18 @@ if (is_file($contractFile))
 	require_once $contractFile;
 }
 
+$gtinFile = __DIR__ . '/../src/GrocyAiGtin.php';
+if (is_file($gtinFile))
+{
+	require_once $gtinFile;
+}
+
+$barcodeServiceFile = __DIR__ . '/../src/GrocyAiBarcodeService.php';
+if (is_file($barcodeServiceFile))
+{
+	require_once $barcodeServiceFile;
+}
+
 use GrocyAI\Services\GrocyAiDiagnostic;
 use GrocyAI\Services\GrocyAiContract;
 use GrocyAI\Services\GrocyAiService;

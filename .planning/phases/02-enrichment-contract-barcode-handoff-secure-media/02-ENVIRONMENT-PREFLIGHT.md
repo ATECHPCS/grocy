@@ -3,7 +3,7 @@
 ## Resolved preflight
 
 status: PASS
-rechecked_at_utc: 2026-08-13T21:06:00Z
+rechecked_at_utc: 2026-08-13T22:08:57Z
 contract_version: 2
 
 ### Product destinations
@@ -22,9 +22,9 @@ The active brand destination is the single exact deployed product userfield. Pha
 
 canonical_valid_gtin_rows: 3
 canonical_collision_groups: 0
-canonical_aggregate_sha256: f275b9ade00718b8c19009b1131fed483c35d69a0bd8f54b392353993fb8b3c4
+canonical_aggregate_sha256: eab817087de37b4d5920b194489c5b7f9a0b4d44e9519c08d1aaab7ed53a5b69
 
-The read-only production query used the future canonical predicate: only numeric, checksum-valid GTIN-8/12/13/14 values receive a left-padded 14-character key; every other barcode receives `NULL`. The artifact records aggregate counts and their hash only. No barcode, product identity, or row output was retained.
+The read-only production query used the future canonical predicate: only numeric, checksum-valid GTIN-8/12/13/14 values receive a left-padded 14-character key; every other barcode receives `NULL`. Plan 02-04 rechecked the single running stable database with SQLite query-only mode before implementation. The artifact records aggregate counts and their hash only. No barcode, product identity, or row output was retained.
 
 ### Secure media bounds
 

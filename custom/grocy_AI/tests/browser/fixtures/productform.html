@@ -86,6 +86,8 @@
 		<section>
 			<div class="row permission-MASTER_DATA_EDIT"
 				id="grocy-ai-product-enrichment"
+				data-current-product-id="91"
+				data-product-route-template="/product/%s"
 				data-brand-target-id="27"
 				data-brand-target-name="products.brand"
 				data-brand-target-label="Brand"
@@ -111,6 +113,14 @@
 				data-back-action="Back to suggestions"
 				data-staging-success="Selected changes are staged in the form. Review the form, then use Grocy's Save button to save them."
 				data-stale-field-message="This field changed after the search. Review it again before staging."
+				data-scanned-barcode-label="Scanned barcode"
+				data-equivalents-label="Canonical equivalents checked"
+				data-unused-barcode-message="This barcode is not assigned in Grocy."
+				data-staged-barcode-label="Ready to add on Save"
+				data-remove-staged-barcode="Remove staged barcode"
+				data-owned-other-message="This barcode already belongs to an existing product."
+				data-owned-current-message="This barcode is already attached to this product."
+				data-open-existing-product="Open existing product"
 				data-ready-message="GTIN ready."
 				data-busy-message="Searching product details…"
 				data-success-heading="Product details found"
@@ -154,6 +164,18 @@
 								<span>Scan or enter a GTIN, then search. You can continue editing this product without enrichment.</span>
 							</div>
 							<div class="mt-3 d-none" id="grocy-ai-results" aria-label="Product enrichment preview">
+								<section class="grocy-ai-barcode-ownership" id="grocy-ai-barcode-ownership" aria-labelledby="grocy-ai-barcode-heading">
+									<h5 id="grocy-ai-barcode-heading">Barcode ownership</h5>
+									<dl class="mb-0">
+										<dt>Scanned barcode</dt>
+										<dd id="grocy-ai-scanned-barcode"></dd>
+										<dt>Canonical equivalents checked</dt>
+										<dd id="grocy-ai-barcode-equivalents"></dd>
+									</dl>
+									<div id="grocy-ai-barcode-outcome" role="status" aria-live="polite"></div>
+									<a class="btn btn-primary d-none" id="grocy-ai-open-existing-product" href="#">Open existing product</a>
+									<button class="btn btn-outline-secondary d-none" id="grocy-ai-remove-staged-barcode" type="button">Remove staged barcode</button>
+								</section>
 								<section class="grocy-ai-review-section" id="grocy-ai-field-review" aria-labelledby="grocy-ai-review-heading">
 									<h5 id="grocy-ai-review-heading" tabindex="-1">Review suggested fields</h5>
 									<div class="grocy-ai-field-rows" id="grocy-ai-field-rows"></div>
