@@ -96,7 +96,66 @@ Plans:
   3. User can review one final diff and save only selected suggestions; search, preview, cancel, timeout, and failed media retrieval leave products, barcodes, categories, stock, conversions, and files unchanged.
   4. User sees an exact structured-source front image before clearly unverified search alternatives and can demand-load/select same-origin media through short-lived handles with URL, redirect, byte, time, MIME, signature, and pixel safeguards.
 
-**Plans**: TBD
+**Plans**: 14 plans
+
+Plans:
+
+**Wave 1**
+
+- [ ] 02-01-PLAN.md — Lock Phase 2's resolved runtime facts and create trustworthy RED contract tests before production changes.
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 02-02-PLAN.md — Deliver the closed v2 contract and first trustworthy name-review vertical slice.
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 02-03-PLAN.md — Expand the first contract row into the complete seven-family side-by-side review, final selected diff, stale-current protection, and explicit staging interaction.
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [ ] 02-04-PLAN.md — Deliver the read-only barcode ownership slice with canonical local resolution, existing-owner routing, and transient staging for one unused barcode.
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
+- [ ] 02-05-PLAN.md — Complete the unused-barcode Save slice with atomic canonical uniqueness, one normal-Save continuation, and barcode-only partial-creation recovery.
+
+**Wave 6** *(blocked on Wave 5 completion)*
+
+- [ ] 02-06-PLAN.md — Specify secure media completely before changing network or proxy implementation.
+
+**Wave 7** *(blocked on Wave 6 completion)*
+
+- [ ] 02-07-PLAN.md — Implement the complete companion-to-Grocy-to-browser secure-media slice against Plan 02-06's gates.
+
+**Wave 8** *(blocked on Wave 7 completion)*
+
+- [ ] 02-08-PLAN.md — Construct the integrated zero-write, selected-only Save, real-Blade, mobile, and accessibility gates.
+
+**Wave 9** *(blocked on Wave 8 completion)*
+
+- [ ] 02-09-PLAN.md — Harden only concrete failures exposed by the integrated Phase 2 acceptance matrix.
+
+**Wave 10** *(blocked on Wave 9 completion)*
+
+- [ ] 02-10-PLAN.md — Freeze and mirror the portable Phase 2 bytes without adapting stable framework seams.
+
+**Wave 11** *(blocked on Wave 10 completion)*
+
+- [ ] 02-11-PLAN.md — Adapt only stable framework seams and prove behavior and parity without changing portable blobs.
+
+**Wave 12** *(blocked on Wave 11 completion)*
+
+- [ ] 02-12-PLAN.md — Create executable release and deployment evidence gates before any deployment.
+
+**Wave 13** *(blocked on Wave 12 completion)*
+
+- [ ] 02-13-PLAN.md — Deploy the immutable companion and stable Grocy release candidate, then automate production evidence without changing household data.
+
+**Wave 14** *(blocked on Wave 13 completion)*
+
+- [ ] 02-14-PLAN.md — Complete the manual evidence automation cannot supply for deployed userfield readability, owner routing, normal Save, and package-media interaction.
+
 **UI hint:** yes
 
 ### Phase 3: Food Taxonomy & Categorization Pilot
