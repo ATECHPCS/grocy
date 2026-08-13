@@ -1,6 +1,18 @@
 # Phase 01 Physical-Phone Acceptance
 
-Status: stable deployment prerequisites recorded by Plan 01-09; physical evidence remains pending for Plan 01-10.
+Status: physical-phone evidence explicitly skipped by the operator on 2026-08-13; Plan 01-10 and Phase 1 remain incomplete.
+
+## Operator disposition
+
+The operator confirmed the normal product Save controls and selected functional phone checks, then explicitly chose to skip the required device/browser metadata and locked timing capture and proceed to Phase 2. This is recorded as **SKIPPED**, not PASS.
+
+- Deployed stable revision at disposition: `9f9ce169e155c9ec1fa01a67745c94276d86b2da`
+- Deployed image: `sha256:2fe2ab1e61be7a8928fab90ac4365cdcbfd9140bd641b5fd8c826f3e1bbab815`
+- Cache marker: `ATECHPCS-grocy_AI-7`
+- Module asset token: `1.0.1`
+- Timing evidence: skipped; no synthetic or inferred samples were added
+- Locked checker result: FAIL — `cached` 0/20, `metadata` 0/20, `image_attachment` 0/20, `browser_timeout` 0/1
+- Release effect: no physical-device acceptance claim; Phase 1 remains incomplete
 
 This procedure validates the real household phone, browser, Wi-Fi/LAN path, stable Grocy deployment, and locked latency baseline. Browser emulation is necessary but does not replace this record.
 
@@ -142,7 +154,7 @@ The checker sorts each scenario's `overall_ms` values and uses rank `ceil(percen
 ## Acceptance result
 
 - Stable SHA: recorded in Plan 01-10 evidence summary, never inferred from a moving ref.
-- Timing checker: pending physical samples.
-- Scenario checklist: pending stable deployment.
-- Privacy review: pending final evidence scan.
-- Final result: **PENDING**.
+- Timing checker: **SKIPPED** by operator; locked checker remains FAIL.
+- Scenario checklist: **SKIPPED** before completion.
+- Privacy review: no physical timing records were created.
+- Final result: **SKIPPED — NOT ACCEPTED**.
