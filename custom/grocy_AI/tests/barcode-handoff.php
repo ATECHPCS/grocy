@@ -244,6 +244,7 @@ if (($argv[1] ?? null) === '--case')
 }
 
 assertSharedPredicate();
+assertMigrationValidOnly();
 
 $sqlExpression = GrocyAiGtin::CanonicalSqlExpression('barcode');
 checkBarcode(str_contains($sqlExpression, 'CASE'), 'The SQL predicate is a closed CASE expression');
@@ -410,6 +411,14 @@ else
 
 $routesSource = file_get_contents(__DIR__ . '/../routes.php');
 $controllerSource = file_get_contents(__DIR__ . '/../src/GrocyAiApiController.php');
+$migrationSource = file_get_contents(dirname(__DIR__, 3) . '/migrations/0256.php');
+$productFormSource = file_get_contents(dirname(__DIR__, 3) . '/public/viewjs/productform.js');
+checkBarcode(str_contains($migrationSource, "GrocyAiGtin::CanonicalSqlExpression('barcode')"), 'Migration calls the shared SQL predicate instead of copying it');
+checkBarcode(substr_count($productFormSource, 'GrocyAI.AttachStagedBarcode(productId)') === 1, 'The core product form has one narrow barcode Save continuation');
+checkBarcode(
+	preg_match('/var productId = Grocy\.EditObjectId \|\| result\.created_object_id;[\s\S]*?Grocy\.EditObjectId = productId;[\s\S]*?continueAfterProductSave\(productId, location\)/', $productFormSource) === 1,
+	'Barcode attachment runs only after the trusted Save result establishes the product ID'
+);
 checkBarcode(str_contains($routesSource, "get('/barcodes/resolve/{barcode}'"), 'The barcode resolver is registered as a GET route');
 checkBarcode(!str_contains($routesSource, "post('/barcodes/resolve/"), 'The barcode resolver has no write route');
 checkBarcode(

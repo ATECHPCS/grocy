@@ -1,4 +1,53 @@
-﻿function saveProductPicture(result, location, jsonData)
+﻿function redirectAfterProductSave(productId, location)
+{
+	if (Grocy.ProductEditFormRedirectUri == "reload")
+	{
+		window.location.reload();
+		return;
+	}
+
+	var returnTo = GetUriParam('returnto');
+	if (GetUriParam("closeAfterCreation") !== undefined)
+	{
+		window.close();
+	}
+	else if (returnTo !== undefined)
+	{
+		if (GetUriParam("flow") !== undefined)
+		{
+			window.location.href = U(returnTo) + '&product-name=' + encodeURIComponent($('#name').val());
+		}
+		else
+		{
+			window.location.href = U(returnTo);
+		}
+	}
+	else
+	{
+		window.location.href = U(location + productId);
+	}
+}
+
+function continueAfterProductSave(productId, location)
+{
+	if (!window.GrocyAI || typeof window.GrocyAI.AttachStagedBarcode !== 'function')
+	{
+		redirectAfterProductSave(productId, location);
+		return;
+	}
+
+	window.GrocyAI.AttachStagedBarcode(productId).then(function ()
+	{
+		redirectAfterProductSave(productId, location);
+	}).catch(function ()
+	{
+		// The product already exists; keep its trusted ID and let grocy_AI retry only the barcode.
+		Grocy.EditMode = 'edit';
+		Grocy.FrontendHelpers.EndUiBusy("product-form");
+	});
+}
+
+function saveProductPicture(result, location, jsonData)
 {
 	var productId = Grocy.EditObjectId || result.created_object_id;
 	Grocy.EditObjectId = productId; // Grocy.EditObjectId is not yet set when adding a product
@@ -10,34 +59,7 @@
 			Grocy.Api.UploadFile($("#product-picture")[0].files[0], 'productpictures', jsonData.picture_file_name,
 				(result) =>
 				{
-					if (Grocy.ProductEditFormRedirectUri == "reload")
-					{
-						window.location.reload();
-						return;
-					}
-
-					var returnTo = GetUriParam('returnto');
-					if (GetUriParam("closeAfterCreation") !== undefined)
-					{
-						window.close();
-					}
-					else if (returnTo !== undefined)
-					{
-						if (GetUriParam("flow") !== undefined)
-						{
-							window.location.href = U(returnTo) + '&product-name=' + encodeURIComponent($('#name').val());
-						}
-						else
-						{
-							window.location.href = U(returnTo);
-						}
-
-					}
-					else
-					{
-						window.location.href = U(location + productId);
-					}
-
+					continueAfterProductSave(productId, location);
 				},
 				(xhr) =>
 				{
@@ -48,32 +70,7 @@
 		}
 		else
 		{
-			if (Grocy.ProductEditFormRedirectUri == "reload")
-			{
-				window.location.reload();
-				return
-			}
-
-			var returnTo = GetUriParam('returnto');
-			if (GetUriParam("closeAfterCreation") !== undefined)
-			{
-				window.close();
-			}
-			else if (returnTo !== undefined)
-			{
-				if (GetUriParam("flow") !== undefined)
-				{
-					window.location.href = U(returnTo) + '&product-name=' + encodeURIComponent($('#name').val());
-				}
-				else
-				{
-					window.location.href = U(returnTo);
-				}
-			}
-			else
-			{
-				window.location.href = U(location + productId);
-			}
+			continueAfterProductSave(productId, location);
 		}
 	});
 }

@@ -141,6 +141,12 @@
 		ownerLink: document.getElementById('grocy-ai-open-existing-product'),
 		removeButton: document.getElementById('grocy-ai-remove-staged-barcode')
 	};
+	var attachmentState = {
+		productId: null,
+		barcode: null,
+		pending: null,
+		completed: false
+	};
 
 	function normalizeGtin(value)
 	{
@@ -1087,6 +1093,207 @@
 		updateSelectionSummary();
 	}
 
+	function getStagedBarcode()
+	{
+		return reviewState && typeof reviewState.stagedBarcode === 'string'
+			? reviewState.stagedBarcode
+			: null;
+	}
+
+	function normalizedOwnership(data, barcode, productId)
+	{
+		var ownership = data && data.barcode && typeof data.barcode === 'object' ? data.barcode : data;
+		if (!ownership || ownership.scanned_gtin !== barcode
+			|| ownership.canonical_gtin !== barcode.padStart(14, '0')
+			|| ['unused', 'owned_current', 'owned_other'].indexOf(ownership.status) === -1
+			|| (ownership.status === 'unused' && ownership.owner_product_id !== null)
+			|| (ownership.status === 'owned_current' && ownership.owner_product_id !== productId)
+			|| (ownership.status === 'owned_other' && (!Number.isInteger(ownership.owner_product_id) || ownership.owner_product_id <= 0)))
+		{
+			throw attachmentError('ownership_invalid', null);
+		}
+		return ownership;
+	}
+
+	function attachmentError(code, ownership)
+	{
+		var error = new Error('Barcode attachment failed');
+		error.code = code;
+		error.ownership = ownership || null;
+		return error;
+	}
+
+	function resolveBarcodeOwnership(barcode, productId)
+	{
+		return new Promise(function (resolve, reject)
+		{
+			Grocy.Api.Get(
+				'grocy-ai/barcodes/resolve/' + encodeURIComponent(barcode) + '?current_product_id=' + encodeURIComponent(productId),
+				function (data)
+				{
+					try
+					{
+						resolve(normalizedOwnership(data, barcode, productId));
+					}
+					catch (error)
+					{
+						reject(error);
+					}
+				},
+				function () { reject(attachmentError('ownership_unavailable', null)); }
+			);
+		});
+	}
+
+	function postStagedBarcode(barcode, productId)
+	{
+		return new Promise(function (resolve, reject)
+		{
+			Grocy.Api.Post(
+				'objects/product_barcodes',
+				{ product_id: productId, barcode: barcode, amount: 1 },
+				resolve,
+				function () { reject(attachmentError('insert_failed', null)); }
+			);
+		});
+	}
+
+	function clearAttachmentError()
+	{
+		var existing = document.getElementById('grocy-ai-barcode-attachment-error');
+		if (existing) existing.remove();
+	}
+
+	function showAttachmentError(error)
+	{
+		clearAttachmentError();
+		var alert = document.createElement('div');
+		alert.id = 'grocy-ai-barcode-attachment-error';
+		alert.className = 'alert alert-danger mt-3';
+		alert.setAttribute('role', 'alert');
+		alert.appendChild(textElement('span', 'grocy-ai-barcode-attachment-message', localized(
+			'partialBarcodeError',
+			'The product was saved, but the barcode was not attached. Retry the barcode only; the product will not be created again.'
+		)));
+		if (!error || error.code !== 'owned_other')
+		{
+			var retry = textElement('button', 'btn btn-outline-primary', localized('barcodeRetry', 'Retry barcode attachment'));
+			retry.id = 'grocy-ai-retry-barcode-attachment';
+			retry.type = 'button';
+			retry.addEventListener('click', function () { retryBarcodeAttachment(); });
+			alert.appendChild(retry);
+		}
+		root.appendChild(alert);
+	}
+
+	function clearAttachedBarcode()
+	{
+		if (reviewState) reviewState.stagedBarcode = null;
+		if (barcodeUi.removeButton) barcodeUi.removeButton.classList.add('d-none');
+		hideFinalDiff();
+		updateSelectionSummary();
+		clearAttachmentError();
+	}
+
+	function handleResolvedOwner(ownership, barcode, productId)
+	{
+		if (ownership.status === 'owned_current')
+		{
+			return { status: 'owned_current', product_id: productId };
+		}
+		if (ownership.status === 'owned_other')
+		{
+			if (reviewState) reviewState.stagedBarcode = null;
+			var href = trustedProductHref(ownership.owner_product_id);
+			if (href)
+			{
+				barcodeUi.ownerLink.href = href;
+				barcodeUi.ownerLink.classList.remove('d-none');
+			}
+			throw attachmentError('owned_other', ownership);
+		}
+		return postStagedBarcode(barcode, productId).then(function ()
+		{
+			return { status: 'inserted', product_id: productId };
+		}).catch(function ()
+		{
+			return resolveBarcodeOwnership(barcode, productId).then(function (resolved)
+			{
+				if (resolved.status === 'owned_current') return { status: 'owned_current', product_id: productId };
+				if (resolved.status === 'owned_other')
+				{
+					var href = trustedProductHref(resolved.owner_product_id);
+					if (href)
+					{
+						barcodeUi.ownerLink.href = href;
+						barcodeUi.ownerLink.classList.remove('d-none');
+					}
+					throw attachmentError('owned_other', resolved);
+				}
+				throw attachmentError('insert_failed', null);
+			});
+		});
+	}
+
+	function attachStagedBarcode(productId)
+	{
+		if (!Number.isInteger(productId) || productId <= 0)
+		{
+			return Promise.reject(attachmentError('product_invalid', null));
+		}
+		var barcode = getStagedBarcode() || (attachmentState.completed ? attachmentState.barcode : null);
+		if (barcode === null)
+		{
+			return Promise.resolve({ status: 'nothing_staged', product_id: productId });
+		}
+		if (attachmentState.productId !== null
+			&& (attachmentState.productId !== productId || attachmentState.barcode !== barcode))
+		{
+			return Promise.reject(attachmentError('attachment_context_changed', null));
+		}
+		if (attachmentState.completed)
+		{
+			return Promise.resolve({ status: 'already_attached', product_id: productId });
+		}
+		if (attachmentState.pending) return attachmentState.pending;
+
+		attachmentState.productId = productId;
+		attachmentState.barcode = barcode;
+		clearAttachmentError();
+		attachmentState.pending = resolveBarcodeOwnership(barcode, productId)
+			.then(function (ownership) { return handleResolvedOwner(ownership, barcode, productId); })
+			.then(function (result)
+			{
+				attachmentState.completed = true;
+				clearAttachedBarcode();
+				return result;
+			})
+			.catch(function (error)
+			{
+				if (error && error.code === 'owned_other')
+				{
+					if (reviewState) reviewState.stagedBarcode = null;
+					barcodeUi.removeButton.classList.add('d-none');
+					hideFinalDiff();
+					updateSelectionSummary();
+				}
+				showAttachmentError(error);
+				throw error;
+			})
+			.finally(function () { attachmentState.pending = null; });
+		return attachmentState.pending;
+	}
+
+	function retryBarcodeAttachment(productId)
+	{
+		var trustedProductId = productId === undefined ? attachmentState.productId : productId;
+		if (attachmentState.barcode === null || attachmentState.completed)
+		{
+			return Promise.resolve({ status: 'nothing_staged', product_id: trustedProductId });
+		}
+		return attachStagedBarcode(trustedProductId);
+	}
+
 	function companionUnavailable(data)
 	{
 		var stages = data && data.diagnostics && Array.isArray(data.diagnostics.stages) ? data.diagnostics.stages : [];
@@ -1309,6 +1516,11 @@
 			ui.diagnosticFeedback.textContent = localized('diagnosticCopyFallback', 'Copy was blocked. Select and copy the redacted report manually.');
 		});
 	}
+
+	window.GrocyAI = window.GrocyAI || {};
+	window.GrocyAI.GetStagedBarcode = getStagedBarcode;
+	window.GrocyAI.AttachStagedBarcode = attachStagedBarcode;
+	window.GrocyAI.RetryBarcodeAttachment = retryBarcodeAttachment;
 
 	searchButton.addEventListener('click', function () { search('search'); });
 	if (reviewUi.reviewButton) reviewUi.reviewButton.addEventListener('click', openFinalDiff);

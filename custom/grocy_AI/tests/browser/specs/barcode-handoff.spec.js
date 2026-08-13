@@ -294,6 +294,8 @@ test('@enr04 @enr06 same-product insert race is idempotent success and another-o
 	await expect.poll(() => blocked.owner).toBe(2);
 	await expect(page.locator('#grocy-ai-barcode-attachment-error')).toContainText('The product was saved, but the barcode was not attached.');
 	await expect(page.locator('#grocy-ai-open-existing-product')).toHaveAttribute('href', '/product/777');
+	await expect(page.locator('#grocy-ai-remove-staged-barcode')).toHaveClass(/d-none/);
+	await expect(page.locator('#grocy-ai-selection-status')).toContainText('0 changes selected');
 });
 
 test('@enr04 @enr06 barcode-only retry retains product context and never repeats product persistence', async ({ page }) =>

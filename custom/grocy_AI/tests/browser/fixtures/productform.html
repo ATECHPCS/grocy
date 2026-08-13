@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-core-version="4.6.0" data-grocy-ai-module-version="2.0.0">
+<html lang="en" data-core-version="4.6.0" data-grocy-ai-module-version="2.3.0">
 <head>
 	<meta charset="utf-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1">
@@ -40,7 +40,7 @@
 		.save-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 		@media (min-width: 992px) { .product-form-grid { grid-template-columns: 1fr 1fr; } }
 	</style>
-	<link rel="stylesheet" href="/assets/grocy-ai.css?v=1.0.1">
+	<link rel="stylesheet" href="/assets/grocy-ai.css?v=2.3.0">
 </head>
 <body>
 	<main class="product-form-grid">
@@ -317,7 +317,7 @@
 				return;
 			}
 			if (/\/api\/(objects\/products|products)/.test(url)) counters.product++;
-			if (/\/api\/.*barcode/.test(url)) counters.barcode++;
+			if (method !== 'GET' && /\/api\/.*barcode/.test(url)) counters.barcode++;
 			if (/\/api\/(objects\/product_groups|product_groups)/.test(url)) counters.category++;
 			if (/\/api\/.*quantity.*conversion/.test(url)) counters.conversion++;
 			if (/\/api\/userfields/.test(url)) counters.userfield++;
@@ -494,6 +494,6 @@
 		});
 	})();
 	</script>
-	<script src="/assets/product-enrichment.js?v=2.0.0"></script>
+	<script src="/assets/product-enrichment.js?v=2.3.0"></script>
 </body>
 </html>
