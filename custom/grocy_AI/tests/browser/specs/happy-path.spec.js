@@ -39,6 +39,18 @@ test('@smoke harness serves only the fixture and real phase-owned assets', async
 	expect(await page.locator('#grocy-ai-product-enrichment').isVisible()).toBe(true);
 	expect(loadedAssets).toHaveLength(2);
 	expect(loadedAssets.every(function (entry) { return entry[1] === 200; })).toBe(true);
+	const versions = await page.locator('html').evaluate(function (element)
+	{
+		return {
+			core: element.dataset.coreVersion,
+			module: element.dataset.grocyAiModuleVersion
+		};
+	});
+	expect(versions.module).not.toBe(versions.core);
+	expect(loadedAssets.map(function (entry)
+	{
+		return new URL(entry[0]).searchParams.get('v');
+	})).toEqual([versions.module, versions.module]);
 	expect(await page.evaluate(function () { return window.__fixtureAdapterVersion; })).toBe('jquery-compatible-fixture-1.0.0');
 });
 
