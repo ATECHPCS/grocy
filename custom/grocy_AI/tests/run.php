@@ -92,12 +92,8 @@ function runDuplicateContractCase(string $caseId, string $marker): never
 function phase2BladeRender(): array
 {
 	$repoRoot = dirname(__DIR__, 3);
-	$autoload = getenv('GROCY_BLADE_AUTOLOAD');
-	if ((!is_string($autoload) || $autoload === '') && is_file($repoRoot . '/packages/autoload.php'))
-	{
-		$autoload = $repoRoot . '/packages/autoload.php';
-	}
-	if (!is_string($autoload) || $autoload === '')
+	$autoload = resolveBladeAutoload($repoRoot);
+	if ($autoload === '')
 	{
 		return [false, 'The real Blade autoloader is unavailable', ''];
 	}
@@ -149,6 +145,95 @@ function phase2BladeRender(): array
 		}
 		return [false, $ex->getMessage(), ''];
 	}
+}
+
+function resolveBladeAutoload(string $repoRoot): string
+{
+	$configured = getenv('GROCY_BLADE_AUTOLOAD');
+	$candidates = [];
+	if (is_string($configured) && $configured !== '')
+	{
+		$candidates[] = $configured;
+	}
+	$candidates = array_merge($candidates, [
+		$repoRoot . '/packages/autoload.php',
+		'/app/packages/autoload.php',
+		'/var/www/html/packages/autoload.php',
+		'/var/www/grocy/packages/autoload.php'
+	]);
+
+	foreach (array_unique($candidates) as $candidate)
+	{
+		if (is_file($candidate))
+		{
+			return $candidate;
+		}
+	}
+
+	return '';
+}
+
+function runBladeGroup(): never
+{
+	$repoRoot = dirname(__DIR__, 3);
+	$autoload = resolveBladeAutoload($repoRoot);
+	if ($autoload === '')
+	{
+		expectedRed('EXPECTED_RED: blade.integrated_acceptance', 'The real Blade autoloader is unavailable in the checkout or approved container paths');
+	}
+	require_once $autoload;
+
+	$template = file_get_contents($repoRoot . '/views/productform.blade.php');
+	$compiler = new Illuminate\View\Compilers\BladeCompiler(new Illuminate\Filesystem\Filesystem(), sys_get_temp_dir());
+	try
+	{
+		$compiled = $compiler->compileString($template);
+		token_get_all($compiled, TOKEN_PARSE);
+	}
+	catch (Throwable $ex)
+	{
+		expectedRed('EXPECTED_RED: blade.integrated_acceptance', 'The complete product form did not compile as parseable PHP: ' . $ex->getMessage());
+	}
+
+	$moduleVersion = (string)(json_decode(file_get_contents($repoRoot . '/custom/grocy_AI/module-version.json'), true, 512, JSON_THROW_ON_ERROR)['module_version'] ?? '');
+	$assetMatch = [];
+	if (preg_match('/\$grocyAiAssetVersion = \'([^\']+)\'/', $template, $assetMatch) !== 1
+		|| ($assetMatch[1] ?? '') !== $moduleVersion
+		|| substr_count($template, '{{ $grocyAiAssetVersion }}') !== 2)
+	{
+		expectedRed('EXPECTED_RED: blade.integrated_acceptance', 'The CSS and JavaScript asset token is not synchronized with module-version.json');
+	}
+
+	[$renderedOk, $message, $rendered] = phase2BladeRender();
+	$required = [
+		'id="grocy-ai-product-enrichment"',
+		'id="grocy-ai-field-review"',
+		'id="grocy-ai-media-review"',
+		'id="grocy-ai-final-diff"',
+		'id="grocy-ai-stage-selected-button"',
+		'data-brand-target-id="27"',
+		'data-brand-target-name="products.brand"',
+		'data-package-size-target-available="false"',
+		'data-food-type-target-available="false"',
+		'L10N:Review selected changes',
+		'L10N:Stage selected changes',
+		'L10N:Load thumbnail',
+		'L10N:Selected changes are staged in the form. Review the form, then use Grocy&#039;s Save button to save them.'
+	];
+	foreach ($required as $expected)
+	{
+		if (!$renderedOk || !str_contains($rendered, $expected))
+		{
+			expectedRed('EXPECTED_RED: blade.integrated_acceptance', $renderedOk ? "Rendered feature hook is missing {$expected}" : $message);
+		}
+	}
+	if (str_contains($rendered, 'Nutrition Facts') || str_contains($rendered, '<verified>'))
+	{
+		expectedRed('EXPECTED_RED: blade.integrated_acceptance', 'Rendered markup exposed deferred nutrition or unescaped target metadata');
+	}
+
+	fwrite(STDOUT, "Blade integrated acceptance passed\n");
+	exit(0);
 }
 
 function runBladePhase2TargetsCase(): never
@@ -336,6 +421,11 @@ if (($argv[1] ?? null) === '--group' && ($argv[2] ?? null) === 'contract')
 	exit(0);
 }
 
+if (($argv[1] ?? null) === '--group' && ($argv[2] ?? null) === 'blade')
+{
+	runBladeGroup();
+}
+
 $failures = 0;
 $tests = 0;
 
@@ -377,12 +467,8 @@ check(substr_count($productFormTemplate, '{{ $grocyAiAssetVersion }}') === 2, 'B
 check(!str_contains($productFormTemplate, 'grocy-ai.css?v=\', true) }}{{ $version }}'), 'Custom CSS is independent from the Grocy core version');
 check(!str_contains($productFormTemplate, 'product-enrichment.js?v=\', true) }}{{ $version }}'), 'Custom JavaScript is independent from the Grocy core version');
 
-$bladeAutoload = getenv('GROCY_BLADE_AUTOLOAD');
-if ((!is_string($bladeAutoload) || $bladeAutoload === '') && is_file($repoRoot . '/packages/autoload.php'))
-{
-	$bladeAutoload = $repoRoot . '/packages/autoload.php';
-}
-if (is_string($bladeAutoload) && $bladeAutoload !== '')
+$bladeAutoload = resolveBladeAutoload($repoRoot);
+if ($bladeAutoload !== '')
 {
 	require_once $bladeAutoload;
 
