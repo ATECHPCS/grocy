@@ -19,8 +19,8 @@
 ### Product Enrichment and Barcode Handoff
 
 - [x] **ENR-01**: User receives a strictly validated, versioned enrichment response in which every external suggestion includes source, confidence band, reason, and retrieval freshness.
-- [ ] **ENR-02**: User sees the originally scanned barcode while Grocy checks canonical UPC/EAN/GTIN equivalents for duplicates.
-- [ ] **ENR-03**: User scanning a barcode already assigned in Grocy is routed to the existing owning product instead of creating a duplicate.
+- [x] **ENR-02**: User sees the originally scanned barcode while Grocy checks canonical UPC/EAN/GTIN equivalents for duplicates.
+- [x] **ENR-03**: User scanning a barcode already assigned in Grocy is routed to the existing owning product instead of creating a duplicate.
 - [ ] **ENR-04**: User can stage a previously unused barcode in Grocy's normal product/barcode workflow, and it is written exactly once only after Save.
 - [x] **ENR-05**: User can independently review suggestions for name, brand, package size, product group, quantity unit, food type, and product image alongside current values.
 - [x] **ENR-06**: User sees one final diff of selected enrichment changes, and no unselected field is changed when the normal Grocy Save action runs.
@@ -120,8 +120,8 @@
 | MOB-07 | Phase 1 | Complete |
 | MOB-08 | Phase 1 | Complete |
 | ENR-01 | Phase 2 | Complete |
-| ENR-02 | Phase 2 | Pending |
-| ENR-03 | Phase 2 | Pending |
+| ENR-02 | Phase 2 | Complete |
+| ENR-03 | Phase 2 | Complete |
 | ENR-04 | Phase 2 | Pending |
 | ENR-05 | Phase 2 | Complete |
 | ENR-06 | Phase 2 | Complete |

@@ -114,7 +114,7 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 02-04-PLAN.md — Deliver the read-only barcode ownership slice with canonical local resolution, existing-owner routing, and transient staging for one unused barcode.
+- [x] 02-04-PLAN.md — Deliver the read-only barcode ownership slice with canonical local resolution, existing-owner routing, and transient staging for one unused barcode.
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
@@ -251,7 +251,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7. Dual-bra
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Safety Baseline & Mobile Diagnostics | 9/10 | In Progress|  |
-| 2. Enrichment Contract, Barcode Handoff & Secure Media | 3/14 | In Progress|  |
+| 2. Enrichment Contract, Barcode Handoff & Secure Media | 4/14 | In Progress|  |
 | 3. Food Taxonomy & Categorization Pilot | 0/TBD | Not started | - |
 | 4. Reusable Conversion Model | 0/TBD | Not started | - |
 | 5. Bulk Maintenance & Recovery Engine | 0/TBD | Not started | - |

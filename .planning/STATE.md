@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 02-03-PLAN.md
-last_updated: "2026-08-13T21:57:32.016Z"
+stopped_at: Completed 02-04-PLAN.md
+last_updated: "2026-08-13T22:23:11.178Z"
 last_activity: 2026-08-13
 progress:
   total_phases: 7
   completed_phases: 0
   total_plans: 24
-  completed_plans: 12
-  percent: 50
+  completed_plans: 13
+  percent: 54
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-08-12)
 ## Current Position
 
 Phase: 02 (Enrichment Contract, Barcode Handoff & Secure Media) — EXECUTING
-Plan: 4 of 14
+Plan: 5 of 14
 Status: Ready to execute
 Last activity: 2026-08-13
 
-Progress: [█████░░░░░] 50%
+Progress: [█████░░░░░] 54%
 
 ## Performance Metrics
 
@@ -64,6 +64,7 @@ Progress: [█████░░░░░] 50%
 | Phase 02 P01 | 13 min | 2 tasks | 8 files |
 | Phase 02 P02 | 16 min | 2 tasks | 16 files |
 | Phase 02 P03 | 20min | 2 tasks | 8 files |
+| Phase 02 P04 | 20 min | 3 tasks | 17 files |
 
 ## Accumulated Context
 
@@ -109,6 +110,9 @@ Recent decisions affecting current work:
 - [Phase 02]: Resolve Brand only through one server-confirmed products.brand text-single-line userfield — Any duplicate, type, ID, label, or destination drift fails closed.
 - [Phase 02]: Re-read selected native controls before diff and staging — Changed rows are stale and require a fresh explicit decision before staging.
 - [Phase 02]: Keep barcode and product-image staging inactive until their assigned plans — Normal Grocy Save remains the sole persistence authority.
+- [Phase 02]: Canonicalize only checksum-valid digit strings of exact GTIN-8/12/13/14 lengths; preserve the exact scan and leave invalid numeric-looking values outside enrichment ownership. — One shared PHP and generated SQLite predicate prevents drift while preserving Grocy's arbitrary barcode support.
+- [Phase 02]: Resolve MASTER_DATA_EDIT and local ownership before provider work; owner navigation uses only the bounded database product ID. — This suppresses duplicate provider work and prevents browser or companion input from controlling local navigation.
+- [Phase 02]: Keep unused barcode staging in reducer state only; Plan 02-05 owns normal-Save attachment and uniqueness enforcement. — Plan 02-04 is read-only and preserves Grocy's unchanged Save authority.
 
 ### Pending Todos
 
@@ -140,6 +144,6 @@ Items acknowledged for v2 after the preview/audit model is proven:
 
 ## Session Continuity
 
-Last session: 2026-08-13T21:57:32.011Z
-Stopped at: Completed 02-03-PLAN.md
+Last session: 2026-08-13T22:23:11.086Z
+Stopped at: Completed 02-04-PLAN.md
 Resume file: None
