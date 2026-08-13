@@ -126,7 +126,7 @@ Plans:
 
 **Wave 7** *(blocked on Wave 6 completion)*
 
-- [ ] 02-07-PLAN.md — Implement the complete companion-to-Grocy-to-browser secure-media slice against Plan 02-06's gates.
+- [x] 02-07-PLAN.md — Implement the complete companion-to-Grocy-to-browser secure-media slice against Plan 02-06's gates.
 
 **Wave 8** *(blocked on Wave 7 completion)*
 
@@ -251,7 +251,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7. Dual-bra
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Safety Baseline & Mobile Diagnostics | 9/10 | In Progress|  |
-| 2. Enrichment Contract, Barcode Handoff & Secure Media | 6/14 | In Progress|  |
+| 2. Enrichment Contract, Barcode Handoff & Secure Media | 7/14 | In Progress|  |
 | 3. Food Taxonomy & Categorization Pilot | 0/TBD | Not started | - |
 | 4. Reusable Conversion Model | 0/TBD | Not started | - |
 | 5. Bulk Maintenance & Recovery Engine | 0/TBD | Not started | - |

@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 02-06-PLAN.md
-last_updated: "2026-08-13T22:54:25.818Z"
+stopped_at: Completed 02-07-PLAN.md
+last_updated: "2026-08-13T23:18:47.593Z"
 last_activity: 2026-08-13
 progress:
   total_phases: 7
   completed_phases: 0
   total_plans: 24
-  completed_plans: 15
-  percent: 63
+  completed_plans: 16
+  percent: 67
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-08-12)
 ## Current Position
 
 Phase: 02 (Enrichment Contract, Barcode Handoff & Secure Media) — EXECUTING
-Plan: 7 of 14
+Plan: 8 of 14
 Status: Ready to execute
 Last activity: 2026-08-13
 
-Progress: [██████░░░░] 63%
+Progress: [███████░░░] 67%
 
 ## Performance Metrics
 
@@ -50,6 +50,7 @@ Progress: [██████░░░░] 63%
 | Phase 02 P04 | 20 min | 3 tasks | 17 files |
 | Phase 02 P05 | 11 min | 2 tasks | 10 files |
 | Phase 02 P06 | 11 min | 2 tasks | 7 files |
+| Phase 02 P07 | 18 min | 2 tasks | 16 files |
 
 ## Accumulated Context
 
@@ -104,6 +105,7 @@ Recent decisions affecting current work:
 - [Phase 02]: Keep Plan 02-06 test-only; secure-media production behavior remains owned by Plan 02-07. — This plan specifies RED acceptance only and must not introduce production behavior.
 - [Phase 02]: Inject resolver, peer-aware streaming transport, clock, and token source for secure media. — Every DNS, peer, redirect, deadline, handle, and byte case stays deterministic and offline.
 - [Phase 02]: Require separate same-origin thumbnail/full actions and reducer-only File state until staging and normal Save. — Explicit actions and transient state preserve zero-write review authority.
+- [Phase 02]: Bind every companion media hop to a freshly approved public IP and verify the actual peer before redirect or body handling. — This closes DNS rebinding and proxy-re-resolution gaps while retaining the original Host header and TLS SNI.
 
 ### Pending Todos
 
@@ -135,6 +137,6 @@ Items acknowledged for v2 after the preview/audit model is proven:
 
 ## Session Continuity
 
-Last session: 2026-08-13T22:54:05.823Z
-Stopped at: Completed 02-06-PLAN.md
+Last session: 2026-08-13T23:18:47.589Z
+Stopped at: Completed 02-07-PLAN.md
 Resume file: None
