@@ -1,0 +1,54 @@
+{
+	"cases": [
+		{
+			"id": "valid_name_review",
+			"expected": "valid",
+			"raw_json": "{\"contract_version\":2,\"outcome\":\"found\",\"barcode\":{\"scanned_gtin\":\"012345678905\",\"canonical_gtin\":\"00012345678905\",\"equivalents_checked\":[\"012345678905\",\"00012345678905\"],\"status\":\"unused\",\"owner_product_id\":null},\"suggestions\":[{\"id\":\"name:openfoodfacts:0\",\"field\":\"name\",\"value\":\"Fixture rolled oats\",\"display_value\":\"Fixture rolled oats\",\"source\":{\"id\":\"openfoodfacts\",\"label\":\"Open Food Facts\"},\"confidence_band\":\"high\",\"reason_code\":\"canonical_structured_match\",\"evidence_kind\":\"structured_direct\",\"retrieved_at\":\"2026-08-13T12:00:00Z\",\"source_updated_at\":null,\"target\":null}],\"media\":[],\"warnings\":[],\"diagnostics\":{\"trace_id\":\"4bf92f3577b34da6a3ce929d0e0e4736\"}}"
+		},
+		{
+			"id": "duplicate_top_level",
+			"expected": "contract_invalid",
+			"raw_json": "{\"contract_version\":2,\"contract_version\":2,\"outcome\":\"found\",\"barcode\":{},\"suggestions\":[],\"media\":[],\"warnings\":[],\"diagnostics\":{}}"
+		},
+		{
+			"id": "duplicate_nested",
+			"expected": "contract_invalid",
+			"raw_json": "{\"contract_version\":2,\"outcome\":\"found\",\"barcode\":{},\"suggestions\":[{\"id\":\"name:openfoodfacts:0\",\"field\":\"name\",\"source\":{\"id\":\"openfoodfacts\",\"id\":\"openfoodfacts\"}}],\"media\":[],\"warnings\":[],\"diagnostics\":{}}"
+		},
+		{
+			"id": "duplicate_escaped_nested",
+			"expected": "contract_invalid",
+			"raw_json": "{\"contract_version\":2,\"outcome\":\"found\",\"barcode\":{},\"suggestions\":[{\"id\":\"name:openfoodfacts:0\",\"field\":\"name\",\"source\":{\"id\":\"openfoodfacts\",\"\\u0069d\":\"openfoodfacts\"}}],\"media\":[],\"warnings\":[],\"diagnostics\":{}}"
+		},
+		{
+			"id": "wrong_version",
+			"expected": "contract_invalid",
+			"raw_json": "{\"contract_version\":1,\"outcome\":\"found\",\"barcode\":{},\"suggestions\":[],\"media\":[],\"warnings\":[],\"diagnostics\":{}}"
+		},
+		{
+			"id": "unknown_top_level",
+			"expected": "contract_invalid",
+			"raw_json": "{\"contract_version\":2,\"outcome\":\"found\",\"barcode\":{},\"suggestions\":[],\"media\":[],\"warnings\":[],\"diagnostics\":{},\"provider_payload\":{}}"
+		},
+		{
+			"id": "missing_provenance",
+			"expected": "contract_invalid",
+			"raw_json": "{\"contract_version\":2,\"outcome\":\"found\",\"barcode\":{},\"suggestions\":[{\"id\":\"name:openfoodfacts:0\",\"field\":\"name\",\"value\":\"Fixture rolled oats\"}],\"media\":[],\"warnings\":[],\"diagnostics\":{}}"
+		},
+		{
+			"id": "type_invalid",
+			"expected": "contract_invalid",
+			"raw_json": "{\"contract_version\":\"2\",\"outcome\":\"found\",\"barcode\":{},\"suggestions\":{},\"media\":[],\"warnings\":[],\"diagnostics\":{}}"
+		},
+		{
+			"id": "raw_media_url",
+			"expected": "contract_invalid",
+			"raw_json": "{\"contract_version\":2,\"outcome\":\"found\",\"barcode\":{},\"suggestions\":[],\"media\":[{\"id\":\"image:openfoodfacts:front\",\"url\":\"https://images.invalid/front.png\"}],\"warnings\":[],\"diagnostics\":{}}"
+		},
+		{
+			"id": "nutrition_member",
+			"expected": "contract_invalid",
+			"raw_json": "{\"contract_version\":2,\"outcome\":\"found\",\"barcode\":{},\"suggestions\":[{\"id\":\"nutrition:provider:0\",\"field\":\"nutrition\",\"value\":{\"calories\":120}}],\"media\":[],\"warnings\":[],\"diagnostics\":{}}"
+		}
+	]
+}

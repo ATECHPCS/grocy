@@ -58,6 +58,13 @@
 		<section>
 			<div class="row permission-MASTER_DATA_EDIT"
 				id="grocy-ai-product-enrichment"
+				data-contract-error="Suggestions could not be verified. Retry the search, or continue editing manually. Nothing was changed."
+				data-review-heading="Review suggested fields"
+				data-current-label="Current"
+				data-suggested-label="Suggested"
+				data-selection-label="Use suggested value"
+				data-automatic-origin="Preselected — blank field and exact structured match"
+				data-explicit-origin="Selected by you"
 				data-ready-message="GTIN ready."
 				data-busy-message="Searching product details…"
 				data-success-heading="Product details found"
@@ -73,7 +80,7 @@
 					<div class="card grocy-ai-card">
 						<div class="card-body">
 							<h4 class="card-title">grocy_AI product enrichment</h4>
-							<p class="text-muted grocy-ai-description">Scan or enter a GTIN to search product details. Results are previews and are not saved automatically.</p>
+							<p class="text-muted grocy-ai-description">Scan or enter a GTIN to find product suggestions. Review and stage selected changes; nothing is saved until you save the product.</p>
 							<div class="form-group mb-0">
 								<label for="grocy-ai-upc">GTIN</label>
 								<input class="form-control barcodescanner-input"

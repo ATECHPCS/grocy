@@ -14,8 +14,83 @@ if (is_file($diagnosticFile))
 }
 require_once __DIR__ . '/../src/GrocyAiService.php';
 
+$contractFile = __DIR__ . '/../src/GrocyAiContract.php';
+if (is_file($contractFile))
+{
+	require_once $contractFile;
+}
+
 use GrocyAI\Services\GrocyAiDiagnostic;
+use GrocyAI\Services\GrocyAiContract;
 use GrocyAI\Services\GrocyAiService;
+
+function expectedRed(string $marker, string $message): never
+{
+	fwrite(STDERR, $marker . PHP_EOL);
+	fwrite(STDERR, 'FAIL: ' . $message . PHP_EOL);
+	exit(1);
+}
+
+function enrichmentV2Fixture(string $caseId): string
+{
+	$fixturePath = __DIR__ . '/fixtures/enrichment-v2-cases.json';
+	$fixtureDocument = json_decode(file_get_contents($fixturePath), true, 512, JSON_THROW_ON_ERROR);
+	foreach ($fixtureDocument['cases'] ?? [] as $case)
+	{
+		if (($case['id'] ?? null) === $caseId && is_string($case['raw_json'] ?? null))
+		{
+			return $case['raw_json'];
+		}
+	}
+
+	throw new RuntimeException("Missing enrichment-v2 fixture case {$caseId}");
+}
+
+function runDuplicateContractCase(string $caseId, string $marker): never
+{
+	$rawDocuments = [$caseId];
+	if ($caseId === 'duplicate_nested')
+	{
+		$rawDocuments[] = 'duplicate_escaped_nested';
+	}
+
+	if (!class_exists(GrocyAiContract::class) || !method_exists(GrocyAiContract::class, 'DecodeAndValidateRaw'))
+	{
+		expectedRed($marker, 'The raw duplicate-aware contract-v2 validator is not implemented');
+	}
+
+	foreach ($rawDocuments as $fixtureId)
+	{
+		try
+		{
+			GrocyAiContract::DecodeAndValidateRaw(enrichmentV2Fixture($fixtureId));
+			expectedRed($marker, "Fixture {$fixtureId} was accepted after duplicate members collapsed");
+		}
+		catch (InvalidArgumentException)
+		{
+			// The whole raw document was rejected as contract_invalid.
+		}
+	}
+
+	fwrite(STDOUT, "Contract case {$caseId} passed\n");
+	exit(0);
+}
+
+if (($argv[1] ?? null) === '--case')
+{
+	$selectedCase = $argv[2] ?? '';
+	if ($selectedCase === 'contract.duplicate_top_level')
+	{
+		runDuplicateContractCase('duplicate_top_level', 'EXPECTED_RED: contract.duplicate_top_level');
+	}
+	if ($selectedCase === 'contract.duplicate_nested')
+	{
+		runDuplicateContractCase('duplicate_nested', 'EXPECTED_RED: contract.duplicate_nested');
+	}
+
+	fwrite(STDERR, "Unknown test case: {$selectedCase}\n");
+	exit(2);
+}
 
 $failures = 0;
 $tests = 0;
