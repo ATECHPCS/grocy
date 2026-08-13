@@ -84,8 +84,12 @@ class GrocyAiService
 		}
 	}
 
-	public function FetchImage(string $token): array
+	public function FetchImage(string $variant, string $token): array
 	{
+		if (!in_array($variant, ['thumbnail', 'full'], true))
+		{
+			throw new \InvalidArgumentException('Invalid image variant');
+		}
 		if (!preg_match('/^[A-Za-z0-9_-]{20,200}$/', $token))
 		{
 			throw new \InvalidArgumentException('Invalid image selection');
@@ -97,7 +101,7 @@ class GrocyAiService
 			throw new \LogicException('The grocy_AI companion service is not configured');
 		}
 
-		$url = rtrim($serviceUrl, '/') . '/v1/products/images/' . rawurlencode($token);
+		$url = rtrim($serviceUrl, '/') . '/v1/products/images/' . rawurlencode($variant) . '/' . rawurlencode($token);
 		$headers = [
 			'Accept' => 'image/png,image/jpeg,image/webp',
 			'User-Agent' => 'grocy_AI/1'
@@ -114,7 +118,7 @@ class GrocyAiService
 			throw new \RuntimeException('The selected image is unavailable; search again');
 		}
 
-		$contentType = strtolower(trim(explode(';', (string)($result['content_type'] ?? ''))[0]));
+		$contentType = strtolower(trim((string)($result['content_type'] ?? '')));
 		if (!in_array($contentType, ['image/jpeg', 'image/png', 'image/webp'], true))
 		{
 			throw new \RuntimeException('The selected file is not a supported product image');
@@ -127,6 +131,17 @@ class GrocyAiService
 		if (!self::HasImageSignature($body, $contentType))
 		{
 			throw new \RuntimeException('The selected product image has an invalid format');
+		}
+		$imageInfo = @getimagesizefromstring($body);
+		if ($imageInfo === false)
+		{
+			throw new \RuntimeException('The selected product image dimensions are invalid');
+		}
+		$width = (int)($imageInfo[0] ?? 0);
+		$height = (int)($imageInfo[1] ?? 0);
+		if ($width < 32 || $height < 32 || $width > 4096 || $height > 4096 || ($width * $height) > 16000000)
+		{
+			throw new \RuntimeException('The selected product image dimensions are outside the allowed bounds');
 		}
 
 		return ['body' => $body, 'content_type' => $contentType];

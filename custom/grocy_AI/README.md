@@ -42,7 +42,7 @@ Product enrichment always uses a 12-second total request limit and a 2-second co
 - `GET /api/grocy-ai/status`
 - `GET /api/grocy-ai/barcodes/resolve/{barcode}`
 - `GET /api/grocy-ai/products/enrich/upc/{upc}`
-- `GET /api/grocy-ai/images/{selection-token}`
+- `GET /api/grocy-ai/images/{variant}/{selection-token}` where `variant` is exactly `thumbnail` or `full`
 
 All routes use Grocy authentication. Barcode ownership resolution, UPC enrichment, and selected-image retrieval also require the `MASTER_DATA_EDIT` permission.
 
@@ -95,7 +95,19 @@ Expected contract-v2 response:
       "target": null
     }
   ],
-  "media": [],
+  "media": [
+    {
+      "id": "image:openfoodfacts:front",
+      "kind": "front_package",
+      "thumbnail_handle": "opaque-thumbnail-capability",
+      "full_handle": "distinct-opaque-full-capability",
+      "source": {"id": "openfoodfacts", "label": "Open Food Facts"},
+      "confidence_band": "high",
+      "reason_code": "canonical_structured_front_image",
+      "evidence_kind": "structured_direct",
+      "retrieved_at": "2026-08-13T12:00:00Z"
+    }
+  ],
   "warnings": [],
   "diagnostics": {"trace_id": "4bf92f3577b34da6a3ce929d0e0e4736"}
 }
@@ -103,11 +115,17 @@ Expected contract-v2 response:
 
 Grocy preserves the raw response until a duplicate-aware lexical walk has rejected repeated member names at every object depth. It then validates exact version, members, enums, types, IDs, timestamps, targets, provenance, and unique IDs as one all-or-nothing boundary. Any malformed, unknown, duplicate, URL-bearing, nutrition, allergen, dietary, or medical content becomes the single redacted `contract_invalid` recovery state; no partial suggestion survives.
 
-Contract v2 contains no external image URL or provider dictionary. Secure media is represented only by future short-lived opaque handles and authenticated same-origin routes. The review renders name, brand, package size, product group, quantity unit, food type, and product image as independent current/suggested decisions with field-local provenance. Only a blank native destination backed by high-confidence direct structured canonical evidence starts selected. Mapped, inferred, search, missing-target, inactive-target, whitespace, and non-empty cases require an explicit decision or remain disabled.
+Contract v2 contains no external image URL or provider dictionary. Secure media is represented only by distinct short-lived variant-bound opaque handles and authenticated same-origin routes. Exact structured-source front-package imagery is ordered first. SearXNG candidates appear only in the separate `Unverified search alternatives` group with `unverified` confidence and `search` evidence; they are never equivalent to structured evidence or preselected. The browser makes zero image request until `Load thumbnail` or `Select image` is activated.
+
+The companion revalidates URL syntax, DNS answers, and the actual connected peer at every hop, refuses mixed or non-global addresses, disables environment proxies and automatic redirects, allows at most two manually checked redirects, and forbids HTTPS downgrade. It enforces a 2-second connect deadline, 12-second total deadline, 2,000–3,000,000 streamed bytes, and exact matching JPEG/PNG/WebP MIME and magic. Handles live for 900 seconds in a maximum 512-entry LRU store.
+
+Grocy independently checks the closed variant and token, byte count, exact MIME, magic, decoded width and height of 32–4096 pixels, and a maximum 16,000,000 pixels before returning fixed-name bytes with `Cache-Control: private, no-store` and `X-Content-Type-Options: nosniff`. Thumbnail object URLs and the selected full `File` remain transient module state. Only `Stage selected changes` assigns that `File` to the native picture input, and only Grocy's unchanged normal Save can persist it. Candidate failure preserves every other suggestion, manual form value, selection, and Save control; stale, replaced, cancelled, and navigation state abort requests and revoke obsolete object URLs.
+
+The review renders name, brand, package size, product group, quantity unit, food type, and product image as independent current/suggested decisions with field-local provenance. Only a blank native destination backed by high-confidence direct structured canonical evidence starts selected. Mapped, inferred, search, missing-target, inactive-target, whitespace, and non-empty cases require an explicit decision or remain disabled.
 
 The only Phase 2 brand destination is the revalidated `products.brand` single-line product userfield. Package size and food type remain visible evidence with no destination; this module does not create userfields or a Phase 3 taxonomy surrogate. Product-group and quantity-unit suggestions must name an active local option. Nutrition Facts, allergen, dietary, and medical members remain rejected and deferred.
 
-Selection state, captured current values, and the selected-only final diff are transient. The browser re-reads each native control before opening the diff and again before staging. A changed value is marked `Needs review`, removed from the diff, and cannot stage until the user explicitly selects it against the new current value. `Stage selected changes` dispatches only local native input/change behavior for selected live rows and makes no API request. An unused checksum-valid barcode can join that transient review state; its only write boundary is the normal-Save continuation described above. Secure image-file staging remains assigned to the secure-media slice. Grocy's unchanged normal Save buttons are the sole persistence authority.
+Selection state, captured current values, and the selected-only final diff are transient. The browser re-reads each native control before opening the diff and again before staging. A changed value is marked `Needs review`, removed from the diff, and cannot stage until the user explicitly selects it against the new current value. `Stage selected changes` dispatches only local native input/change behavior for selected live rows and makes no API request. An unused checksum-valid barcode can join that transient review state; its only write boundary is the normal-Save continuation described above. Grocy's unchanged normal Save buttons are the sole persistence authority.
 
 ## Diagnostic and privacy contract
 

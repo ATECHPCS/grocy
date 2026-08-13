@@ -117,7 +117,7 @@ class GrocyAiApiController extends BaseApiController
 
 		try
 		{
-			$image = (new GrocyAiService())->FetchImage($args['token']);
+			$image = (new GrocyAiService())->FetchImage($args['variant'], $args['token']);
 			$response->getBody()->write($image['body']);
 			$extension = [
 				'image/png' => 'png',
@@ -127,7 +127,7 @@ class GrocyAiApiController extends BaseApiController
 			return $response
 				->withHeader('Cache-Control', 'private, no-store')
 				->withHeader('Content-Type', $image['content_type'])
-				->withHeader('Content-Disposition', 'inline; filename="grocy-ai-product.' . $extension . '"')
+				->withHeader('Content-Disposition', 'inline; filename="product-image.' . $extension . '"')
 				->withHeader('X-Content-Type-Options', 'nosniff');
 		}
 		catch (\InvalidArgumentException)

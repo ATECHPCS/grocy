@@ -301,21 +301,36 @@ class GrocyAiContract
 			self::Invalid();
 		}
 		$ids = [];
+		$searchSeen = false;
 		foreach ($value as $media)
 		{
 			self::AssertObject($media, ['id', 'kind', 'thumbnail_handle', 'full_handle', 'source', 'confidence_band', 'reason_code', 'evidence_kind', 'retrieved_at']);
 			self::AssertId($media['id']);
+			$isStructured = $media['kind'] === 'front_package';
+			$isSearch = $media['kind'] === 'search_alternative';
 			if (isset($ids[$media['id']])
-				|| $media['kind'] !== 'front_package'
+				|| (!$isStructured && !$isSearch)
 				|| !is_string($media['thumbnail_handle'])
 				|| preg_match(self::HANDLE_PATTERN, $media['thumbnail_handle']) !== 1
 				|| !is_string($media['full_handle'])
 				|| preg_match(self::HANDLE_PATTERN, $media['full_handle']) !== 1
+				|| hash_equals($media['thumbnail_handle'], $media['full_handle'])
 				|| !in_array($media['confidence_band'], self::CONFIDENCE_BANDS, true)
 				|| !in_array($media['reason_code'], self::REASON_CODES, true)
-				|| !in_array($media['evidence_kind'], self::EVIDENCE_KINDS, true))
+				|| !in_array($media['evidence_kind'], self::EVIDENCE_KINDS, true)
+				|| ($isStructured && ($searchSeen
+					|| $media['confidence_band'] !== 'high'
+					|| $media['reason_code'] !== 'canonical_structured_front_image'
+					|| $media['evidence_kind'] !== 'structured_direct'))
+				|| ($isSearch && ($media['confidence_band'] !== 'unverified'
+					|| $media['reason_code'] !== 'unverified_search_result'
+					|| $media['evidence_kind'] !== 'search')))
 			{
 				self::Invalid();
+			}
+			if ($isSearch)
+			{
+				$searchSeen = true;
 			}
 			$ids[$media['id']] = true;
 			self::ValidateSource($media['source']);

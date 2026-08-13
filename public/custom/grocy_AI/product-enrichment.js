@@ -134,6 +134,46 @@
 		stageButton: document.getElementById('grocy-ai-stage-selected-button'),
 		stagingFeedback: document.getElementById('grocy-ai-staging-feedback')
 	};
+
+	function ensureMediaUi()
+	{
+		var section = document.getElementById('grocy-ai-media-review');
+		if (!section)
+		{
+			section = document.createElement('section');
+			section.id = 'grocy-ai-media-review';
+			section.className = 'grocy-ai-media-review d-none';
+			section.setAttribute('aria-labelledby', 'grocy-ai-media-heading');
+			var heading = textElement('h5', '', localized('imageSectionHeading', 'Choose a product image'));
+			heading.id = 'grocy-ai-media-heading';
+			section.appendChild(heading);
+			[
+				['structured', localized('structuredImageHeading', 'Front package image')],
+				['search', localized('searchImageHeading', 'Unverified search alternatives')]
+			].forEach(function (definition)
+			{
+				var group = document.createElement('section');
+				group.id = 'grocy-ai-' + definition[0] + '-media-group';
+				group.className = 'grocy-ai-media-group d-none';
+				group.appendChild(textElement('h6', '', definition[1]));
+				var grid = document.createElement('div');
+				grid.id = 'grocy-ai-' + definition[0] + '-media';
+				grid.className = 'grocy-ai-media-grid';
+				group.appendChild(grid);
+				section.appendChild(group);
+			});
+			reviewUi.section.insertAdjacentElement('afterend', section);
+		}
+		return {
+			section: section,
+			structuredGroup: document.getElementById('grocy-ai-structured-media-group'),
+			structuredGrid: document.getElementById('grocy-ai-structured-media'),
+			searchGroup: document.getElementById('grocy-ai-search-media-group'),
+			searchGrid: document.getElementById('grocy-ai-search-media')
+		};
+	}
+
+	var mediaUi = ensureMediaUi();
 	var barcodeUi = {
 		scanned: document.getElementById('grocy-ai-scanned-barcode'),
 		equivalents: document.getElementById('grocy-ai-barcode-equivalents'),
@@ -435,6 +475,7 @@
 
 	function clearResults()
 	{
+		disposeMediaState(reviewState);
 		reviewState = null;
 		if (barcodeUi.scanned) barcodeUi.scanned.textContent = '';
 		if (barcodeUi.equivalents) barcodeUi.equivalents.textContent = '';
@@ -455,6 +496,11 @@
 		}
 		if (reviewUi.selectionStatus) reviewUi.selectionStatus.textContent = localized('selectionSummary', '%s changes selected').replace('%s', '0');
 		if (reviewUi.reviewButton) reviewUi.reviewButton.disabled = true;
+		if (mediaUi.structuredGrid) mediaUi.structuredGrid.replaceChildren();
+		if (mediaUi.searchGrid) mediaUi.searchGrid.replaceChildren();
+		if (mediaUi.structuredGroup) mediaUi.structuredGroup.classList.add('d-none');
+		if (mediaUi.searchGroup) mediaUi.searchGroup.classList.add('d-none');
+		if (mediaUi.section) mediaUi.section.remove();
 		results.classList.add('d-none');
 	}
 
@@ -552,15 +598,23 @@
 
 	function validMedia(media)
 	{
+		var structured = media && media.kind === 'front_package';
+		var search = media && media.kind === 'search_alternative';
 		return hasExactKeys(media, ['id', 'kind', 'thumbnail_handle', 'full_handle', 'source', 'confidence_band', 'reason_code', 'evidence_kind', 'retrieved_at'])
 			&& validText(media.id)
-			&& media.kind === 'front_package'
+			&& (structured || search)
 			&& typeof media.thumbnail_handle === 'string' && /^[A-Za-z0-9_-]{20,200}$/.test(media.thumbnail_handle)
 			&& typeof media.full_handle === 'string' && /^[A-Za-z0-9_-]{20,200}$/.test(media.full_handle)
+			&& media.thumbnail_handle !== media.full_handle
 			&& validSource(media.source)
-			&& ['high', 'medium', 'low', 'unverified'].indexOf(media.confidence_band) !== -1
-			&& media.reason_code === 'canonical_structured_front_image'
-			&& ['structured_direct', 'mapped', 'inferred', 'search'].indexOf(media.evidence_kind) !== -1
+			&& ((structured
+				&& media.confidence_band === 'high'
+				&& media.reason_code === 'canonical_structured_front_image'
+				&& media.evidence_kind === 'structured_direct')
+				|| (search
+					&& media.confidence_band === 'unverified'
+					&& media.reason_code === 'unverified_search_result'
+					&& media.evidence_kind === 'search'))
 			&& validTimestamp(media.retrieved_at);
 	}
 
@@ -602,9 +656,12 @@
 			ids[suggestion.id] = true;
 			return true;
 		});
+		var searchMediaSeen = false;
 		var mediaValid = data.media.every(function (media)
 		{
 			if (!validMedia(media) || ids[media.id]) return false;
+			if (media.kind === 'front_package' && searchMediaSeen) return false;
+			if (media.kind === 'search_alternative') searchMediaSeen = true;
 			ids[media.id] = true;
 			return true;
 		});
@@ -892,18 +949,25 @@
 		reviewUi.rows.appendChild(section);
 	}
 
-	function mediaReviewRow(media)
+	function mediaSuggestion(media)
+	{
+		return {
+			display_value: media.kind === 'front_package'
+				? localized('structuredImageHeading', 'Front package image')
+				: localized('searchImageHeading', 'Unverified search alternatives'),
+			source: media.source,
+			confidence_band: media.confidence_band,
+			reason_code: media.reason_code,
+			retrieved_at: media.retrieved_at,
+			source_updated_at: null
+		};
+	}
+
+	function mediaEvidenceRow(media)
 	{
 		return {
 			field: 'product_image',
-			suggestion: {
-				display_value: translated('Front package image'),
-				source: media.source,
-				confidence_band: media.confidence_band,
-				reason_code: media.reason_code,
-				retrieved_at: media.retrieved_at,
-				source_updated_at: null
-			},
+			suggestion: mediaSuggestion(media),
 			control: productPictureInput,
 			available: false,
 			unavailable: '',
@@ -915,11 +979,248 @@
 		};
 	}
 
+	function imageSignatureMatches(bytes, contentType)
+	{
+		if (contentType === 'image/png')
+		{
+			return bytes.length >= 8 && [137, 80, 78, 71, 13, 10, 26, 10].every(function (value, index) { return bytes[index] === value; });
+		}
+		if (contentType === 'image/jpeg') return bytes.length >= 3 && bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255;
+		if (contentType === 'image/webp')
+		{
+			return bytes.length >= 12
+				&& String.fromCharCode.apply(null, bytes.slice(0, 4)) === 'RIFF'
+				&& String.fromCharCode.apply(null, bytes.slice(8, 12)) === 'WEBP';
+		}
+		return false;
+	}
+
+	function validatedMediaBlob(response)
+	{
+		if (!response.ok)
+		{
+			var unavailable = new Error('media unavailable');
+			unavailable.expired = response.status === 404 || response.status === 410;
+			throw unavailable;
+		}
+		var contentType = (response.headers.get('Content-Type') || '').toLowerCase();
+		if (['image/jpeg', 'image/png', 'image/webp'].indexOf(contentType) === -1) throw new Error('media unavailable');
+		return response.blob().then(function (blob)
+		{
+			if (blob.size < 2000 || blob.size > 3000000 || blob.type !== contentType) throw new Error('media unavailable');
+			return blob.arrayBuffer().then(function (buffer)
+			{
+				if (!imageSignatureMatches(new Uint8Array(buffer), contentType)) throw new Error('media unavailable');
+				return blob;
+			});
+		});
+	}
+
+	function mediaRequest(candidate, variant)
+	{
+		var handle = candidate.media[variant + '_handle'];
+		var controller = new AbortController();
+		candidate.controllers.push(controller);
+		return fetch(U('/api/grocy-ai/images/' + variant + '/' + encodeURIComponent(handle)), {
+			method: 'GET',
+			credentials: 'same-origin',
+			cache: 'no-store',
+			headers: { Accept: 'image/png,image/jpeg,image/webp' },
+			signal: controller.signal
+		}).then(validatedMediaBlob).finally(function ()
+		{
+			candidate.controllers = candidate.controllers.filter(function (item) { return item !== controller; });
+		});
+	}
+
+	function setCandidateError(candidate, error)
+	{
+		candidate.error.textContent = error && error.expired
+			? localized('mediaExpired', 'This image preview expired. Search again to load it.')
+			: localized('mediaError', 'This image could not be loaded safely. Choose another image or continue without one.');
+		candidate.error.classList.remove('d-none');
+	}
+
+	function updateMediaSelectionUi()
+	{
+		if (!reviewState || !reviewState.mediaCandidates) return;
+		reviewState.mediaCandidates.forEach(function (candidate)
+		{
+			var selected = reviewState.rows.product_image
+				&& reviewState.rows.product_image.selected
+				&& reviewState.rows.product_image.candidate === candidate;
+			candidate.element.classList.toggle('grocy-ai-media-selected', Boolean(selected));
+			candidate.selectedText.classList.toggle('d-none', !selected);
+			candidate.removeButton.classList.toggle('d-none', !selected);
+		});
+	}
+
+	function selectMediaCandidate(candidate)
+	{
+		var state = reviewState;
+		candidate.selectButton.disabled = true;
+		candidate.error.classList.add('d-none');
+		mediaRequest(candidate, 'full').then(function (blob)
+		{
+			if (reviewState !== state || !candidate.element.isConnected) return;
+			var extension = { 'image/png': 'png', 'image/webp': 'webp', 'image/jpeg': 'jpg' }[blob.type];
+			var file = new File([blob], 'product-image.' + extension, { type: blob.type });
+			reviewState.rows.product_image = {
+				field: 'product_image',
+				suggestion: mediaSuggestion(candidate.media),
+				control: productPictureInput,
+				currentSnapshot: productPictureInput && productPictureInput.files && productPictureInput.files.length ? productPictureInput.files[0].name : '',
+				selected: true,
+				origin: 'explicit',
+				stale: false,
+				file: file,
+				candidate: candidate
+			};
+			hideFinalDiff();
+			updateMediaSelectionUi();
+			updateSelectionSummary();
+		}).catch(function (error)
+		{
+			if (error && error.name === 'AbortError') return;
+			if (reviewState === state && candidate.element.isConnected) setCandidateError(candidate, error);
+		}).finally(function ()
+		{
+			if (reviewState === state && candidate.element.isConnected) candidate.selectButton.disabled = false;
+		});
+	}
+
+	function removeMediaSelection(candidate)
+	{
+		if (!reviewState || !reviewState.rows.product_image || reviewState.rows.product_image.candidate !== candidate) return;
+		delete reviewState.rows.product_image;
+		hideFinalDiff();
+		updateMediaSelectionUi();
+		updateSelectionSummary();
+	}
+
+	function loadMediaThumbnail(candidate)
+	{
+		var state = reviewState;
+		candidate.loadButton.disabled = true;
+		candidate.loadButton.textContent = localized('thumbnailBusy', 'Loading thumbnail…');
+		candidate.error.classList.add('d-none');
+		mediaRequest(candidate, 'thumbnail').then(function (blob)
+		{
+			if (reviewState !== state || !candidate.element.isConnected) return;
+			if (candidate.objectUrl) URL.revokeObjectURL(candidate.objectUrl);
+			candidate.objectUrl = URL.createObjectURL(blob);
+			candidate.image.src = candidate.objectUrl;
+			candidate.image.classList.remove('d-none');
+			candidate.placeholder.classList.add('d-none');
+			candidate.loadButton.classList.add('d-none');
+			candidate.selectButton.classList.remove('d-none');
+		}).catch(function (error)
+		{
+			if (error && error.name === 'AbortError') return;
+			if (reviewState === state && candidate.element.isConnected) setCandidateError(candidate, error);
+		}).finally(function ()
+		{
+			if (reviewState === state && candidate.element.isConnected)
+			{
+				candidate.loadButton.disabled = false;
+				candidate.loadButton.textContent = localized('thumbnailAction', 'Load thumbnail');
+			}
+		});
+	}
+
+	function renderMediaCandidate(media, grid)
+	{
+		var element = document.createElement('article');
+		element.className = 'grocy-ai-media-candidate';
+		element.dataset.grocyAiMediaId = media.id;
+		var frame = document.createElement('div');
+		frame.className = 'grocy-ai-media-frame';
+		var placeholder = textElement('span', 'grocy-ai-media-placeholder', translated('Image not loaded'));
+		var image = document.createElement('img');
+		image.className = 'img-thumbnail d-none';
+		image.alt = (productNameInput.value || translated('Product')) + ' — ' + media.source.label + ' ' + translated('package candidate');
+		frame.appendChild(placeholder);
+		frame.appendChild(image);
+		element.appendChild(frame);
+		element.appendChild(textElement('span', 'grocy-ai-media-source', media.source.label));
+		if (media.kind === 'search_alternative')
+		{
+			element.appendChild(textElement('span', 'badge badge-secondary', translated('Unverified')));
+			element.appendChild(textElement('span', 'grocy-ai-media-evidence', translated('Search result')));
+		}
+		else
+		{
+			element.appendChild(textElement('span', 'badge badge-success', translated('High confidence')));
+		}
+		var loadButton = textElement('button', 'btn btn-outline-primary', localized('thumbnailAction', 'Load thumbnail'));
+		loadButton.type = 'button';
+		var selectButton = textElement('button', 'btn btn-primary d-none', localized('imageSelect', 'Select image'));
+		selectButton.type = 'button';
+		var selectedText = textElement('span', 'grocy-ai-media-selected-text d-none', localized('imageSelected', 'Selected'));
+		var removeButton = textElement('button', 'btn btn-outline-secondary d-none', localized('imageRemove', 'Remove selection'));
+		removeButton.type = 'button';
+		var error = textElement('div', 'grocy-ai-media-error alert alert-warning d-none', '');
+		error.setAttribute('role', 'alert');
+		element.appendChild(loadButton);
+		element.appendChild(selectButton);
+		element.appendChild(selectedText);
+		element.appendChild(removeButton);
+		element.appendChild(error);
+		var candidate = {
+			media: media,
+			element: element,
+			placeholder: placeholder,
+			image: image,
+			loadButton: loadButton,
+			selectButton: selectButton,
+			selectedText: selectedText,
+			removeButton: removeButton,
+			error: error,
+			objectUrl: null,
+			controllers: []
+		};
+		loadButton.addEventListener('click', function () { loadMediaThumbnail(candidate); });
+		selectButton.addEventListener('click', function () { selectMediaCandidate(candidate); });
+		removeButton.addEventListener('click', function () { removeMediaSelection(candidate); });
+		reviewState.mediaCandidates.push(candidate);
+		grid.appendChild(element);
+	}
+
+	function renderMedia(media)
+	{
+		if (!media.length) return;
+		mediaUi = ensureMediaUi();
+		mediaUi.section.classList.remove('d-none');
+		media.forEach(function (candidate)
+		{
+			var structured = candidate.kind === 'front_package';
+			var group = structured ? mediaUi.structuredGroup : mediaUi.searchGroup;
+			var grid = structured ? mediaUi.structuredGrid : mediaUi.searchGrid;
+			group.classList.remove('d-none');
+			renderMediaCandidate(candidate, grid);
+		});
+	}
+
+	function disposeMediaState(state)
+	{
+		if (!state || !state.mediaCandidates) return;
+		state.mediaCandidates.forEach(function (candidate)
+		{
+			candidate.controllers.forEach(function (controller) { controller.abort(); });
+			candidate.controllers = [];
+			if (candidate.objectUrl)
+			{
+				URL.revokeObjectURL(candidate.objectUrl);
+				candidate.objectUrl = null;
+			}
+		});
+	}
+
 	function renderReview(data)
 	{
 		clearResults();
 		var frozenData = deepFreeze(data);
-		reviewState = { data: frozenData, rows: {}, stagedBarcode: null, finalDiffVisible: false, staged: false };
+		reviewState = { data: frozenData, rows: {}, mediaCandidates: [], stagedBarcode: null, finalDiffVisible: false, staged: false };
 		renderBarcodeOwnership(frozenData.barcode);
 		frozenData.suggestions.forEach(function (suggestion)
 		{
@@ -946,10 +1247,11 @@
 		});
 		if (frozenData.media.length > 0)
 		{
-			var imageRow = mediaReviewRow(frozenData.media[0]);
+			var imageRow = mediaEvidenceRow(frozenData.media[0]);
 			reviewState.rows.product_image = imageRow;
 			renderReviewRow(imageRow);
 		}
+		renderMedia(frozenData.media);
 		updateSelectionSummary();
 		results.classList.remove('d-none');
 	}
@@ -964,7 +1266,21 @@
 		var firstStale = null;
 		selectedRows().forEach(function (row)
 		{
-			if (!row.control || row.field === 'product_image') return;
+			if (!row.control) return;
+			if (row.field === 'product_image')
+			{
+				var livePicture = row.control.files && row.control.files.length ? row.control.files[0].name : '';
+				if (livePicture === row.currentSnapshot) return;
+				row.currentSnapshot = livePicture;
+				row.selected = false;
+				row.origin = null;
+				row.stale = true;
+				row.candidate.error.textContent = localized('staleFieldMessage', 'This field changed after the search. Review it again before staging.');
+				row.candidate.error.classList.remove('d-none');
+				updateMediaSelectionUi();
+				if (!firstStale) firstStale = { checkbox: row.candidate.selectButton };
+				return;
+			}
 			var liveValue = row.control.value;
 			if (liveValue === row.currentSnapshot) return;
 			row.currentSnapshot = liveValue;
@@ -1070,7 +1386,16 @@
 		}
 		selectedRows().forEach(function (row)
 		{
-			if (!row.control || row.field === 'product_image') return;
+			if (!row.control) return;
+			if (row.field === 'product_image')
+			{
+				var transfer = new DataTransfer();
+				transfer.items.add(row.file);
+				row.control.files = transfer.files;
+				row.control.dispatchEvent(new Event('change', { bubbles: true }));
+				row.currentSnapshot = row.file.name;
+				return;
+			}
 			row.control.value = row.stagedValue;
 			row.control.dispatchEvent(new Event('input', { bubbles: true }));
 			row.control.dispatchEvent(new Event('change', { bubbles: true }));

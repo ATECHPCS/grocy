@@ -4,7 +4,7 @@
 
 @if(GROCY_FEATURE_FLAG_GROCY_AI)
 @php
-$grocyAiAssetVersion = '2.3.0';
+$grocyAiAssetVersion = '2.4.0';
 @endphp
 @push('pageStyles')
 <link rel="stylesheet"
@@ -967,6 +967,16 @@ $grocyAiAssetVersion = '2.3.0';
 			data-no-option-message="{{ $__t('No matching Grocy option is available.') }}"
 			data-no-food-type-message="{{ $__t('No local food type is configured.') }}"
 			data-source-update-unavailable="{{ $__t('Source update time unavailable') }}"
+			data-image-section-heading="{{ $__t('Choose a product image') }}"
+			data-structured-image-heading="{{ $__t('Front package image') }}"
+			data-search-image-heading="{{ $__t('Unverified search alternatives') }}"
+			data-thumbnail-action="{{ $__t('Load thumbnail') }}"
+			data-thumbnail-busy="{{ $__t('Loading thumbnail…') }}"
+			data-image-select="{{ $__t('Select image') }}"
+			data-image-selected="{{ $__t('Selected') }}"
+			data-image-remove="{{ $__t('Remove selection') }}"
+			data-media-error="{{ $__t('This image could not be loaded safely. Choose another image or continue without one.') }}"
+			data-media-expired="{{ $__t('This image preview expired. Search again to load it.') }}"
 			data-selection-summary="{{ $__t('%s changes selected') }}"
 			data-review-action="{{ $__t('Review selected changes') }}"
 			data-empty-selection-heading="{{ $__t('No changes selected') }}"
@@ -1105,6 +1115,19 @@ $grocyAiAssetVersion = '2.3.0';
 									tabindex="-1">{{ $__t('Review suggested fields') }}</h5>
 								<div class="grocy-ai-field-rows"
 									id="grocy-ai-field-rows"></div>
+							</section>
+							<section class="grocy-ai-media-review d-none"
+								id="grocy-ai-media-review"
+								aria-labelledby="grocy-ai-media-heading">
+								<h5 id="grocy-ai-media-heading">{{ $__t('Choose a product image') }}</h5>
+								<section class="grocy-ai-media-group d-none" id="grocy-ai-structured-media-group">
+									<h6>{{ $__t('Front package image') }}</h6>
+									<div class="grocy-ai-media-grid" id="grocy-ai-structured-media"></div>
+								</section>
+								<section class="grocy-ai-media-group d-none" id="grocy-ai-search-media-group">
+									<h6>{{ $__t('Unverified search alternatives') }}</h6>
+									<div class="grocy-ai-media-grid" id="grocy-ai-search-media"></div>
+								</section>
 							</section>
 							<div class="grocy-ai-selection-status"
 								id="grocy-ai-selection-status"

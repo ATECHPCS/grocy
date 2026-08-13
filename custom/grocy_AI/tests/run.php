@@ -212,7 +212,7 @@ function runMediaPixelLimitCase(): never
 		]);
 		try
 		{
-			$result = $service->FetchImage('opaquevariantboundhandle01');
+			$result = $service->FetchImage('full', 'opaquevariantboundhandle01');
 			if (($result['body'] ?? null) !== $body)
 			{
 				expectedRed($marker, "Valid {$width}x{$height} PNG bytes were changed");
@@ -240,7 +240,7 @@ function runMediaPixelLimitCase(): never
 		]);
 		try
 		{
-			$service->FetchImage('opaquevariantboundhandle01');
+			$service->FetchImage('full', 'opaquevariantboundhandle01');
 			expectedRed($marker, "Invalid decoded dimension case {$caseId} was accepted");
 		}
 		catch (RuntimeException)
@@ -436,6 +436,9 @@ check($phase2BladeOk, 'The real Blade compiler renders the actual Phase 2 featur
 foreach ([
 	'id="grocy-ai-field-review"',
 	'id="grocy-ai-field-rows"',
+	'id="grocy-ai-media-review"',
+	'id="grocy-ai-structured-media-group"',
+	'id="grocy-ai-search-media-group"',
 	'id="grocy-ai-selection-status"',
 	'id="grocy-ai-final-diff"',
 	'id="grocy-ai-stage-selected-button"',
@@ -672,24 +675,63 @@ $malformedSuggestionsService = new GrocyAiService(fn(): array => [
 ]);
 expectException(fn() => $malformedSuggestionsService->EnrichByUpc('012345678905', $traceContext), GrocyAiServiceException::class, 'Malformed suggestion collections reject the whole contract');
 
+$structuredMedia = [
+	'id' => 'image:openfoodfacts:front',
+	'kind' => 'front_package',
+	'thumbnail_handle' => 'thumbnail_front_capability_0001',
+	'full_handle' => 'full_front_capability_0000000001',
+	'source' => ['id' => 'openfoodfacts', 'label' => 'Open Food Facts'],
+	'confidence_band' => 'high',
+	'reason_code' => 'canonical_structured_front_image',
+	'evidence_kind' => 'structured_direct',
+	'retrieved_at' => '2026-08-13T12:00:00Z'
+];
+$searchMedia = [
+	'id' => 'image:searxng:1',
+	'kind' => 'search_alternative',
+	'thumbnail_handle' => 'thumbnail_search_capability_001',
+	'full_handle' => 'full_search_capability_000000001',
+	'source' => ['id' => 'searxng', 'label' => 'Search result'],
+	'confidence_band' => 'unverified',
+	'reason_code' => 'unverified_search_result',
+	'evidence_kind' => 'search',
+	'retrieved_at' => '2026-08-13T12:00:00Z'
+];
+$mediaContractService = new GrocyAiService(fn(): array => [
+	'status' => 200,
+	'body' => companionBody('found', ['media' => [$structuredMedia, $searchMedia]])
+]);
+$mediaContract = $mediaContractService->EnrichByUpc('012345678905', $traceContext);
+check(array_column($mediaContract['media'], 'kind') === ['front_package', 'search_alternative'], 'Structured front media precedes the unverified search fallback');
+check(!str_contains(json_encode($mediaContract['media'], JSON_THROW_ON_ERROR), 'http'), 'The validated Grocy media contract contains no external origin');
+$misorderedMediaService = new GrocyAiService(fn(): array => [
+	'status' => 200,
+	'body' => companionBody('found', ['media' => [$searchMedia, $structuredMedia]])
+]);
+expectException(fn() => $misorderedMediaService->EnrichByUpc('012345678905', $traceContext), GrocyAiServiceException::class, 'Structured media after a search alternative rejects the whole contract');
+
 $statusJson = json_encode($service->GetStatus(), JSON_THROW_ON_ERROR);
 check(!str_contains($statusJson, GROCY_AI_SERVICE_API_KEY), 'Status never exposes the API key');
 check(!str_contains($statusJson, '012345678905'), 'Status never exposes a GTIN');
 check(!str_contains($statusJson, GROCY_AI_SERVICE_URL), 'Status never exposes the companion URL');
 check($service->GetStatus()['mode'] === 'review-before-save', 'Phase 1 reports review-before-save mode');
 
-$imageBody = "\x89PNG\r\n\x1a\n" . str_repeat('x', 2500);
-$imageService = new GrocyAiService(function (string $url, array $headers) use ($imageBody): array
+$imageBody = pngDimensionFixture(32, 32);
+$imageRequestUrl = null;
+$imageService = new GrocyAiService(function (string $url, array $headers) use ($imageBody, &$imageRequestUrl): array
 {
+	$imageRequestUrl = $url;
 	return ['status' => 200, 'body' => $imageBody, 'content_type' => 'image/png'];
 });
-$image = $imageService->FetchImage('abcdefghijklmnopqrstuvwx');
+$image = $imageService->FetchImage('full', 'abcdefghijklmnopqrstuvwx');
 check($image['body'] === $imageBody, 'A selected image is returned without modification');
 check($image['content_type'] === 'image/png', 'A supported image content type is preserved');
-expectException(fn() => $imageService->FetchImage('../internal'), InvalidArgumentException::class, 'Invalid image handles are rejected');
+check($imageRequestUrl === 'https://grocy-ai.internal/base/v1/products/images/full/abcdefghijklmnopqrstuvwx', 'Grocy requests only the closed companion variant and opaque handle path');
+expectException(fn() => $imageService->FetchImage('full', '../internal'), InvalidArgumentException::class, 'Invalid image handles are rejected');
+expectException(fn() => $imageService->FetchImage('preview', 'abcdefghijklmnopqrstuvwx'), InvalidArgumentException::class, 'Invalid image variants are rejected');
 
 $htmlService = new GrocyAiService(fn(): array => ['status' => 200, 'body' => str_repeat('x', 2500), 'content_type' => 'text/html']);
-expectException(fn() => $htmlService->FetchImage('abcdefghijklmnopqrstuvwx'), RuntimeException::class, 'Non-image downloads are rejected');
+expectException(fn() => $htmlService->FetchImage('full', 'abcdefghijklmnopqrstuvwx'), RuntimeException::class, 'Non-image downloads are rejected');
 
 $badJsonService = new GrocyAiService(fn(): array => ['status' => 200, 'body' => '{']);
 expectException(fn() => $badJsonService->EnrichByUpc('012345678905', $traceContext), RuntimeException::class, 'Invalid companion JSON is rejected');

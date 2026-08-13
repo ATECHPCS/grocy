@@ -164,11 +164,91 @@ details.grocy-ai-diagnostics:not([open]) > .grocy-ai-diagnostic-body {
 }
 
 .grocy-ai-review-section > h5,
+.grocy-ai-media-review > h5,
 .grocy-ai-final-diff > h5 {
 	font-size: 20px;
 	font-weight: 500;
 	line-height: 1.2;
 	margin: 0 0 16px;
+}
+
+.grocy-ai-media-review,
+.grocy-ai-media-group,
+.grocy-ai-media-candidate {
+	min-width: 0;
+}
+
+.grocy-ai-media-group + .grocy-ai-media-group {
+	margin-top: 24px;
+}
+
+.grocy-ai-media-group > h6 {
+	font-size: 16px;
+	font-weight: 500;
+	line-height: 1.5;
+	margin: 0 0 8px;
+}
+
+.grocy-ai-media-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(144px, 1fr));
+	gap: 16px;
+}
+
+.grocy-ai-media-candidate {
+	border: 1px solid #dee2e6;
+	display: grid;
+	gap: 8px;
+	padding: 16px;
+	overflow-wrap: anywhere;
+}
+
+.grocy-ai-media-selected {
+	border-color: var(--success);
+}
+
+.grocy-ai-media-frame {
+	align-items: center;
+	background: #f8f9fa;
+	border: 1px solid #dee2e6;
+	display: flex;
+	height: 120px;
+	justify-content: center;
+	overflow: hidden;
+}
+
+.grocy-ai-media-frame img {
+	height: 100%;
+	max-width: 100%;
+	object-fit: contain;
+	width: 100%;
+}
+
+.grocy-ai-media-placeholder,
+.grocy-ai-media-source,
+.grocy-ai-media-evidence {
+	font-size: 14px;
+	line-height: 1.5;
+}
+
+.grocy-ai-media-selected-text {
+	font-size: 16px;
+	font-weight: 500;
+}
+
+.grocy-ai-media-selected-text::before {
+	content: "\2713";
+	margin-right: 4px;
+}
+
+.grocy-ai-media-candidate .btn {
+	min-height: 44px;
+}
+
+.grocy-ai-media-error {
+	font-size: 16px;
+	line-height: 1.5;
+	margin: 0;
 }
 
 .grocy-ai-field-rows,
@@ -324,6 +404,12 @@ details.grocy-ai-diagnostics:not([open]) > .grocy-ai-diagnostic-body {
 	border-color: #6c757d;
 }
 
+.night-mode .grocy-ai-media-candidate,
+.night-mode .grocy-ai-media-frame {
+	background: inherit;
+	border-color: #6c757d;
+}
+
 .night-mode .grocy-ai-current-value {
 	background: rgba(108, 117, 125, .2);
 }
@@ -351,12 +437,26 @@ details.grocy-ai-diagnostics:not([open]) > .grocy-ai-diagnostic-body {
 		padding: 8px;
 	}
 
+	.grocy-ai-media-grid {
+		grid-template-columns: minmax(0, 1fr);
+	}
+
+	.grocy-ai-media-candidate {
+		padding: 8px;
+	}
+
 	#grocy-ai-review-selected-button,
 	#grocy-ai-back-to-suggestions-button,
 	#grocy-ai-stage-selected-button,
 	#grocy-ai-open-existing-product,
 	#grocy-ai-remove-staged-barcode {
 		width: 100%;
+	}
+}
+
+@media (min-width: 375px) and (max-width: 575.98px) {
+	.grocy-ai-media-grid {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
 	}
 }
 
