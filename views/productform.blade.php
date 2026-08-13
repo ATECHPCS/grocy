@@ -3,7 +3,9 @@
 @extends('layout.default')
 
 @if(GROCY_FEATURE_FLAG_GROCY_AI)
-@php($grocyAiAssetVersion = '1.0.1')
+@php
+$grocyAiAssetVersion = '1.0.1';
+@endphp
 @push('pageStyles')
 <link rel="stylesheet"
 	href="{{ $U('/custom/grocy_AI/grocy-ai.css?v=', true) }}{{ $grocyAiAssetVersion }}">
