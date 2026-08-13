@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 01-02-PLAN.md
-last_updated: "2026-08-13T00:25:42.007Z"
+stopped_at: Completed 01-03-PLAN.md
+last_updated: "2026-08-13T00:41:19.249Z"
 last_activity: 2026-08-13
 progress:
   total_phases: 7
   completed_phases: 0
   total_plans: 10
-  completed_plans: 2
+  completed_plans: 3
   percent: 0
 ---
 
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-08-12)
 ## Current Position
 
 Phase: 01 (Safety Baseline & Mobile Diagnostics) — EXECUTING
-Plan: 3 of 10
+Plan: 4 of 10
 Status: Ready to execute
 Last activity: 2026-08-13
 
-Progress: [██░░░░░░░░] 20%
+Progress: [███░░░░░░░] 30%
 
 ## Performance Metrics
 
@@ -54,6 +54,7 @@ Progress: [██░░░░░░░░] 20%
 *Updated after each plan completion*
 | Phase 01 P01 | 3 min | 1 tasks | 1 files |
 | Phase 01 P02 | 10 min | 1 tasks | 7 files |
+| Phase 01 P03 | 9 min | 2 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -71,6 +72,9 @@ Recent decisions affecting current work:
 - [Phase 01]: Keep @playwright/test pinned exactly to 1.62.1 in a private nested workspace — Root dependency files remain untouched.
 - [Phase 01]: Use a deny-by-default loopback browser fixture server and deterministic page.route provider envelopes — The ordinary browser suite must not expose repository files or contact live providers.
 - [Phase 01]: Stop Plan 01-02 at the intentional RED gate — The plan prohibits production changes and later Phase 1 plans implement the missing phone behavior.
+- [Phase 01]: Treat every GTIN as text and validate accepted lengths with one GS1 modulo-10 algorithm so leading zeroes survive manual and camera paths. — One string-preserving validator covers every supported length and intent source.
+- [Phase 01]: Own enrichment transport inside the module with a direct same-origin XMLHttpRequest and exact 15,000ms timeout; leave shared Grocy.Api.Get and productform Save handlers unchanged. — The module needs a cancellable bounded read without changing application-wide transport behavior.
+- [Phase 01]: Keep enrichment output review-only; preview actions stage the existing form and durable writes remain behind normal Grocy Save controls. — This preserves Grocy as the sole mutation authority and keeps enrichment optional.
 
 ### Pending Todos
 
@@ -96,6 +100,6 @@ Items acknowledged for v2 after the preview/audit model is proven:
 
 ## Session Continuity
 
-Last session: 2026-08-13T00:25:18.563Z
-Stopped at: Completed 01-02-PLAN.md
+Last session: 2026-08-13T00:41:19.170Z
+Stopped at: Completed 01-03-PLAN.md
 Resume file: None

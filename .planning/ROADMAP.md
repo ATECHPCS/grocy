@@ -51,7 +51,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 01-03-PLAN.md — Deliver the thin phone validation-to-preview enrichment happy path.
+- [x] 01-03-PLAN.md — Deliver the thin phone validation-to-preview enrichment happy path.
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
@@ -191,7 +191,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7. Dual-bra
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Safety Baseline & Mobile Diagnostics | 2/10 | In Progress|  |
+| 1. Safety Baseline & Mobile Diagnostics | 3/10 | In Progress|  |
 | 2. Enrichment Contract, Barcode Handoff & Secure Media | 0/TBD | Not started | - |
 | 3. Food Taxonomy & Categorization Pilot | 0/TBD | Not started | - |
 | 4. Reusable Conversion Model | 0/TBD | Not started | - |
