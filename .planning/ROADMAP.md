@@ -47,7 +47,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 01-02-PLAN.md — Create the isolated mobile harness and failing happy-path E2E contract.
+- [x] 01-02-PLAN.md — Create the isolated mobile harness and failing happy-path E2E contract.
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -191,7 +191,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7. Dual-bra
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Safety Baseline & Mobile Diagnostics | 1/10 | In Progress|  |
+| 1. Safety Baseline & Mobile Diagnostics | 2/10 | In Progress|  |
 | 2. Enrichment Contract, Barcode Handoff & Secure Media | 0/TBD | Not started | - |
 | 3. Food Taxonomy & Categorization Pilot | 0/TBD | Not started | - |
 | 4. Reusable Conversion Model | 0/TBD | Not started | - |

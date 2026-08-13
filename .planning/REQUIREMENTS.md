@@ -7,13 +7,13 @@
 
 ### Mobile Reliability and Diagnostics
 
-- [ ] **MOB-01**: User can start product enrichment from a phone by camera scan or manual GTIN entry and receives immediate length/checksum validation.
-- [ ] **MOB-02**: User sees distinct invalid, not-found, timeout, offline, provider-error, and success states with bounded waits and an available cancel or retry action.
+- [x] **MOB-01**: User can start product enrichment from a phone by camera scan or manual GTIN entry and receives immediate length/checksum validation.
+- [x] **MOB-02**: User sees distinct invalid, not-found, timeout, offline, provider-error, and success states with bounded waits and an available cancel or retry action.
 - [ ] **MOB-03**: User never receives or applies a stale response after changing the GTIN, navigating back, cancelling, or starting a newer request.
-- [ ] **MOB-04**: Repeated taps, scans, or retries cannot cause duplicate requests to create duplicate visible results or duplicate persisted changes.
+- [x] **MOB-04**: Repeated taps, scans, or retries cannot cause duplicate requests to create duplicate visible results or duplicate persisted changes.
 - [ ] **MOB-05**: Operator can correlate browser, Grocy, companion, and provider stages using a request/trace identifier and privacy-safe timing data.
 - [ ] **MOB-06**: User can copy a redacted diagnostic report containing versions, correlation ID, stage statuses, and timings without credentials, cookies, payload bodies, UPC history, or image tokens.
-- [ ] **MOB-07**: User can continue normal Grocy product and inventory workflows when the companion, SearXNG, Open Food Facts, or an image host is unavailable.
+- [x] **MOB-07**: User can continue normal Grocy product and inventory workflows when the companion, SearXNG, Open Food Facts, or an image host is unavailable.
 - [x] **MOB-08**: Maintainer can verify explicit LAN/mobile latency budgets and failure behavior through automated mobile-browser coverage plus a physical-phone acceptance pass.
 
 ### Product Enrichment and Barcode Handoff
@@ -111,13 +111,13 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| MOB-01 | Phase 1 | Pending |
-| MOB-02 | Phase 1 | Pending |
+| MOB-01 | Phase 1 | Complete |
+| MOB-02 | Phase 1 | Complete |
 | MOB-03 | Phase 1 | Pending |
-| MOB-04 | Phase 1 | Pending |
+| MOB-04 | Phase 1 | Complete |
 | MOB-05 | Phase 1 | Pending |
 | MOB-06 | Phase 1 | Pending |
-| MOB-07 | Phase 1 | Pending |
+| MOB-07 | Phase 1 | Complete |
 | MOB-08 | Phase 1 | Complete |
 | ENR-01 | Phase 2 | Pending |
 | ENR-02 | Phase 2 | Pending |

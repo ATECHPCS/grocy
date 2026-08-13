@@ -31,6 +31,7 @@
 - Composer installs runtime libraries into the non-default `packages/` directory via `composer.json`; `public/index.php` refuses startup when `packages/autoload.php` is missing through `helpers/PrerequisiteChecker.php`.
 - Yarn Classic lockfile format v1 - the exact Yarn executable version is not pinned; `yarn.lock` is present.
 - Yarn installs production-only packages directly into `public/packages/`, with install scripts and optional dependencies disabled by `.yarnrc`; there is no npm lockfile.
+- npm manages only the isolated browser-test workspace under `custom/grocy_AI/tests/browser/`; its generated `package-lock.json` pins test dependencies without changing the root Yarn production dependency tree.
 
 ## Frameworks
 
@@ -43,7 +44,7 @@
 - DataTables 1.13.11 - Tabular master-data and report UI loaded on demand by Blade views such as `views/products.blade.php`; version is locked in `yarn.lock`.
 
 **Testing:**
-- No general-purpose test runner or assertion framework is declared in `composer.json` or `package.json`.
+- `@playwright/test` 1.62.1 is pinned in the private `custom/grocy_AI/tests/browser/` workspace for deterministic Chromium/WebKit mobile coverage; it is not a production dependency.
 - The `grocy_AI` module uses a standalone PHP contract test script at `custom/grocy_AI/tests/run.php`, run with `php custom/grocy_AI/tests/run.php` as documented in `custom/grocy_AI/README.md`.
 - PHPUnit references in `composer.lock` belong to dependencies' development metadata and are not installed as this project's test framework because `composer.json` has no `require-dev` section.
 
