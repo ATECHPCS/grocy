@@ -9,7 +9,7 @@
 
 - [x] **MOB-01**: User can start product enrichment from a phone by camera scan or manual GTIN entry and receives immediate length/checksum validation.
 - [x] **MOB-02**: User sees distinct invalid, not-found, timeout, offline, provider-error, and success states with bounded waits and an available cancel or retry action.
-- [ ] **MOB-03**: User never receives or applies a stale response after changing the GTIN, navigating back, cancelling, or starting a newer request.
+- [x] **MOB-03**: User never receives or applies a stale response after changing the GTIN, navigating back, cancelling, or starting a newer request.
 - [x] **MOB-04**: Repeated taps, scans, or retries cannot cause duplicate requests to create duplicate visible results or duplicate persisted changes.
 - [x] **MOB-05**: Operator can correlate browser, Grocy, companion, and provider stages using a request/trace identifier and privacy-safe timing data.
 - [x] **MOB-06**: User can copy a redacted diagnostic report containing versions, correlation ID, stage statuses, and timings without credentials, cookies, payload bodies, UPC history, or image tokens.
@@ -113,7 +113,7 @@
 |-------------|-------|--------|
 | MOB-01 | Phase 1 | Complete |
 | MOB-02 | Phase 1 | Complete |
-| MOB-03 | Phase 1 | Pending |
+| MOB-03 | Phase 1 | Complete |
 | MOB-04 | Phase 1 | Complete |
 | MOB-05 | Phase 1 | Complete |
 | MOB-06 | Phase 1 | Complete |

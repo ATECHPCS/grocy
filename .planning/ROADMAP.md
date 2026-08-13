@@ -63,7 +63,7 @@ Plans:
 
 **Wave 6** *(blocked on Wave 5 completion)*
 
-- [ ] 01-06-PLAN.md — Complete race-safe states, diagnostics copy, and degraded-path preservation.
+- [x] 01-06-PLAN.md — Complete race-safe states, diagnostics copy, and degraded-path preservation.
 
 **Wave 7** *(blocked on Wave 6 completion)*
 
@@ -191,7 +191,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7. Dual-bra
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Safety Baseline & Mobile Diagnostics | 5/10 | In Progress|  |
+| 1. Safety Baseline & Mobile Diagnostics | 6/10 | In Progress|  |
 | 2. Enrichment Contract, Barcode Handoff & Secure Media | 0/TBD | Not started | - |
 | 3. Food Taxonomy & Categorization Pilot | 0/TBD | Not started | - |
 | 4. Reusable Conversion Model | 0/TBD | Not started | - |

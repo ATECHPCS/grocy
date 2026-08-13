@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 01-05-PLAN.md
-last_updated: "2026-08-13T01:14:57.142Z"
+stopped_at: Completed 01-06-PLAN.md
+last_updated: "2026-08-13T01:45:50.287Z"
 last_activity: 2026-08-13
 progress:
   total_phases: 7
   completed_phases: 0
   total_plans: 10
-  completed_plans: 5
-  percent: 50
+  completed_plans: 6
+  percent: 60
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-08-12)
 ## Current Position
 
 Phase: 01 (Safety Baseline & Mobile Diagnostics) — EXECUTING
-Plan: 6 of 10
+Plan: 7 of 10
 Status: Ready to execute
 Last activity: 2026-08-13
 
-Progress: [█████░░░░░] 50%
+Progress: [██████░░░░] 60%
 
 ## Performance Metrics
 
@@ -57,6 +57,7 @@ Progress: [█████░░░░░] 50%
 | Phase 01 P03 | 9 min | 2 tasks | 6 files |
 | Phase 01 P04 | 11 min | 2 tasks | 8 files |
 | Phase 01 P05 | 10 min | 2 tasks | 7 files |
+| Phase 01 P06 | 24 min | 3 tasks | 9 files |
 
 ## Accumulated Context
 
@@ -83,6 +84,9 @@ Recent decisions affecting current work:
 - [Phase 01]: Hard-cap Grocy companion requests at 12 seconds total and 2 seconds connect — The approved mobile deadline overrides any larger legacy timeout setting.
 - [Phase 01]: Validate or replace strict W3C v00 trace context at Grocy and forward only a fresh-parent traceparent — Owned correlation stays trustworthy while tracestate and third-party propagation remain excluded.
 - [Phase 01]: Construct Grocy diagnostics and Server-Timing only from closed enums, portable versions, and bounded or nullable durations — Field-by-field normalization prevents exception, credential, URL, GTIN, header, payload, cookie, and image-token disclosure.
+- [Phase 01]: Use request sequence plus normalized GTIN—not trace identity—as the sole browser UI ownership guard. — Trace IDs correlate requests across owned services; sequence/object/GTIN equality alone grants current DOM ownership.
+- [Phase 01]: Treat server diagnostics as untrusted and reconstruct the browser report from closed allowlisted primitives. — A second browser allowlist prevents future raw server fields, secrets, URLs, payloads, and exceptions from reaching DOM or clipboard.
+- [Phase 01]: Reconnect and pageshow restore controls only; explicit Retry alone creates a new request and trace. — This prevents hidden provider work and request amplification after network or lifecycle events.
 
 ### Pending Todos
 
@@ -108,6 +112,6 @@ Items acknowledged for v2 after the preview/audit model is proven:
 
 ## Session Continuity
 
-Last session: 2026-08-13T01:14:57.115Z
-Stopped at: Completed 01-05-PLAN.md
+Last session: 2026-08-13T01:45:34.211Z
+Stopped at: Completed 01-06-PLAN.md
 Resume file: None
