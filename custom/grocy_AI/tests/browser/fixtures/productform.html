@@ -113,6 +113,16 @@
 				data-back-action="Back to suggestions"
 				data-staging-success="Selected changes are staged in the form. Review the form, then use Grocy's Save button to save them."
 				data-stale-field-message="This field changed after the search. Review it again before staging."
+				data-image-heading="Choose a product image"
+				data-structured-image-heading="Front package image"
+				data-search-image-heading="Unverified search alternatives"
+				data-load-thumbnail="Load thumbnail"
+				data-loading-thumbnail="Loading thumbnail…"
+				data-select-image="Select image"
+				data-selected-image="Selected"
+				data-remove-image-selection="Remove selection"
+				data-media-error="This image could not be loaded safely. Choose another image or continue without one."
+				data-media-expired="This image preview expired. Search again to load it."
 				data-scanned-barcode-label="Scanned barcode"
 				data-equivalents-label="Canonical equivalents checked"
 				data-unused-barcode-message="This barcode is not assigned in Grocy."
@@ -228,7 +238,11 @@
 			save: 0,
 			saveClicks: 0,
 			objectUrlsCreated: 0,
-			objectUrlsRevoked: 0
+			objectUrlsRevoked: 0,
+			mediaRequests: 0,
+			mediaThumbnail: 0,
+			mediaFull: 0,
+			externalRequests: 0
 		};
 		window.__fixturePersistence = {
 			enabled: false,
@@ -311,6 +325,29 @@
 		{
 			var counters = window.__fixtureCounters;
 			counters.apiCalls.push({ method: method, url: url });
+			var parsed;
+			try
+			{
+				parsed = new URL(url, window.location.origin);
+			}
+			catch (error)
+			{
+				counters.externalRequests++;
+				return;
+			}
+			if (parsed.origin !== window.location.origin)
+			{
+				counters.externalRequests++;
+				return;
+			}
+			var mediaMatch = /^\/api\/grocy-ai\/images\/(thumbnail|full)\/[A-Za-z0-9_-]{20,200}$/.exec(parsed.pathname);
+			if (mediaMatch)
+			{
+				counters.mediaRequests++;
+				if (mediaMatch[1] === 'thumbnail') counters.mediaThumbnail++;
+				if (mediaMatch[1] === 'full') counters.mediaFull++;
+				return;
+			}
 			if (url.indexOf('/api/grocy-ai/products/enrich/upc/') === 0)
 			{
 				counters.enrichment++;
@@ -331,6 +368,14 @@
 		{
 			classifyApiCall(method, url);
 			return nativeXhrOpen.apply(this, arguments);
+		};
+
+		var nativeFetch = window.fetch.bind(window);
+		window.fetch = function (input, init)
+		{
+			var url = input instanceof Request ? input.url : String(input);
+			classifyApiCall((init && init.method) || (input instanceof Request && input.method) || 'GET', url);
+			return nativeFetch(input, init);
 		};
 
 		window.Grocy = {

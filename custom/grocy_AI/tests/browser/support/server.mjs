@@ -9,6 +9,17 @@ const port = Number.parseInt(process.env.GROCY_AI_BROWSER_PORT || '4173', 10);
 const supportDirectory = dirname(fileURLToPath(import.meta.url));
 const browserRoot = resolve(supportDirectory, '..');
 const repositoryRoot = resolve(supportDirectory, '../../../../..');
+const mediaCounts = { thumbnail: 0, full: 0 };
+const pngBytes = Buffer.concat([
+	Buffer.from('89504e470d0a1a0a', 'hex'),
+	Buffer.alloc(2492, 0x78)
+]);
+const mediaCapabilities = new Map([
+	['thumbnail/thumbnail_front_capability_0001', 'thumbnail'],
+	['full/full_front_capability_0000000001', 'full'],
+	['thumbnail/thumbnail_search_capability_001', 'thumbnail'],
+	['full/full_search_capability_000000001', 'full']
+]);
 
 const allowlistedFiles = new Map([
 	['/fixtures/productform.html', {
@@ -74,6 +85,43 @@ const server = createServer(async function (request, response)
 	if (pathname === '/health')
 	{
 		sendText(response, 200, 'ok');
+		return;
+	}
+	if (pathname === '/__fixture/media-counts')
+	{
+		response.writeHead(200, {
+			'Content-Type': 'application/json; charset=utf-8',
+			'Cache-Control': 'no-store'
+		});
+		response.end(JSON.stringify(mediaCounts));
+		return;
+	}
+	if (pathname === '/__fixture/reset-media-counts' && request.method === 'POST')
+	{
+		mediaCounts.thumbnail = 0;
+		mediaCounts.full = 0;
+		response.writeHead(204, { 'Cache-Control': 'no-store' });
+		response.end();
+		return;
+	}
+	if (pathname.startsWith('/api/grocy-ai/images/'))
+	{
+		const capabilityPath = pathname.slice('/api/grocy-ai/images/'.length);
+		const variant = mediaCapabilities.get(capabilityPath);
+		if (!variant)
+		{
+			sendText(response, 404, 'Image unavailable');
+			return;
+		}
+		mediaCounts[variant]++;
+		response.writeHead(200, {
+			'Content-Type': 'image/png',
+			'Content-Length': pngBytes.length,
+			'Cache-Control': 'private, no-store',
+			'X-Content-Type-Options': 'nosniff',
+			'Content-Disposition': 'inline; filename="product-image.png"'
+		});
+		response.end(pngBytes);
 		return;
 	}
 
