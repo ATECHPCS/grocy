@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-core-version="4.6.0" data-grocy-ai-module-version="2.3.0">
+<html lang="en" data-core-version="4.6.0" data-grocy-ai-module-version="2.4.0">
 <head>
 	<meta charset="utf-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1">
@@ -40,7 +40,7 @@
 		.save-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 		@media (min-width: 992px) { .product-form-grid { grid-template-columns: 1fr 1fr; } }
 	</style>
-	<link rel="stylesheet" href="/assets/grocy-ai.css?v=2.3.0">
+	<link rel="stylesheet" href="/assets/grocy-ai.css?v=2.4.0">
 </head>
 <body>
 	<main class="product-form-grid">
@@ -242,7 +242,19 @@
 			mediaRequests: 0,
 			mediaThumbnail: 0,
 			mediaFull: 0,
-			externalRequests: 0
+			externalRequests: 0,
+			mutationFamilies: {
+				products: 0,
+				product_barcodes: 0,
+				userfields: 0,
+				product_groups: 0,
+				stock: 0,
+				stock_log: 0,
+				conversions: 0,
+				upload: 0,
+				delete: 0
+			},
+			unknownWrites: []
 		};
 		window.__fixturePersistence = {
 			enabled: false,
@@ -324,6 +336,7 @@
 		function classifyApiCall(method, url)
 		{
 			var counters = window.__fixtureCounters;
+			method = String(method || 'GET').toUpperCase();
 			counters.apiCalls.push({ method: method, url: url });
 			var parsed;
 			try
@@ -348,19 +361,41 @@
 				if (mediaMatch[1] === 'full') counters.mediaFull++;
 				return;
 			}
-			if (url.indexOf('/api/grocy-ai/products/enrich/upc/') === 0)
+			if (parsed.pathname.indexOf('/api/grocy-ai/products/enrich/upc/') === 0)
 			{
 				counters.enrichment++;
 				return;
 			}
-			if (/\/api\/(objects\/products|products)/.test(url)) counters.product++;
-			if (method !== 'GET' && /\/api\/.*barcode/.test(url)) counters.barcode++;
-			if (/\/api\/(objects\/product_groups|product_groups)/.test(url)) counters.category++;
-			if (/\/api\/.*quantity.*conversion/.test(url)) counters.conversion++;
-			if (/\/api\/userfields/.test(url)) counters.userfield++;
-			if (/\/api\/stock/.test(url)) counters.stock++;
-			if (/\/api\/(files|.*upload)/.test(url)) counters.file++;
-			if (method !== 'GET') counters.save++;
+			if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return;
+
+			var path = parsed.pathname;
+			var family = null;
+			if (/^\/api\/(objects\/products|products)(\/|$)/.test(path)) family = 'products';
+			else if (/^\/api\/(objects\/product_barcodes|product_barcodes)(\/|$)/.test(path)) family = 'product_barcodes';
+			else if (/^\/api\/(userfields|objects\/userfields)(\/|$)/.test(path)) family = 'userfields';
+			else if (/^\/api\/(objects\/product_groups|product_groups|objects\/categories|categories)(\/|$)/.test(path)) family = 'product_groups';
+			else if (/^\/api\/(stock_log|objects\/stock_log)(\/|$)/.test(path)) family = 'stock_log';
+			else if (/^\/api\/(stock|objects\/stock)(\/|$)/.test(path)) family = 'stock';
+			else if (/^\/api\/.*(quantity.*conversion|conversion)/.test(path)) family = 'conversions';
+			else if (method === 'DELETE' && /^\/api\/(files|objects\/files|.*upload)(\/|$)/.test(path)) family = 'delete';
+			else if (/^\/api\/(files|objects\/files|.*upload)(\/|$)/.test(path)) family = 'upload';
+
+			if (!family)
+			{
+				var unknown = method + ' ' + path;
+				counters.unknownWrites.push(unknown);
+				throw new Error('Default-deny fixture blocked unknown mutation: ' + unknown);
+			}
+
+			counters.mutationFamilies[family]++;
+			if (family === 'products') counters.product++;
+			if (family === 'product_barcodes') counters.barcode++;
+			if (family === 'product_groups') counters.category++;
+			if (family === 'conversions') counters.conversion++;
+			if (family === 'userfields') counters.userfield++;
+			if (family === 'stock' || family === 'stock_log') counters.stock++;
+			if (family === 'upload' || family === 'delete') counters.file++;
+			counters.save++;
 		}
 
 		var nativeXhrOpen = window.XMLHttpRequest.prototype.open;
@@ -539,6 +574,6 @@
 		});
 	})();
 	</script>
-	<script src="/assets/product-enrichment.js?v=2.3.0"></script>
+	<script src="/assets/product-enrichment.js?v=2.4.0"></script>
 </body>
 </html>

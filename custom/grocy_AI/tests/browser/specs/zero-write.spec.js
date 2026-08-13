@@ -126,6 +126,36 @@ test('@enr01 @enr02 @enr03 @enr05 @enr06 @enr07 @enr08 @enr09 default-deny matri
 	});
 	expect(denial).toContain('Default-deny fixture blocked unknown mutation');
 	expect((await durableSnapshot(page)).unknownWrites).toEqual(['POST /api/objects/unclassified_fixture_write']);
+
+	const protectedMutations = [
+		['POST', '/api/objects/products'],
+		['POST', '/api/objects/product_barcodes'],
+		['POST', '/api/userfields/products/27'],
+		['POST', '/api/objects/product_groups'],
+		['POST', '/api/stock/products/91/add'],
+		['POST', '/api/stock_log'],
+		['POST', '/api/quantity_unit_conversions'],
+		['POST', '/api/files/productpictures'],
+		['DELETE', '/api/files/productpictures/fixture.png']
+	];
+	await page.evaluate(async function (mutations)
+	{
+		for (const mutation of mutations)
+		{
+			await fetch(mutation[1], { method: mutation[0], body: mutation[0] === 'DELETE' ? undefined : '{}' });
+		}
+	}, protectedMutations);
+	expect((await durableSnapshot(page)).writes).toEqual({
+		products: 1,
+		product_barcodes: 1,
+		userfields: 1,
+		product_groups: 1,
+		stock: 1,
+		stock_log: 1,
+		conversions: 1,
+		upload: 1,
+		delete: 1
+	});
 });
 
 test('@enr04 @enr05 @enr06 @enr08 @enr09 one normal Save persists the selected live value and barcode exactly once', async ({ page }) =>
@@ -157,6 +187,7 @@ test('@enr04 @enr05 @enr06 @enr08 @enr09 one normal Save persists the selected l
 
 	await page.goto('/fixtures/productform.html');
 	await page.locator('#name').fill('');
+	await page.locator('#grocy-ai-upc').focus();
 	const before = await durableSnapshot(page);
 	await search(page);
 	await page.locator('#grocy-ai-review-selected-button').click();
@@ -169,10 +200,11 @@ test('@enr04 @enr05 @enr06 @enr08 @enr09 one normal Save persists the selected l
 	expect(staged.controls.productGroup).toBe(before.controls.productGroup);
 	expect(staged.controls.quantityUnit).toBe(before.controls.quantityUnit);
 	expect(staged.controls.brand).toBe(before.controls.brand);
-	expect(staged.fieldEvents.name).toEqual({ input: 1, change: 1 });
-	expect(staged.fieldEvents.product_group_id).toEqual({ input: 0, change: 0 });
-	expect(staged.fieldEvents.qu_id_stock).toEqual({ input: 0, change: 0 });
-	expect(staged.fieldEvents['fixture-brand']).toEqual({ input: 0, change: 0 });
+	expect(staged.fieldEvents.name.input - before.fieldEvents.name.input).toBe(1);
+	expect(staged.fieldEvents.name.change - before.fieldEvents.name.change).toBe(1);
+	expect(staged.fieldEvents.product_group_id).toEqual(before.fieldEvents.product_group_id);
+	expect(staged.fieldEvents.qu_id_stock).toEqual(before.fieldEvents.qu_id_stock);
+	expect(staged.fieldEvents['fixture-brand']).toEqual(before.fieldEvents['fixture-brand']);
 	expect(requests).toEqual([]);
 
 	await page.evaluate(function () { window.__fixturePersistence.enabled = true; });
