@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 01-04-PLAN.md
-last_updated: "2026-08-13T00:58:27.110Z"
+stopped_at: Completed 01-05-PLAN.md
+last_updated: "2026-08-13T01:14:57.142Z"
 last_activity: 2026-08-13
 progress:
   total_phases: 7
   completed_phases: 0
   total_plans: 10
-  completed_plans: 4
-  percent: 0
+  completed_plans: 5
+  percent: 50
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-08-12)
 ## Current Position
 
 Phase: 01 (Safety Baseline & Mobile Diagnostics) — EXECUTING
-Plan: 5 of 10
+Plan: 6 of 10
 Status: Ready to execute
 Last activity: 2026-08-13
 
-Progress: [████░░░░░░] 40%
+Progress: [█████░░░░░] 50%
 
 ## Performance Metrics
 
@@ -56,6 +56,7 @@ Progress: [████░░░░░░] 40%
 | Phase 01 P02 | 10 min | 1 tasks | 7 files |
 | Phase 01 P03 | 9 min | 2 tasks | 6 files |
 | Phase 01 P04 | 11 min | 2 tasks | 8 files |
+| Phase 01 P05 | 10 min | 2 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -79,6 +80,9 @@ Recent decisions affecting current work:
 - [Phase 01]: Validate string-preserving GS1 GTINs at the companion endpoint and orchestration entry before provider work. — This rejects invalid inputs before any federation, Open Food Facts, or image work and preserves leading zeroes.
 - [Phase 01]: Terminate strict W3C trace context at the companion. — External providers are timed locally but never receive traceparent or tracestate.
 - [Phase 01]: Use closed diagnostics with a 10.5-second outer provider budget, 2-second connect, and 6-second read limits. — Finite allowlisted values localize failures without leaking provider details or overrunning Grocy's boundary.
+- [Phase 01]: Hard-cap Grocy companion requests at 12 seconds total and 2 seconds connect — The approved mobile deadline overrides any larger legacy timeout setting.
+- [Phase 01]: Validate or replace strict W3C v00 trace context at Grocy and forward only a fresh-parent traceparent — Owned correlation stays trustworthy while tracestate and third-party propagation remain excluded.
+- [Phase 01]: Construct Grocy diagnostics and Server-Timing only from closed enums, portable versions, and bounded or nullable durations — Field-by-field normalization prevents exception, credential, URL, GTIN, header, payload, cookie, and image-token disclosure.
 
 ### Pending Todos
 
@@ -104,6 +108,6 @@ Items acknowledged for v2 after the preview/audit model is proven:
 
 ## Session Continuity
 
-Last session: 2026-08-13T00:57:44.695Z
-Stopped at: Completed 01-04-PLAN.md
+Last session: 2026-08-13T01:14:57.115Z
+Stopped at: Completed 01-05-PLAN.md
 Resume file: None

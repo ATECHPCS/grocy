@@ -59,7 +59,7 @@ Plans:
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
-- [ ] 01-05-PLAN.md — Add Grocy's authenticated redacted diagnostic and timeout boundary.
+- [x] 01-05-PLAN.md — Add Grocy's authenticated redacted diagnostic and timeout boundary.
 
 **Wave 6** *(blocked on Wave 5 completion)*
 
@@ -191,7 +191,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7. Dual-bra
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Safety Baseline & Mobile Diagnostics | 4/10 | In Progress|  |
+| 1. Safety Baseline & Mobile Diagnostics | 5/10 | In Progress|  |
 | 2. Enrichment Contract, Barcode Handoff & Secure Media | 0/TBD | Not started | - |
 | 3. Food Taxonomy & Categorization Pilot | 0/TBD | Not started | - |
 | 4. Reusable Conversion Model | 0/TBD | Not started | - |
