@@ -16,7 +16,8 @@
 		.text-muted { color: #6c757d; }
 		.input-group { display: flex; width: 100%; }
 		.input-group-append { display: flex; }
-		.form-control { min-width: 0; flex: 1 1 auto; min-height: 44px; padding: 8px; border: 1px solid #ced4da; }
+		.form-control { min-width: 0; flex: 1 1 auto; padding: 8px; border: 1px solid #ced4da; }
+		.form-control.is-invalid { border-color: #dc3545; }
 		.btn { min-height: 44px; padding: 8px 12px; border: 1px solid transparent; border-radius: 4px; background: #f8f9fa; }
 		.btn:disabled { opacity: .65; }
 		.btn-outline-primary { color: #007bff; border-color: #007bff; }
@@ -119,6 +120,7 @@
 		window.__fixtureAdapterVersion = 'jquery-compatible-fixture-1.0.0';
 		window.__fixtureCounters = {
 			apiCalls: [],
+			cameraDelegations: 0,
 			enrichment: 0,
 			product: 0,
 			barcode: 0,
@@ -294,6 +296,17 @@
 				window.__fixtureCounters.saveClicks++;
 			});
 		});
+
+		var cameraControl = document.createElement('button');
+		cameraControl.id = 'camerabarcodescanner-start-button';
+		cameraControl.type = 'button';
+		cameraControl.dataset.target = 'grocy-ai-upc';
+		cameraControl.className = 'd-none';
+		cameraControl.addEventListener('click', function ()
+		{
+			window.__fixtureCounters.cameraDelegations++;
+		});
+		document.body.appendChild(cameraControl);
 	})();
 	</script>
 	<script src="/assets/product-enrichment.js"></script>
