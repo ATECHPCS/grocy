@@ -138,7 +138,7 @@ Never communicate confidence, selection, ownership, verification, or failure thr
 ### Card anatomy, top to bottom
 
 1. Existing card title and zero-write description.
-2. Existing GTIN input, Scan barcode, Search product, Cancel, status, and diagnostics controls.
+2. Existing GTIN input, Scan barcode, Search product, Cancel search, status, and diagnostics controls.
 3. Barcode ownership block.
 4. `Review suggested fields` section.
 5. `Choose a product image` section.
@@ -176,7 +176,7 @@ The locked side-by-side relationship must not collapse into a vertical current-t
 | Component | Contract | Primitive |
 |-----------|----------|-----------|
 | Enrichment card | Single feature container; no independent persistence control | Bootstrap `card` + `grocy-ai-card` |
-| GTIN entry and lifecycle | Preserve approved Phase 1 validation, request ownership, Cancel/Retry, diagnostics, and 44px behavior | Existing form control, buttons, alerts, details |
+| GTIN entry and lifecycle | Preserve approved Phase 1 validation, request ownership, Cancel search/Retry, diagnostics, and 44px behavior | Existing form control, buttons, alerts, details |
 | Barcode ownership block | Show exact scanned text, canonical-check summary, ownership state, and route/staging outcome | Bordered definition group + Bootstrap alert |
 | Existing owner action | `Open existing product`; route uses trusted server product ID | `btn-primary` link/button |
 | Unused barcode state | `Ready to add on Save`; transient and reversible | Neutral/success bordered row, check icon |
@@ -337,14 +337,14 @@ The approved Phase 1 states and transition rules remain authoritative: idle, inv
 | Stale current value | Affected row marked Needs review and excluded from staging | Review and explicitly reselect; leave unselected | Fresh explicit decision or new intent |
 | Final diff | Inline selected-only diff; current values revalidated | Back to suggestions; Stage selected changes | Back, stale detection, or staging |
 | Staged in form | Confirmation names zero-write staging and points to normal Save | Edit form; change selection; normal Save | Manual edit, new GTIN, navigation, or Save |
-| Media loading | Candidate-local busy state; no card-wide lock | Continue form work; cancel current enrichment if applicable | Loaded, rejected, expired, stale, or cancelled |
+| Media loading | Candidate-local busy state; no card-wide lock | Continue form work; Cancel search when the card request is active | Loaded, rejected, expired, stale, or cancelled |
 | Barcode attachment failed | Product creation is retained; barcode outcome named separately | Retry barcode attachment; open product | Same-product success, other-owner route, or user leaves |
 
 ### Concurrency and preservation
 
 - Keep the Phase 1 request sequence plus normalized GTIN as the sole result-ownership guard.
 - Repeated actions coalesce; stale callbacks cannot restore suggestions, images, selections, diagnostics, or staged barcode state.
-- A new GTIN, scan, Cancel, orientation invalidation, navigation, or newer request revokes candidate blob URLs and invalidates handles in browser state.
+- A new GTIN, scan, Cancel search, orientation invalidation, navigation, or newer request revokes candidate blob URLs and invalidates handles in browser state.
 - Current form edits made while a request is in flight are never overwritten by automatic selection.
 - Search and media requests may disable only their initiating control. They never disable native fields or Save buttons.
 
@@ -357,6 +357,7 @@ All strings pass through Grocy localization helpers. Use these exact English sou
 | Element | Exact copy |
 |---------|------------|
 | Card description | Scan or enter a GTIN to find product suggestions. Review and stage selected changes; nothing is saved until you save the product. |
+| Search cancellation action | Cancel search |
 | Barcode label | Scanned barcode |
 | Equivalents label | Canonical equivalents checked |
 | Unused barcode | This barcode is not assigned in Grocy. |
@@ -419,7 +420,7 @@ Do not use `Apply`, `Save suggestion`, `Overwrite`, `Trust`, `Verified image`, r
 
 ## Zero-Write and Degraded-Path Contract
 
-- GTIN validation, owner lookup, enrichment search, suggestion selection, deselection, review, diff display, staging into controls, thumbnail loading, full-image selection, Cancel, timeout, Retry, diagnostics, and handle failure create no product, barcode, category, stock, conversion, or durable file write.
+- GTIN validation, owner lookup, enrichment search, suggestion selection, deselection, review, diff display, staging into controls, thumbnail loading, full-image selection, Cancel search, timeout, Retry, diagnostics, and handle failure create no product, barcode, category, stock, conversion, or durable file write.
 - A validated image `File` may exist only in transient module state during review. Native controls and the native picture input may change only after `Stage selected changes`; durable APIs remain behind normal Save.
 - Unselected native controls remain byte-for-byte/value-for-value unchanged and receive no dirty/change event from enrichment.
 - Provider, companion, contract, image-host, or network failure leaves the surrounding product form usable and preserves manual values.
