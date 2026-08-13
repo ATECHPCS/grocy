@@ -91,3 +91,39 @@ test('@enr01 contract-v2 name review @enr05 @enr09 renders provenance and remain
 	expect(counters.file).toBe(0);
 	expect(counters.save).toBe(0);
 });
+
+test('@enr01 @enr05 direct evidence never preselects over a non-empty current name', async ({ page }) =>
+{
+	await page.route('**/api/**', async function (route)
+	{
+		await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(v2NameReviewEnvelope) });
+	});
+	await page.goto('/fixtures/productform.html');
+	await page.locator('#grocy-ai-upc').fill(validGtin);
+	await page.locator('#grocy-ai-search-button').click();
+
+	const reviewRow = page.locator('[data-grocy-ai-field="name"]');
+	await expect(reviewRow).toBeVisible();
+	await expect(reviewRow.getByText('Existing manual product', { exact: true })).toBeVisible();
+	await expect(reviewRow.getByRole('checkbox', { name: 'Use suggested value' })).not.toBeChecked();
+	await expect(reviewRow.getByText('Preselected — blank field and exact structured match', { exact: true })).toHaveCount(0);
+	expect(await page.locator('#name').inputValue()).toBe('Existing manual product');
+});
+
+test('@enr01 @enr09 malformed decoded contract renders only recovery and remains zero-write', async ({ page }) =>
+{
+	const malformed = { ...v2NameReviewEnvelope, provider_payload: { secret: 'canary' } };
+	await page.route('**/api/**', async function (route)
+	{
+		await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(malformed) });
+	});
+	await page.goto('/fixtures/productform.html');
+	await page.locator('#grocy-ai-upc').fill(validGtin);
+	await page.locator('#grocy-ai-search-button').click();
+
+	await expect(page.locator('#grocy-ai-status')).toContainText('Suggestions could not be verified. Retry the search, or continue editing manually. Nothing was changed.');
+	await expect(page.locator('[data-grocy-ai-field]')).toHaveCount(0);
+	expect(await page.locator('#name').inputValue()).toBe('Existing manual product');
+	const counters = await page.evaluate(function () { return window.__fixtureCounters; });
+	expect(counters.product + counters.barcode + counters.stock + counters.file + counters.save).toBe(0);
+});

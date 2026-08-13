@@ -9,7 +9,7 @@
 	}
 
 	var REQUEST_DEADLINE_MS = 15000;
-	var ALLOWED_OUTCOMES = ['success', 'partial_image', 'not_found', 'timeout', 'provider_error', 'cancelled', 'offline'];
+	var ALLOWED_OUTCOMES = ['success', 'partial_image', 'found', 'not_found', 'timeout', 'provider_error', 'contract_invalid', 'cancelled', 'offline'];
 	var ALLOWED_STAGE_NAMES = ['browser', 'grocy_connect', 'grocy_companion', 'federation', 'open_food_facts', 'image_search', 'image_fetch'];
 	var ALLOWED_STAGE_STATUSES = ['ok', 'not_found', 'timeout', 'unavailable', 'error', 'malformed', 'skipped', 'cancelled', 'offline'];
 	var ALLOWED_ERROR_CODES = [null, 'deadline', 'connection', 'http_status', 'invalid_response', 'invalid_gtin', 'not_configured', 'provider_error', 'budget_exhausted', 'cancelled', 'offline'];
@@ -29,6 +29,7 @@
 	var requestSequence = 0;
 	var activeRequest = null;
 	var currentDiagnostic = null;
+	var reviewState = null;
 
 	function localized(name, fallback)
 	{
@@ -343,7 +344,7 @@
 
 	function renderState(state)
 	{
-		var retry = ['offline', 'timeout', 'not_found', 'companion_unavailable', 'provider_error', 'partial_image'].indexOf(state) !== -1;
+		var retry = ['offline', 'timeout', 'not_found', 'companion_unavailable', 'provider_error', 'partial_image', 'contract_invalid'].indexOf(state) !== -1;
 		ui.retryButton.classList.toggle('d-none', !retry);
 		cancelButton.classList.toggle('d-none', state !== 'searching');
 		searchButton.disabled = state === 'searching' || !validateGtin(upcInput.value).valid;
@@ -375,6 +376,10 @@
 		{
 			setStatus('', localized('providerErrorMessage', 'A product data provider could not respond. Retry, or continue editing manually.'), 'danger', false, 'fa-circle-exclamation');
 		}
+		else if (state === 'contract_invalid')
+		{
+			setStatus('', localized('contractError', 'Suggestions could not be verified. Retry the search, or continue editing manually. Nothing was changed.'), 'danger', false, 'fa-circle-exclamation');
+		}
 		else if (state === 'partial_image')
 		{
 			setStatus('', localized('partialImageMessage', 'Product details were found, but images are unavailable. You can continue without an image.'), 'warning', false, 'fa-triangle-exclamation');
@@ -391,6 +396,7 @@
 
 	function clearResults()
 	{
+		reviewState = null;
 		results.replaceChildren();
 		results.classList.add('d-none');
 	}
@@ -438,162 +444,137 @@
 		return validation;
 	}
 
-	function feedback(message, isError)
+	function hasExactKeys(value, expected)
 	{
-		var existing = results.querySelector('.grocy-ai-feedback');
-		if (existing) existing.remove();
-		var alert = textElement('div', 'grocy-ai-feedback alert ' + (isError ? 'alert-danger' : 'alert-success') + ' mt-3 mb-0', message);
-		results.appendChild(alert);
+		if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+		return Object.keys(value).sort().join('|') === expected.slice().sort().join('|');
 	}
 
-	function applySuggestedName(name)
+	function validTimestamp(value)
 	{
-		if (!productNameInput || !name) return;
-		productNameInput.value = name;
-		productNameInput.dispatchEvent(new Event('keyup', { bubbles: true }));
-		productNameInput.focus();
-		feedback('Suggested product name applied. It will be saved only when you save the product.', false);
+		return typeof value === 'string'
+			&& /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(value)
+			&& !Number.isNaN(Date.parse(value));
 	}
 
-	function imageFileExtension(contentType)
+	function validSuggestion(suggestion)
 	{
-		if (contentType === 'image/png') return 'png';
-		if (contentType === 'image/webp') return 'webp';
-		return 'jpg';
+		return hasExactKeys(suggestion, ['id', 'field', 'value', 'display_value', 'source', 'confidence_band', 'reason_code', 'evidence_kind', 'retrieved_at', 'source_updated_at', 'target'])
+			&& typeof suggestion.id === 'string'
+			&& ['name', 'brand', 'package_size', 'product_group', 'quantity_unit', 'food_type'].indexOf(suggestion.field) !== -1
+			&& typeof suggestion.value === 'string' && suggestion.value !== ''
+			&& typeof suggestion.display_value === 'string' && suggestion.display_value !== ''
+			&& hasExactKeys(suggestion.source, ['id', 'label'])
+			&& ['openfoodfacts', 'bb-federation', 'searxng'].indexOf(suggestion.source.id) !== -1
+			&& typeof suggestion.source.label === 'string' && suggestion.source.label !== ''
+			&& ['high', 'medium', 'low', 'unverified'].indexOf(suggestion.confidence_band) !== -1
+			&& ['canonical_structured_match', 'mapped_local_option', 'inferred_provider_data', 'unverified_search_result'].indexOf(suggestion.reason_code) !== -1
+			&& ['structured_direct', 'mapped', 'inferred', 'search'].indexOf(suggestion.evidence_kind) !== -1
+			&& validTimestamp(suggestion.retrieved_at)
+			&& (suggestion.source_updated_at === null || validTimestamp(suggestion.source_updated_at))
+			&& suggestion.target === null;
 	}
 
-	function useSelectedImage(candidate, card, button, gtin)
+	function validContract(data, requestedGtin)
 	{
-		if (!candidate.download_token || !productPictureInput)
+		if (!hasExactKeys(data, ['contract_version', 'outcome', 'barcode', 'suggestions', 'media', 'warnings', 'diagnostics'])
+			|| data.contract_version !== 2
+			|| ['found', 'not_found', 'timeout', 'provider_error'].indexOf(data.outcome) === -1
+			|| !hasExactKeys(data.barcode, ['scanned_gtin', 'canonical_gtin', 'equivalents_checked', 'status', 'owner_product_id'])
+			|| data.barcode.scanned_gtin !== requestedGtin
+			|| !/^\d{14}$/.test(data.barcode.canonical_gtin)
+			|| !Array.isArray(data.barcode.equivalents_checked)
+			|| ['unused', 'owned_current', 'owned_other'].indexOf(data.barcode.status) === -1
+			|| !Array.isArray(data.suggestions) || !Array.isArray(data.media) || !Array.isArray(data.warnings)
+			|| !hasExactKeys(data.diagnostics, ['trace_id']) || !TRACE_ID_PATTERN.test(data.diagnostics.trace_id))
 		{
-			feedback('This image cannot be selected. Run the search again.', true);
-			return;
+			return false;
 		}
-		button.disabled = true;
-		button.textContent = 'Downloading…';
-		var xhr = new XMLHttpRequest();
-		xhr.open('GET', U('/api/grocy-ai/images/' + encodeURIComponent(candidate.download_token)), true);
-		xhr.responseType = 'blob';
-		xhr.onload = function ()
+		if (data.media.length !== 0 || /https?:\/\//i.test(JSON.stringify(data))) return false;
+		var ids = {};
+		return data.suggestions.every(function (suggestion)
 		{
-			button.disabled = false;
-			button.textContent = 'Use as product picture';
-			if (xhr.status !== 200 || !xhr.response || !xhr.response.type.startsWith('image/'))
-			{
-				feedback('The selected image could not be downloaded. Search again or choose another candidate.', true);
-				return;
-			}
-			try
-			{
-				var fileName = 'grocy-ai-' + gtin + '.' + imageFileExtension(xhr.response.type);
-				var file = new File([xhr.response], fileName, { type: xhr.response.type });
-				var transfer = new DataTransfer();
-				transfer.items.add(file);
-				productPictureInput.files = transfer.files;
-				productPictureInput.dispatchEvent(new Event('change', { bubbles: true }));
-				var pictureLabel = document.getElementById('product-picture-label');
-				if (pictureLabel) pictureLabel.textContent = fileName;
-				results.querySelectorAll('.grocy-ai-image-candidate-selected').forEach(function (selected)
-				{
-					selected.classList.remove('grocy-ai-image-candidate-selected');
-				});
-				card.classList.add('grocy-ai-image-candidate-selected');
-				feedback('Product picture selected. It will be uploaded only when you save the product.', false);
-			}
-			catch (error)
-			{
-				feedback('This browser cannot attach the downloaded image to the form. Open the original image and upload it manually.', true);
-			}
-		};
-		xhr.onerror = function ()
-		{
-			button.disabled = false;
-			button.textContent = 'Use as product picture';
-			feedback('The image download was interrupted.', true);
-		};
-		xhr.send();
+			if (!validSuggestion(suggestion) || ids[suggestion.id]) return false;
+			ids[suggestion.id] = true;
+			return true;
+		});
 	}
 
-	function safeCandidateUrl(value)
+	function reasonLabel(reasonCode)
 	{
-		try
-		{
-			var url = new URL(value, window.location.origin);
-			if (url.protocol === 'http:' || url.protocol === 'https:') return url.href;
-		}
-		catch (error)
-		{
-			// Invalid provider URLs are omitted from the preview.
-		}
-		return null;
+		return {
+			canonical_structured_match: 'Exact canonical barcode match',
+			mapped_local_option: 'Mapped to a Grocy option',
+			inferred_provider_data: 'Inferred from provider data',
+			unverified_search_result: 'Unverified search result'
+		}[reasonCode] || '';
 	}
 
-	function renderPreview(data)
+	function confidenceLabel(confidenceBand)
+	{
+		return confidenceBand.charAt(0).toUpperCase() + confidenceBand.slice(1) + ' confidence';
+	}
+
+	function renderNameReview(data)
 	{
 		results.replaceChildren();
-		var product = data.product && typeof data.product === 'object' ? data.product : {};
-		var summary = document.createElement('div');
-		summary.className = 'grocy-ai-summary mb-3';
-		summary.appendChild(textElement('strong', '', typeof product.name === 'string' && product.name ? product.name : 'Unnamed product'));
-		if (typeof product.brand === 'string' && product.brand) summary.appendChild(textElement('span', '', 'Brand: ' + product.brand));
-		if (typeof product.size === 'string' && product.size) summary.appendChild(textElement('span', '', 'Size: ' + product.size));
-		if (Array.isArray(data.sources) && data.sources.length > 0)
+		var suggestion = data.suggestions.find(function (candidate) { return candidate.field === 'name'; });
+		if (!suggestion)
 		{
-			var sources = data.sources.filter(function (source) { return typeof source === 'string' && /^[a-z0-9_-]{1,40}$/i.test(source); }).slice(0, 4);
-			if (sources.length > 0) summary.appendChild(textElement('small', 'text-muted', 'Sources: ' + sources.join(', ')));
+			results.classList.add('d-none');
+			return;
 		}
-		if (typeof product.name === 'string' && product.name)
-		{
-			var applyNameButton = textElement('button', 'btn btn-sm btn-outline-primary mt-2 align-self-start', 'Apply suggested name');
-			applyNameButton.type = 'button';
-			applyNameButton.addEventListener('click', function () { applySuggestedName(product.name); });
-			summary.appendChild(applyNameButton);
-		}
-		results.appendChild(summary);
+		var currentValue = productNameInput ? productNameInput.value : '';
+		var automatic = currentValue.trim() === ''
+			&& suggestion.confidence_band === 'high'
+			&& suggestion.evidence_kind === 'structured_direct'
+			&& suggestion.reason_code === 'canonical_structured_match';
+		reviewState = { data: data, currentName: currentValue, selected: automatic, origin: automatic ? 'automatic' : null };
 
-		var images = Array.isArray(data.images) ? data.images.slice(0, 6) : [];
-		var safeImages = images.map(function (candidate)
+		var row = document.createElement('section');
+		row.className = 'grocy-ai-field-review';
+		row.dataset.grocyAiField = 'name';
+		var heading = textElement('h5', '', localized('reviewHeading', 'Review suggested fields'));
+		row.appendChild(heading);
+		var selectionLabel = document.createElement('label');
+		selectionLabel.className = 'custom-control custom-checkbox grocy-ai-selection-control';
+		var selection = document.createElement('input');
+		selection.type = 'checkbox';
+		selection.className = 'custom-control-input';
+		selection.id = 'grocy-ai-use-name';
+		selection.checked = automatic;
+		selectionLabel.appendChild(selection);
+		var selectionText = textElement('span', 'custom-control-label', localized('selectionLabel', 'Use suggested value'));
+		selectionLabel.appendChild(selectionText);
+		row.appendChild(selectionLabel);
+
+		var comparison = document.createElement('div');
+		comparison.className = 'grocy-ai-comparison-grid';
+		var current = document.createElement('div');
+		current.appendChild(textElement('strong', '', localized('currentLabel', 'Current')));
+		current.appendChild(textElement('span', '', currentValue.trim() === '' ? 'Blank' : currentValue));
+		var suggested = document.createElement('div');
+		suggested.appendChild(textElement('strong', '', localized('suggestedLabel', 'Suggested')));
+		suggested.appendChild(textElement('span', '', suggestion.display_value));
+		suggested.appendChild(textElement('span', '', suggestion.source.label));
+		suggested.appendChild(textElement('span', '', confidenceLabel(suggestion.confidence_band)));
+		suggested.appendChild(textElement('span', '', reasonLabel(suggestion.reason_code)));
+		suggested.appendChild(textElement('span', '', 'Retrieved ' + new Date(suggestion.retrieved_at).toLocaleString()));
+		suggested.appendChild(textElement('span', '', suggestion.source_updated_at === null
+			? 'Source update time unavailable'
+			: 'Source updated ' + new Date(suggestion.source_updated_at).toLocaleString()));
+		comparison.appendChild(current);
+		comparison.appendChild(suggested);
+		row.appendChild(comparison);
+		var origin = textElement('div', 'grocy-ai-selection-origin', automatic ? localized('automaticOrigin', 'Preselected — blank field and exact structured match') : '');
+		row.appendChild(origin);
+		selection.addEventListener('change', function ()
 		{
-			return candidate && typeof candidate === 'object' ? {
-				safeUrl: safeCandidateUrl(candidate.url),
-				download_token: typeof candidate.download_token === 'string' ? candidate.download_token : '',
-				source: typeof candidate.source === 'string' && /^[a-z0-9_-]{1,40}$/i.test(candidate.source) ? candidate.source : 'Unknown source'
-			} : null;
-		}).filter(function (candidate) { return candidate && candidate.safeUrl !== null; });
-		if (safeImages.length > 0)
-		{
-			results.appendChild(textElement('h5', '', 'Real image candidates'));
-			var imageGrid = document.createElement('div');
-			imageGrid.className = 'grocy-ai-images';
-			safeImages.forEach(function (candidate)
-			{
-				var card = document.createElement('div');
-				card.className = 'grocy-ai-image-candidate img-thumbnail';
-				var originalLink = document.createElement('a');
-				originalLink.href = candidate.safeUrl;
-				originalLink.target = '_blank';
-				originalLink.rel = 'noopener noreferrer';
-				var image = document.createElement('img');
-				image.src = candidate.safeUrl;
-				image.alt = typeof product.name === 'string' && product.name ? product.name + ' package candidate' : 'Product package candidate';
-				image.loading = 'lazy';
-				image.referrerPolicy = 'no-referrer';
-				originalLink.appendChild(image);
-				card.appendChild(originalLink);
-				card.appendChild(textElement('small', 'grocy-ai-image-source text-muted', candidate.source));
-				var useButton = textElement('button', 'btn btn-sm btn-primary mt-auto', 'Use as product picture');
-				useButton.type = 'button';
-				useButton.disabled = !candidate.download_token;
-				useButton.addEventListener('click', function () { useSelectedImage(candidate, card, useButton, data.upc); });
-				card.appendChild(useButton);
-				imageGrid.appendChild(card);
-			});
-			results.appendChild(imageGrid);
-		}
-		else
-		{
-			results.appendChild(textElement('div', 'alert alert-secondary mb-0', 'Product metadata was found, but no safe image candidates were returned.'));
-		}
+			reviewState.selected = selection.checked;
+			reviewState.origin = selection.checked ? 'explicit' : null;
+			origin.textContent = selection.checked ? localized('explicitOrigin', 'Selected by you') : '';
+		});
+		results.appendChild(row);
 		results.classList.remove('d-none');
 	}
 
@@ -604,6 +585,15 @@
 		{
 			return stage && stage.name === 'grocy_companion'
 				&& (stage.status === 'unavailable' || stage.error_code === 'connection' || stage.error_code === 'not_configured');
+		});
+	}
+
+	function contractInvalidFailure(data)
+	{
+		var stages = data && data.diagnostics && Array.isArray(data.diagnostics.stages) ? data.diagnostics.stages : [];
+		return stages.some(function (stage)
+		{
+			return stage && stage.error_code === 'contract_invalid';
 		});
 	}
 
@@ -637,17 +627,23 @@
 			terminal(request, 'companion_unavailable', null, false);
 			return;
 		}
-		var legacyOutcome = data.found === true ? 'success' : 'not_found';
-		var outcome = allowed(data.outcome, ['success', 'partial_image', 'not_found', 'timeout', 'provider_error'], legacyOutcome);
-		if (outcome === 'success' && data.found === true)
+		if (contractInvalidFailure(data))
 		{
-			renderPreview(data);
-			terminal(request, 'success', data, false);
+			clearResults();
+			terminal(request, 'contract_invalid', data, false);
+			return;
 		}
-		else if (outcome === 'partial_image' && data.found === true)
+		if (request.xhr.status >= 200 && request.xhr.status < 300 && !validContract(data, request.gtin))
 		{
-			renderPreview(data);
-			terminal(request, 'partial_image', data, false);
+			clearResults();
+			terminal(request, 'contract_invalid', data, false);
+			return;
+		}
+		var outcome = allowed(data.outcome, ['found', 'not_found', 'timeout', 'provider_error'], 'provider_error');
+		if (outcome === 'found')
+		{
+			renderNameReview(data);
+			terminal(request, 'success', data, false);
 		}
 		else if (outcome === 'not_found') terminal(request, 'not_found', data, false);
 		else if (outcome === 'timeout') terminal(request, 'timeout', data, true);

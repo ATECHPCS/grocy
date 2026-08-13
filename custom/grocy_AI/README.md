@@ -56,42 +56,43 @@ X-API-Key: {GROCY_AI_SERVICE_API_KEY}   # only when configured
 traceparent: 00-{trace-id}-{owned-parent-id}-{flags}
 ```
 
-Expected response:
+Expected contract-v2 response:
 
 ```json
 {
-  "found": true,
-  "upc": "012345678905",
-  "product": {
-    "name": "Example product",
-    "brand": "Example brand",
-    "size": "12 oz"
+  "contract_version": 2,
+  "outcome": "found",
+  "barcode": {
+    "scanned_gtin": "012345678905",
+    "canonical_gtin": "00012345678905",
+    "equivalents_checked": ["012345678905", "00012345678905"],
+    "status": "unused",
+    "owner_product_id": null
   },
-  "images": [
+  "suggestions": [
     {
-      "url": "https://images.example/product-front.png",
-      "download_token": "short-lived-opaque-handle",
-      "source": "openfoodfacts",
-      "score": 100,
-      "match_confidence": 1
+      "id": "name:openfoodfacts:0",
+      "field": "name",
+      "value": "Example product",
+      "display_value": "Example product",
+      "source": {"id": "openfoodfacts", "label": "Open Food Facts"},
+      "confidence_band": "high",
+      "reason_code": "canonical_structured_match",
+      "evidence_kind": "structured_direct",
+      "retrieved_at": "2026-08-13T12:00:00Z",
+      "source_updated_at": null,
+      "target": null
     }
   ],
-  "sources": ["openfoodfacts", "searxng"],
+  "media": [],
   "warnings": [],
-  "outcome": "success",
-  "diagnostics": {
-    "schema_version": 1,
-    "contract_version": "1",
-    "companion_version": "0.1.0",
-    "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
-    "outcome": "success",
-    "stages": [],
-    "overall_duration_ms": 25
-  }
+  "diagnostics": {"trace_id": "4bf92f3577b34da6a3ce929d0e0e4736"}
 }
 ```
 
-Only `http` and `https` image URLs are returned to the browser. Image downloads use short-lived opaque handles, so the browser cannot turn either server into an arbitrary URL fetcher. The UI renders values as text and applies nothing without a button click; the chosen values are persisted only through Grocy's normal Save action.
+Grocy preserves the raw response until a duplicate-aware lexical walk has rejected repeated member names at every object depth. It then validates exact version, members, enums, types, IDs, timestamps, targets, provenance, and unique IDs as one all-or-nothing boundary. Any malformed, unknown, duplicate, URL-bearing, nutrition, allergen, dietary, or medical content becomes the single redacted `contract_invalid` recovery state; no partial suggestion survives.
+
+Contract v2 contains no external image URL or provider dictionary. Secure media is represented only by future short-lived opaque handles and authenticated same-origin routes. The first v2 slice renders a direct structured name suggestion beside the current value and visibly preselects it only when the current name is blank. Selection is transient and reversible; search and review make zero mutation calls, and Grocy's unchanged normal Save remains the sole persistence authority.
 
 ## Diagnostic and privacy contract
 
@@ -99,7 +100,7 @@ Only `http` and `https` image URLs are returned to the browser. Image downloads 
 
 The product-form JavaScript and CSS query token is the grocy_AI `module_version`, not Grocy's core release version. Bump `module-version.json` whenever either custom asset changes and update the one `grocyAiAssetVersion` literal in `views/productform.blade.php` to the same value. The native contract suite enforces that both asset URLs use that matching module token and remain independent from core `$version`, preventing a stable browser cache from serving older custom bytes across deployments.
 
-Grocy rebuilds diagnostics field-by-field. The v1 browser envelope contains only schema/version values, the trace ID, a finite outcome, allowlisted stages, and bounded or nullable millisecond durations. The supplementary `Server-Timing` header contains only allowlisted metric names and durations. Diagnostics and status never contain GTINs, product or inventory values, service URLs, request/response headers, credentials, cookies, payload bodies, image handles, or raw exception text.
+Grocy validates contract-v2 diagnostics as the single owned trace ID. The browser still creates its closed local diagnostic report without copying raw response fields. Diagnostics and status never contain GTINs, product or inventory values, service URLs, request/response headers, credentials, cookies, payload bodies, image handles, or raw exception text.
 
 Enrichment and diagnostics remain authenticated GET/read operations. They do not write database rows, files, product data, barcodes, stock, or inventory state. Suggested names and selected images remain previews until the user invokes Grocy's existing Save workflow.
 

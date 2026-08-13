@@ -4,7 +4,7 @@
 
 @if(GROCY_FEATURE_FLAG_GROCY_AI)
 @php
-$grocyAiAssetVersion = '1.0.1';
+$grocyAiAssetVersion = '2.0.0';
 @endphp
 @push('pageStyles')
 <link rel="stylesheet"
@@ -939,6 +939,13 @@ $grocyAiAssetVersion = '1.0.1';
 		@endphp
 		<div class="row @if($mode == 'edit') mt-5 @endif permission-MASTER_DATA_EDIT"
 			id="grocy-ai-product-enrichment"
+			data-contract-error="{{ $__t('Suggestions could not be verified. Retry the search, or continue editing manually. Nothing was changed.') }}"
+			data-review-heading="{{ $__t('Review suggested fields') }}"
+			data-current-label="{{ $__t('Current') }}"
+			data-suggested-label="{{ $__t('Suggested') }}"
+			data-selection-label="{{ $__t('Use suggested value') }}"
+			data-automatic-origin="{{ $__t('Preselected — blank field and exact structured match') }}"
+			data-explicit-origin="{{ $__t('Selected by you') }}"
 			data-ready-message="{{ $__t('GTIN ready.') }}"
 			data-busy-message="{{ $__t('Searching product details…') }}"
 			data-success-heading="{{ $__t('Product details found') }}"
@@ -963,7 +970,7 @@ $grocyAiAssetVersion = '1.0.1';
 				<div class="card grocy-ai-card">
 					<div class="card-body">
 						<h4 class="card-title">{{ $__t('grocy_AI product enrichment') }}</h4>
-						<p class="text-muted grocy-ai-description">{{ $__t('Scan or enter a GTIN to search product details. Results are previews and are not saved automatically.') }}</p>
+						<p class="text-muted grocy-ai-description">{{ $__t('Scan or enter a GTIN to find product suggestions. Review and stage selected changes; nothing is saved until you save the product.') }}</p>
 						<div class="form-group mb-0">
 							<label for="grocy-ai-upc">{{ $__t('GTIN') }}</label>
 							<input type="text"
