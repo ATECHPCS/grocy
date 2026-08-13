@@ -31,9 +31,9 @@ The production container is built with `Dockerfile.atech`. It pins the matching 
 
 ### Phase 1 portable and stable adapter boundary
 
-- Commit `217a7a0e98889cf4953d3fb7bdc2bf038be4ce7f` is the portable baseline. Its seven paths match `atech-main` byte-for-byte: the module/diagnostic versions, diagnostic and service classes, native contract tests, module documentation, browser behavior, and module CSS.
+- Main commit `b0b70fda3320ed2f8b3840ef226a31bfe82b14cf` and stable portable commit `74a5c1668c3eb7d9d30e74239edab6093f99949b` define the current portable baseline. The existing seven paths remain unchanged and match `atech-main` byte-for-byte: the module/diagnostic versions, diagnostic and service classes, native contract tests, module documentation, browser behavior, and module CSS.
 - The stable adapter commit changes only `custom/grocy_AI/src/GrocyAiApiController.php`, `custom/grocy_AI/routes.php`, `views/productform.blade.php`, `custom/grocy_AI/version.json`, and this file. The controller retains `Grocy\Controllers\BaseApiController`, routes retain class-based `JsonMiddleware::class`, and the product form retains the stable Save lifecycle.
-- `Customization` is `ATECHPCS-grocy_AI-3` so the unchanged `Dockerfile.atech` overlay invalidates persisted route/view caches after the diagnostic route and view integration update.
+- `Customization` is `ATECHPCS-grocy_AI-4` so the unchanged `Dockerfile.atech` overlay invalidates persisted route/view and asset caches after the GTIN touch-target, invalid-state, and camera-permission recovery fixes.
 
 ## Unused Grocy features
 
