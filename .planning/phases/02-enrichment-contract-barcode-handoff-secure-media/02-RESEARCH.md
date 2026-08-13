@@ -2,7 +2,7 @@
 
 **Researched:** 2026-08-13  
 **Domain:** Versioned enrichment contracts, canonical GTIN ownership, review-before-save UI, and SSRF-resistant media proxying  
-**Confidence:** HIGH for the existing codebase and validation architecture; MEDIUM for the two unresolved product-model mappings called out under Open Questions
+**Confidence:** HIGH. The five planning questions were resolved on 2026-08-13 from repository contracts plus read-only inspection of the running Grocy and companion containers; execution still rechecks those facts and fails closed on drift.
 
 <user_constraints>
 ## User Constraints (from CONTEXT.md)
@@ -52,7 +52,7 @@
 
 Phase 2 should be planned as four vertical slices: a strict end-to-end contract, canonical barcode ownership and normal-Save handoff, independent field review/final staging, and secure same-origin media selection. The current module already has a bounded request lifecycle, closed diagnostic outcomes, permission-checked Grocy proxy routes, and file-input staging, but its response normalization is permissive, its preview exposes external image URLs, and it has no canonical barcode ownership or per-field review state. `[VERIFIED: codebase inspection — custom/grocy_AI/src and public/custom/grocy_AI/js/product-enrichment.js]`
 
-The barcode guarantee needs both an application resolver and a database race guard. Preserve the exact scanned text for display, canonicalize valid GTIN-8/12/13/14 values by left-padding to 14 digits, resolve the owner locally before calling providers, and add a unique SQLite expression index for numeric barcode lengths 8/12/13/14. The deployment task must audit pre-existing canonical collisions before creating that index; it must never delete or silently reassign existing barcodes. `[CITED: https://ref.gs1.org/guidelines/2d-in-retail/]` `[VERIFIED: codebase inspection — migrations/0128.sql and product_barcodes schema]`
+The barcode guarantee needs both an application resolver and a database race guard. Preserve the exact scanned text for display, canonicalize only checksum-valid GTIN-8/12/13/14 values by left-padding to 14 digits, resolve the owner locally before calling providers, and add a unique SQLite expression index whose `CASE` predicate applies the same GS1 checksum algorithm and returns `NULL` for every arbitrary numeric-looking non-GTIN. `GrocyAiGtin` owns both the PHP predicate and the generated SQL expression used by lookup, collision audit, and migration 0256.php. The deployment task must audit pre-existing canonical collisions before creating that index; it must never delete or silently reassign existing barcodes. `[CITED: https://ref.gs1.org/guidelines/2d-in-retail/]` `[VERIFIED: codebase inspection — migrations/0128.sql and product_barcodes schema; read-only production audit found 3 valid GTIN rows, 0 excluded invalid numeric rows, and 0 canonical collision groups]`
 
 Secure media is an anti-SSRF/file-validation boundary, not a UI convenience. The browser must receive only same-origin paths containing opaque, expiring handles. The companion must stream with bounded time/bytes and revalidate every redirect target; Grocy must independently verify content type, magic signature, and decoded dimensions before exposing bytes or attaching a `File` to the existing product-picture input. `[CITED: https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html]` `[CITED: https://www.python-httpx.org/quickstart/#streaming-responses]` `[CITED: https://www.php.net/manual/en/function.getimagesizefromstring.php]`
 
@@ -279,9 +279,9 @@ File names for new units are recommendations, not existing files; keep responsib
 }
 ```
 
-`contract_version: 2` is a proposed phase-local identifier and must be locked in the plan before implementation. `[ASSUMED]` Freshness must distinguish “retrieved at” from a provider-supplied “record updated at”; absence of the latter must not be presented as current source data.
+`contract_version: 2` is locked. The deployed response has no version field, and Phase 2 replaces that implicit v1 shape with an incompatible closed envelope, so integer 2 is the first explicit version and cannot be confused with the deployed payload. Freshness distinguishes “retrieved at” from a provider-supplied “record updated at”; absence of the latter must not be presented as current source data. `[VERIFIED: current companion/Grocy contract inspection]`
 
-The PHP validator should reject the response as `contract_invalid` when the version, top-level members, field IDs, enums, timestamps, suggestion IDs, value type, source allowlist, or target shape is invalid. It should also reject duplicate suggestion IDs and any raw image URL. Provider nutrition fields must never become Phase 2 suggestions.
+The PHP validator should inspect the raw response with a duplicate-aware JSON tokenizer before ordinary decoding, decoding member-name escapes and tracking keys independently at every object depth. It rejects repeated top-level or nested keys before `json_decode` can collapse them, then rejects the response as `contract_invalid` when the version, members, field IDs, enums, timestamps, suggestion IDs, value type, source allowlist, target shape, or media shape is invalid. It also rejects duplicate suggestion IDs and any raw image URL. Provider nutrition fields never become Phase 2 suggestions.
 
 ### Pattern 2: Canonical GTIN Resolver Plus Database Invariant
 
@@ -300,7 +300,7 @@ private static function CanonicalGtin(string $gtin): string
 
 `[CITED: https://ref.gs1.org/guidelines/2d-in-retail/]`
 
-Use a migration expression index after a read-only collision audit:
+Use a migration expression index after a read-only collision audit. The following abbreviated shape is illustrative only; `GrocyAiGtin::CanonicalSqlExpression('barcode')` must emit the complete length, numeric, and GS1 checksum predicate used by migration 0256.php and every owner query:
 
 ```sql
 CREATE UNIQUE INDEX ix_product_barcodes_canonical_gtin
@@ -308,15 +308,16 @@ ON product_barcodes (
 	CASE
 		WHEN length(barcode) IN (8, 12, 13, 14)
 			AND barcode NOT GLOB '*[^0-9]*'
+			AND /* exact GS1 alternating-weight checksum predicate */
 		THEN substr('00000000000000' || barcode, -14, 14)
 		ELSE NULL
 	END
 );
 ```
 
-This index is a recommended implementation derived from the current SQLite schema. Before applying it, query/group by the same expression and stop with an actionable report if multiple rows map to one key; never auto-resolve those rows. The server must still perform the GS1 checksum validation because the index deliberately preserves arbitrary non-GTIN barcode support and only enforces uniqueness for numeric supported lengths. `[VERIFIED: codebase inspection — Grocy supports arbitrary text barcodes and currently validates GTIN only in the enrichment service]`
+The exact predicate returns a canonical key only for checksum-valid GTINs and `NULL` for arbitrary text plus invalid numeric-looking 8/12/13/14-character barcodes. Before applying it, query/group by the same generated expression and stop with an actionable report if multiple rows map to one key; never auto-resolve those rows. PHP lookup and database enforcement therefore share one implementation artifact rather than merely similar prose. `[VERIFIED: Grocy supports arbitrary text barcodes; production read-only audit found no collision; temporary tests must include equivalent invalid numeric-looking rows]`
 
-The proposed expression was exercised against a temporary SQLite 3.51 database: `012345678905` and `00012345678905` resolved to the same key and the second insert failed with the expected unique-index violation, while unrelated non-GTIN text rows remained insertable. `[VERIFIED: local SQLite test on 2026-08-13]`
+The earlier length-only prototype was discarded because it also constrained checksum-invalid numeric-looking barcodes. Planning now requires the shared checksum-valid PHP/SQL predicate and direct equivalence tests for valid and invalid numeric-looking pairs before migration. The read-only production audit found three valid GTIN rows, zero excluded invalid numeric rows, and zero canonical collision groups. `[RESOLVED: checker correction plus runtime audit on 2026-08-13]`
 
 ### Pattern 3: Review Reducer, Current-Value Snapshot, and Explicit Staging
 
@@ -361,7 +362,7 @@ Companion policy:
 
 1. Parse and allow only HTTP/HTTPS, no userinfo, no fragments, and approved ports.
 2. Resolve the hostname and reject loopback, private, link-local, multicast, unspecified, reserved, and metadata endpoints for IPv4 and IPv6.
-3. Do not automatically follow redirects. If redirects are needed, follow at most two hops and repeat the full URL/DNS/IP policy on every hop; forbid HTTPS-to-HTTP downgrade. The two-hop limit is a conservative proposed default. `[ASSUMED]`
+3. Do not automatically follow redirects. Follow at most two hops, repeat the full URL/DNS/IP/actual-peer policy on every hop, and forbid HTTPS-to-HTTP downgrade. Two is locked because the current fetcher follows redirects without a cap and no allowlisted deployed corpus proving a larger requirement exists; execution fixture sampling may only confirm this value or block, never raise it silently. `[RESOLVED: security-default decision plus current-code inspection]`
 4. Stream bytes, reject an oversized `Content-Length`, abort immediately after 3 MB, and keep the existing 2 KB lower bound and bounded connect/total time.
 5. Allow only JPEG, PNG, and WebP MIME/signatures.
 
@@ -375,7 +376,7 @@ Grocy policy:
 4. Return fixed content disposition plus `Cache-Control: private, no-store` and `X-Content-Type-Options: nosniff`.
 5. Never include raw external URLs or tokens in diagnostics.
 
-Use 32–4096 pixels per dimension and at most 16 megapixels as initial conservative bounds, subject to a locked deployment/config decision before implementation. `[ASSUMED]` PHP warns that dimension parsing is not itself proof of a valid image, so retain the MIME and signature checks. `[CITED: https://www.php.net/manual/en/function.getimagesize.php]`
+Use 32–4096 pixels per dimension and at most 16 megapixels. These bounds are locked alongside the existing 2,000–3,000,000-byte JPEG/PNG/WebP envelope; execution fixture sampling may demonstrate incompatibility and block for a new decision, but must not widen them. PHP warns that dimension parsing is not itself proof of a valid image, so retain the MIME and signature checks. `[RESOLVED: existing deployed byte/type envelope plus conservative decoder bounds]` `[CITED: https://www.php.net/manual/en/function.getimagesize.php]`
 
 ### Anti-Patterns to Avoid
 
@@ -536,19 +537,18 @@ function setSuggestionText(row, currentValue, suggestion)
 ### Canonical collision audit before migration
 
 ```sql
-SELECT canonical_gtin, COUNT(*) AS row_count, GROUP_CONCAT(id) AS barcode_row_ids
+SELECT canonical_gtin, COUNT(*) AS row_count
 FROM (
 	SELECT id,
-		substr('00000000000000' || barcode, -14, 14) AS canonical_gtin
+		/* GrocyAiGtin::CanonicalSqlExpression('barcode') */ AS canonical_gtin
 	FROM product_barcodes
-	WHERE length(barcode) IN (8, 12, 13, 14)
-		AND barcode NOT GLOB '*[^0-9]*'
 )
+WHERE canonical_gtin IS NOT NULL
 GROUP BY canonical_gtin
 HAVING COUNT(*) > 1;
 ```
 
-Run this as a read-only deployment preflight. Any result is a human data-resolution checkpoint, not permission to delete records.
+Generate the expression from the same helper used by owner lookup and migration, and run this as a read-only deployment preflight. Record only the aggregate collision-group count/hash, never canonical values or row IDs. Any result is a human data-resolution checkpoint, not permission to delete records.
 
 ## State of the Art
 
@@ -567,44 +567,21 @@ Run this as a read-only deployment preflight. Any result is a human data-resolut
 - A high numeric score alone must not drive automatic selection. `[VERIFIED: D-03]`
 - The standalone barcode modal Save is not a valid staging path for ENR-04 because it persists before the product form's normal Save. `[VERIFIED: productbarcodes.js]`
 
-## Assumptions Log
+## Resolved Decisions Log
 
-| # | Claim | Section | Risk if Wrong |
-|---|-------|---------|---------------|
-| A1 | Use integer `contract_version: 2` for the new closed envelope. | Architecture Pattern 1 | Low: any locked value works, but both repositories/tests must agree. |
-| A2 | Permit at most two fully revalidated redirects and forbid HTTPS downgrade. | Architecture Pattern 5 | Medium: some structured image CDNs may require more hops; measure fixtures before locking. |
-| A3 | Default decoded image bounds are 32–4096 pixels per dimension and 16 megapixels. | Architecture Pattern 5 | Medium: a valid provider image could be rejected or a bound could be too permissive; configure after corpus sampling. |
-| A4 | Brand and package size will use deterministic managed Grocy product userfields rather than new product columns. | Open Questions | High: the actual deployed userfield identities/configuration have not been inspected. |
-| A5 | Phase 2 displays provider food-type evidence but does not create a durable food taxonomy or auto-select/persist an unmapped food type; durable taxonomy remains Phase 3. | Open Questions | High: ENR-05 may be interpreted as requiring a selectable persisted destination in Phase 2. |
+| ID | Locked result | Evidence and execution guard |
+|---|---|---|
+| R-01 | Integer `contract_version: 2`. | Current deployed payload is unversioned/implicit v1; producer and raw duplicate-aware consumer tests lock exact v2. |
+| R-02 | Maximum two fully revalidated redirects; no HTTPS downgrade. | Current fetcher is uncapped. Wave 0 measures allowlisted fixtures and blocks if incompatible; it may not silently widen the limit. |
+| R-03 | Decoded width/height 32–4096 and at most 16MP, retaining 2KB–3MB JPEG/PNG/WebP bounds. | Current deployed byte/type bounds plus conservative decode limits; Wave 0 boundary fixtures lock exact inclusive/exclusive behavior. |
+| R-04 | Brand stages only to the active `products.brand` text-single-line userfield. Package size has no deployed destination and remains visible but disabled with the UI-SPEC unavailable copy; Phase 2 creates no userfield. | Read-only production inventory found `brand|Brand|text-single-line` and no package-size userfield. Execution rechecks name/type exactly and fails closed on drift. |
+| R-05 | Food type is contract/UI evidence only and non-stageable with `No local food type is configured.` Phase 3 owns taxonomy identity/mapping/persistence. Nutrition Facts remains rejected/deferred. | REQUIREMENTS/ROADMAP/CONTEXT phase boundary plus live inventory showing no food-type target. |
+| R-06 | Only checksum-valid GTINs receive canonical keys; invalid numeric-looking barcodes remain arbitrary Grocy barcodes and are excluded from the index. Current deployment has zero canonical collision groups. | Shared `GrocyAiGtin` PHP/SQL expression, temporary SQLite vectors, and read-only production audit (3 valid, 0 invalid-numeric, 0 collision groups). Execution repeats the aggregate audit and blocks on nonzero. |
+| R-07 | Reproduce the deployed companion set before HTTP changes: Python 3.12.13, HTTPX 0.28.1, Starlette 1.6.0, Uvicorn 0.52.1, plus the complete redacted installed-distribution hash captured into a committed constraints artifact. | Read-only container metadata. Execution exports sorted package names/versions only, verifies the four anchors, writes a hash/constraints file, and builds/tests from it; drift blocks rather than floating to new versions. |
 
-All assumed decisions require an explicit planning checkpoint before they become locked implementation tasks.
+## Open Questions (RESOLVED)
 
-## Open Questions
-
-1. **Which deployed product userfields are the authoritative destinations for brand and package size?**
-   - What we know: Grocy's product form and `UserfieldsForm.Save` can persist product userfields through normal Save, while the native product schema does not expose brand/package-size fields in the inspected form. `[VERIFIED: codebase inspection]`
-   - What's unclear: The live/stable database userfield names and whether both branches already have operator-managed fields were not available in repository state.
-   - Recommendation: Make the first barcode/field-review wave perform a read-only userfield inventory on both deployments. If absent, create deterministic managed product userfields through an explicit deployment/migration/config task before the feature is enabled; never create them as a side effect of enrichment. `[ASSUMED]`
-
-2. **How should ENR-05 food type interact with Phase 3 taxonomy ownership?**
-   - What we know: ENR-05 requires independent food-type review, while the roadmap assigns durable food taxonomy and explicit mapping to Phase 3; Nutrition Facts remains deferred. `[VERIFIED: REQUIREMENTS.md, ROADMAP.md, 02-CONTEXT.md]`
-   - What's unclear: Phase 2 has no locked durable local destination for food type.
-   - Recommendation: In Phase 2, include food type in the strict contract and comparison UI as non-auto-selected evidence, but disable staging when no active local target exists and label it “No local food type configured.” Do not create a free-text surrogate. Add a plan-checker checkpoint to confirm this satisfies ENR-05 without pulling Phase 3 forward. `[ASSUMED]`
-
-3. **Do existing production barcodes contain canonical collisions?**
-   - What we know: The repository schema enforces only raw-text uniqueness. `[VERIFIED: migration 0128.sql]`
-   - What's unclear: Production data was not queried during repository research.
-   - Recommendation: Add the read-only collision audit to deployment preflight. Any rows returned block the unique-index migration pending human resolution; no automatic cleanup.
-
-4. **What media corpus establishes workable redirect and dimension bounds?**
-   - What we know: The existing project contract already carries 2 KB–3 MB JPEG/PNG/WebP limits and 15-minute opaque image handles. `[VERIFIED: GrocyAiService.php and companion enrichment.py]`
-   - What's unclear: No representative production candidate corpus was sampled for hop count or dimensions.
-   - Recommendation: Record structured-front and SearXNG fixture dimensions/redirect chains in Wave 0, then lock the smallest sufficient bounds. Retain strict safe defaults when evidence is absent.
-
-5. **Which exact companion dependency set is deployed?**
-   - What we know: The repository declares minimum versions without a lock; the local venv resolves HTTPX 0.28.1, Starlette 1.6.0, and Uvicorn 0.52.1, and local tests pass with one TestClient deprecation warning. `[VERIFIED: pyproject.toml and local probes/tests]`
-   - What's unclear: The production container's resolved versions were not queried.
-   - Recommendation: Capture `pip freeze`/container build metadata in a read-only deployment task before changing stream/redirect behavior, then reproduce that set in CI or a constraints file.
+All five original questions are resolved by R-01 through R-07. No user decision remains open. Runtime-dependent facts are rechecked by autonomous, read-only preflight tasks; a changed destination, nonzero collision count, media-bound incompatibility, or dependency mismatch is a fail-closed execution checkpoint, not permission to guess, widen security limits, create fields, delete data, or cross the Phase 3 boundary.
 
 ## Environment Availability
 
@@ -740,7 +717,7 @@ OWASP ASVS 5.0 is the current published ASVS release and provides a basis for te
 
 ### Tertiary (LOW confidence)
 
-- None. Unverified design choices are explicitly tagged `[ASSUMED]` and listed in the Assumptions Log.
+- None. All former planning assumptions are resolved in R-01 through R-07; execution-time drift is handled by fail-closed preflight rather than a guessed default.
 
 ## Metadata
 
@@ -748,7 +725,7 @@ OWASP ASVS 5.0 is the current published ASVS release and provides a basis for te
 
 - Standard stack: HIGH — existing locked/runtime dependencies and local versions were inspected; no new package is proposed.
 - Architecture: HIGH for contract, barcode, Save, and media tier boundaries — derived from current code and authoritative GS1/OWASP/HTTPX/PHP guidance.
-- Product-model destinations: MEDIUM — brand/package-size deployed userfields and Phase 2 food-type persistence require the stated planning checkpoints.
+- Product-model destinations: HIGH — read-only production inventory resolved `products.brand` as the sole stageable userfield and confirmed no package-size or food-type destination; execution rechecks these closed facts before rendering target metadata.
 - Pitfalls: HIGH — most are directly visible in current code/schema or are documented SSRF/file-handling threats.
 - Validation architecture: HIGH — all three current test layers were executed locally and gaps are mapped one-to-one to ENR-01 through ENR-09.
 
