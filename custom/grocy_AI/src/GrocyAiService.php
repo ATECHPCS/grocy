@@ -6,6 +6,8 @@ use GuzzleHttp\Client;
 
 class GrocyAiService
 {
+	public const MAX_ENRICHMENT_RESPONSE_BYTES = 65536;
+	private const RESPONSE_READ_CHUNK_BYTES = 8192;
 	private $Transport;
 
 	public function __construct(?callable $transport = null)
@@ -58,7 +60,7 @@ class GrocyAiService
 		}
 		$headers['traceparent'] = $traceContext['traceparent'];
 
-		$result = $this->Request($url, $headers);
+		$result = $this->Request($url, $headers, self::MAX_ENRICHMENT_RESPONSE_BYTES);
 		if ($result['status'] < 200 || $result['status'] >= 300)
 		{
 			if (in_array($result['status'], [408, 504], true))
@@ -152,7 +154,7 @@ class GrocyAiService
 		return GrocyAiGtin::NormalizeOrThrow($barcode);
 	}
 
-	private function Request(string $url, array $headers): array
+	private function Request(string $url, array $headers, ?int $bodyLimit = null): array
 	{
 		$timing = ['transfer_ms' => null, 'connect_ms' => null];
 		$options = $this->RequestOptions($timing);
@@ -165,6 +167,11 @@ class GrocyAiService
 				{
 					throw new GrocyAiServiceException('provider_error', 'malformed', 'invalid_response', 502);
 				}
+				if ($bodyLimit !== null)
+				{
+					$this->ValidateResponseContentLength($result['content_length'] ?? null, $bodyLimit);
+					$result['body'] = $this->ReadBoundedResponseBody($result['body'], $bodyLimit);
+				}
 				$result['timing'] = $timing;
 				return $result;
 			}
@@ -175,9 +182,17 @@ class GrocyAiService
 			$requestOptions['http_errors'] = false;
 			$response = $client->request('GET', $url, $requestOptions);
 
+			$body = $response->getBody();
+			$contentLength = $response->getHeaderLine('Content-Length');
+			if ($bodyLimit !== null)
+			{
+				$this->ValidateResponseContentLength($contentLength, $bodyLimit);
+				$body = $this->ReadBoundedResponseBody($body, $bodyLimit);
+			}
+
 			return [
 				'status' => $response->getStatusCode(),
-				'body' => (string)$response->getBody(),
+				'body' => is_string($body) ? $body : (string)$body,
 				'content_type' => $response->getHeaderLine('Content-Type'),
 				'timing' => $timing
 			];
@@ -197,6 +212,54 @@ class GrocyAiService
 				$ex
 			);
 		}
+	}
+
+	private function ValidateResponseContentLength($contentLength, int $limit): void
+	{
+		if ($contentLength === null || $contentLength === '')
+		{
+			return;
+		}
+		if (!is_string($contentLength) || preg_match('/^\d+$/D', $contentLength) !== 1
+			|| strlen(ltrim($contentLength, '0')) > strlen((string)$limit)
+			|| (int)$contentLength > $limit)
+		{
+			throw new GrocyAiServiceException('provider_error', 'malformed', 'contract_invalid', 502);
+		}
+	}
+
+	private function ReadBoundedResponseBody($body, int $limit): string
+	{
+		if (is_string($body))
+		{
+			if (strlen($body) > $limit)
+			{
+				throw new GrocyAiServiceException('provider_error', 'malformed', 'contract_invalid', 502);
+			}
+			return $body;
+		}
+		if (!is_object($body) || !method_exists($body, 'read') || !method_exists($body, 'eof'))
+		{
+			throw new GrocyAiServiceException('provider_error', 'malformed', 'contract_invalid', 502);
+		}
+
+		$contents = '';
+		while (!$body->eof())
+		{
+			$remaining = $limit - strlen($contents);
+			$chunk = $body->read(min(self::RESPONSE_READ_CHUNK_BYTES, $remaining + 1));
+			if (!is_string($chunk) || $chunk === '')
+			{
+				throw new GrocyAiServiceException('provider_error', 'malformed', 'contract_invalid', 502);
+			}
+			$contents .= $chunk;
+			if (strlen($contents) > $limit)
+			{
+				throw new GrocyAiServiceException('provider_error', 'malformed', 'contract_invalid', 502);
+			}
+		}
+
+		return $contents;
 	}
 
 	private function RequestOptions(array &$timing): array

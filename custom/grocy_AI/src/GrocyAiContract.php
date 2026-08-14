@@ -16,6 +16,7 @@ class GrocyAiContract
 	public const REASON_CODES = ['canonical_structured_match', 'mapped_local_option', 'inferred_provider_data', 'unverified_search_result', 'canonical_structured_front_image'];
 	public const EVIDENCE_KINDS = ['structured_direct', 'mapped', 'inferred', 'search'];
 	public const WARNING_CODES = ['image_search_unavailable', 'no_structured_record', 'no_media', 'provider_timeout', 'provider_error'];
+	public const MAX_JSON_DEPTH = 64;
 
 	private const GTIN_PATTERN = '/^(?:\d{8}|\d{12,14})$/D';
 	private const ID_PATTERN = '/^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/D';
@@ -29,14 +30,14 @@ class GrocyAiContract
 		try
 		{
 			$offset = 0;
-			self::ParseValue($raw, $offset);
+			self::ParseValue($raw, $offset, 0);
 			self::SkipWhitespace($raw, $offset);
 			if ($offset !== strlen($raw))
 			{
 				self::Invalid();
 			}
 
-			$data = json_decode($raw, true, 512, JSON_THROW_ON_ERROR);
+			$data = json_decode($raw, true, self::MAX_JSON_DEPTH, JSON_THROW_ON_ERROR);
 		}
 		catch (GrocyAiContractException $ex)
 		{
@@ -68,7 +69,7 @@ class GrocyAiContract
 		return $data;
 	}
 
-	private static function ParseValue(string $raw, int &$offset): void
+	private static function ParseValue(string $raw, int &$offset, int $depth): void
 	{
 		self::SkipWhitespace($raw, $offset);
 		if ($offset >= strlen($raw))
@@ -79,12 +80,12 @@ class GrocyAiContract
 		$character = $raw[$offset];
 		if ($character === '{')
 		{
-			self::ParseObject($raw, $offset);
+			self::ParseObject($raw, $offset, $depth + 1);
 			return;
 		}
 		if ($character === '[')
 		{
-			self::ParseArray($raw, $offset);
+			self::ParseArray($raw, $offset, $depth + 1);
 			return;
 		}
 		if ($character === '"')
@@ -105,8 +106,12 @@ class GrocyAiContract
 		}
 	}
 
-	private static function ParseObject(string $raw, int &$offset): void
+	private static function ParseObject(string $raw, int &$offset, int $depth): void
 	{
+		if ($depth > self::MAX_JSON_DEPTH)
+		{
+			self::Invalid();
+		}
 		$offset++;
 		$keys = [];
 		self::SkipWhitespace($raw, $offset);
@@ -134,7 +139,7 @@ class GrocyAiContract
 				self::Invalid();
 			}
 			$offset++;
-			self::ParseValue($raw, $offset);
+			self::ParseValue($raw, $offset, $depth);
 			self::SkipWhitespace($raw, $offset);
 			$separator = $raw[$offset] ?? null;
 			if ($separator === '}')
@@ -151,8 +156,12 @@ class GrocyAiContract
 		}
 	}
 
-	private static function ParseArray(string $raw, int &$offset): void
+	private static function ParseArray(string $raw, int &$offset, int $depth): void
 	{
+		if ($depth > self::MAX_JSON_DEPTH)
+		{
+			self::Invalid();
+		}
 		$offset++;
 		self::SkipWhitespace($raw, $offset);
 		if (($raw[$offset] ?? null) === ']')
@@ -163,7 +172,7 @@ class GrocyAiContract
 
 		while (true)
 		{
-			self::ParseValue($raw, $offset);
+			self::ParseValue($raw, $offset, $depth);
 			self::SkipWhitespace($raw, $offset);
 			$separator = $raw[$offset] ?? null;
 			if ($separator === ']')
@@ -269,11 +278,12 @@ class GrocyAiContract
 			self::Invalid();
 		}
 		$ids = [];
+		$fields = [];
 		foreach ($value as $suggestion)
 		{
 			self::AssertObject($suggestion, ['id', 'field', 'value', 'display_value', 'source', 'confidence_band', 'reason_code', 'evidence_kind', 'retrieved_at', 'source_updated_at', 'target']);
 			self::AssertId($suggestion['id']);
-			if (isset($ids[$suggestion['id']])
+			if (isset($ids[$suggestion['id']]) || isset($fields[$suggestion['field']])
 				|| !in_array($suggestion['field'], self::FIELDS, true)
 				|| !self::IsText($suggestion['value'])
 				|| !self::IsText($suggestion['display_value'])
@@ -284,6 +294,7 @@ class GrocyAiContract
 				self::Invalid();
 			}
 			$ids[$suggestion['id']] = true;
+			$fields[$suggestion['field']] = true;
 			self::ValidateSource($suggestion['source']);
 			self::ValidateTimestamp($suggestion['retrieved_at']);
 			if ($suggestion['source_updated_at'] !== null)
@@ -333,7 +344,7 @@ class GrocyAiContract
 				$searchSeen = true;
 			}
 			$ids[$media['id']] = true;
-			self::ValidateSource($media['source']);
+			self::ValidateMediaSource($media['kind'], $media['source']);
 			self::ValidateTimestamp($media['retrieved_at']);
 		}
 	}
@@ -370,6 +381,18 @@ class GrocyAiContract
 	{
 		self::AssertObject($value, ['id', 'label']);
 		if (!in_array($value['id'], self::SOURCE_IDS, true) || !self::IsText($value['label']))
+		{
+			self::Invalid();
+		}
+	}
+
+	private static function ValidateMediaSource(string $kind, $value): void
+	{
+		self::AssertObject($value, ['id', 'label']);
+		$expected = $kind === 'front_package'
+			? ['id' => 'openfoodfacts', 'label' => 'Open Food Facts']
+			: ['id' => 'searxng', 'label' => 'Search result'];
+		if ($value !== $expected)
 		{
 			self::Invalid();
 		}

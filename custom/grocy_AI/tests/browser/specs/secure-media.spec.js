@@ -61,7 +61,7 @@ const searchCandidate = mediaCandidate({
 	kind: 'search_alternative',
 	thumbnail_handle: searchThumbnailHandle,
 	full_handle: searchFullHandle,
-	source: { id: 'searxng', label: 'SearXNG' },
+	source: { id: 'searxng', label: 'Search result' },
 	confidence_band: 'unverified',
 	reason_code: 'unverified_search_result',
 	evidence_kind: 'search'
@@ -157,7 +157,7 @@ test('@enr08 same-origin media happy path @enr07 @enr09', async ({ page, request
 	const headings = mediaSection.locator('h5, h6').filter({ hasText: /Front package image|Unverified search alternatives/ });
 	await expect(headings).toHaveText(['Front package image', 'Unverified search alternatives']);
 	await expect(mediaSection.getByText('Unverified', { exact: true })).toBeVisible();
-	await expect(mediaSection.getByText('Search result', { exact: true })).toBeVisible();
+	await expect(mediaSection.locator('.grocy-ai-media-source', { hasText: 'Search result' })).toBeVisible();
 
 	expect(await serverMediaCounts(request)).toEqual({ thumbnail: 0, full: 0 });
 	let browserCounters = await page.evaluate(function () { return window.__fixtureCounters; });

@@ -228,7 +228,7 @@ function integratedEnvelope()
 		}],
 		media: [
 			media('image:openfoodfacts:responsive', 'front_package', 'front', { id: 'openfoodfacts', label: 'Open Food Facts' }, 'structured_direct'),
-			media('image:openfoodfacts:responsive-secondary', 'front_package', 'frontsecondary', { id: 'openfoodfacts', label: 'Open Food Facts alternate' }, 'structured_direct'),
+			media('image:openfoodfacts:responsive-secondary', 'front_package', 'frontsecondary', { id: 'openfoodfacts', label: 'Open Food Facts' }, 'structured_direct'),
 			media('image:searxng:responsive', 'search_alternative', 'search', { id: 'searxng', label: 'Search result' }, 'search')
 		],
 		warnings: [],

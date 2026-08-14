@@ -600,13 +600,16 @@
 	{
 		var structured = media && media.kind === 'front_package';
 		var search = media && media.kind === 'search_alternative';
+		var sourceMatchesKind = structured
+			? hasExactKeys(media.source, ['id', 'label']) && media.source.id === 'openfoodfacts' && media.source.label === 'Open Food Facts'
+			: search && hasExactKeys(media.source, ['id', 'label']) && media.source.id === 'searxng' && media.source.label === 'Search result';
 		return hasExactKeys(media, ['id', 'kind', 'thumbnail_handle', 'full_handle', 'source', 'confidence_band', 'reason_code', 'evidence_kind', 'retrieved_at'])
 			&& validText(media.id)
 			&& (structured || search)
 			&& typeof media.thumbnail_handle === 'string' && /^[A-Za-z0-9_-]{20,200}$/.test(media.thumbnail_handle)
 			&& typeof media.full_handle === 'string' && /^[A-Za-z0-9_-]{20,200}$/.test(media.full_handle)
 			&& media.thumbnail_handle !== media.full_handle
-			&& validSource(media.source)
+			&& sourceMatchesKind
 			&& ((structured
 				&& media.confidence_band === 'high'
 				&& media.reason_code === 'canonical_structured_front_image'
@@ -650,10 +653,12 @@
 		}
 		if (/https?:\/\//i.test(JSON.stringify(data))) return false;
 		var ids = {};
+		var fields = {};
 		var suggestionsValid = data.suggestions.every(function (suggestion)
 		{
-			if (!validSuggestion(suggestion) || ids[suggestion.id]) return false;
+			if (!validSuggestion(suggestion) || ids[suggestion.id] || fields[suggestion.field]) return false;
 			ids[suggestion.id] = true;
+			fields[suggestion.field] = true;
 			return true;
 		});
 		var searchMediaSeen = false;
@@ -1224,6 +1229,11 @@
 		renderBarcodeOwnership(frozenData.barcode);
 		frozenData.suggestions.forEach(function (suggestion)
 		{
+			if (reviewState.rows[suggestion.field])
+			{
+				clearResults();
+				return;
+			}
 			var adapter = targetAdapter(suggestion);
 			var currentValue = adapter.control ? adapter.control.value : '';
 			var automatic = adapter.available && currentValue === ''
@@ -1245,6 +1255,7 @@
 			reviewState.rows[row.field] = row;
 			renderReviewRow(row);
 		});
+		if (!reviewState) return false;
 		if (frozenData.media.length > 0)
 		{
 			var imageRow = mediaEvidenceRow(frozenData.media[0]);
@@ -1254,6 +1265,7 @@
 		renderMedia(frozenData.media);
 		updateSelectionSummary();
 		results.classList.remove('d-none');
+		return true;
 	}
 
 	function selectedRows()
@@ -1683,7 +1695,11 @@
 		var outcome = allowed(data.outcome, ['found', 'not_found', 'timeout', 'provider_error'], 'provider_error');
 		if (outcome === 'found')
 		{
-			renderReview(data);
+			if (!renderReview(data))
+			{
+				terminal(request, 'contract_invalid', data, false);
+				return;
+			}
 			terminal(request, 'success', data, false);
 		}
 		else if (outcome === 'not_found') terminal(request, 'not_found', data, false);
