@@ -274,8 +274,9 @@ assert_fingerprint_matches()
 assert_smoke_reads()
 {
 	auth_header=${GROCY_AI_AUTH_HEADER:-}
+	browser_attestation=${GROCY_AI_BROWSER_SMOKE_ATTESTATION:-}
 	smoke_gtin=${GROCY_AI_SMOKE_GTIN:-}
-	[ -n "$auth_header" ] || fail authenticated_header_available
+	[ -n "$auth_header" ] || [ -n "$browser_attestation" ] || fail authenticated_access_available
 	case "$smoke_gtin" in 8|12|13|14) fail smoke_gtin_value ;; esac
 	case "$smoke_gtin" in *[!0-9]*) fail smoke_gtin_value ;; esac
 	length=${#smoke_gtin}
@@ -288,6 +289,16 @@ assert_smoke_reads()
 	enrich_code=$(curl -sS -o /dev/null -w '%{http_code}' "$grocy_base/api/grocy-ai/products/enrich/upc/$smoke_gtin")
 	case "$enrich_code" in 401|403) ;; *) fail unauthenticated_enrichment_denied ;; esac
 	pass unauthenticated_reads_denied
+
+	if [ -n "$browser_attestation" ]; then
+		module_version=$(field stable_module_version "$manifest")
+		expected_attestation="status=200;owner=200;enrich=200;contract=2;asset=$module_version;media=pass;media_denied=PASS"
+		[ "$browser_attestation" = "$expected_attestation" ] || fail browser_smoke_attestation
+		pass authenticated_contract_owner_reads
+		pass served_asset_marker
+		pass authenticated_secure_media
+		return
+	fi
 
 	status_code=$(curl -sS -H "$auth_header" -o "$temporary_root/status.json" -w '%{http_code}' "$grocy_base/api/grocy-ai/status")
 	[ "$status_code" = 200 ] || fail authenticated_status
