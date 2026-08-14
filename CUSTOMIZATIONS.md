@@ -22,7 +22,7 @@ The small upstream integration surface is:
 
 - `config-dist.php`: feature flag and companion-service settings.
 - `routes.php`: conditional custom route registration.
-- `views/productform.blade.php`: conditional product-enrichment panel and assets.
+- `views/productform.blade.php`: conditional product-enrichment panel and assets, with its cache literal synchronized to the portable module token.
 - `public/viewjs/productform.js`: one post-Save continuation invokes the transient barcode attachment only after Grocy establishes a trusted product ID and before redirect.
 - `migrations/0256.php`: transactional checksum-valid canonical GTIN uniqueness; collisions block without deleting or reassigning household data.
 

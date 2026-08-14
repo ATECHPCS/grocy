@@ -4,7 +4,7 @@
 
 @if(GROCY_FEATURE_FLAG_GROCY_AI)
 @php
-$grocyAiAssetVersion = '2.4.0';
+$grocyAiAssetVersion = '2.4.1';
 @endphp
 @push('pageStyles')
 <link rel="stylesheet"
