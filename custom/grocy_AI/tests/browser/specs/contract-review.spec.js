@@ -126,6 +126,72 @@ function expectZeroWrites(counters)
 	expect(counters.save).toBe(0);
 }
 
+async function expectContractInvalidRecovery(page, envelope, marker)
+{
+	await installEnvelope(page, envelope);
+	await page.goto('/fixtures/productform.html');
+	await page.locator('#grocy-ai-upc').fill(validGtin);
+	await page.locator('#grocy-ai-search-button').click();
+	await page.waitForTimeout(100);
+
+	const state = await page.evaluate(function ()
+	{
+		return {
+			rows: document.querySelectorAll('[data-grocy-ai-field]').length,
+			diffRows: document.querySelectorAll('#grocy-ai-final-diff [data-grocy-ai-diff-field]').length,
+			finalDiffVisible: !document.querySelector('#grocy-ai-final-diff').classList.contains('d-none'),
+			stagedVisible: !document.querySelector('#grocy-ai-staging-feedback').classList.contains('d-none'),
+			name: document.querySelector('#name').value,
+			pictureFiles: document.querySelector('#product-picture').files.length,
+			counters: window.__fixtureCounters
+		};
+	});
+	const recovery = await page.locator('#grocy-ai-status').textContent();
+	const valid = recovery.includes('Suggestions could not be verified.')
+		&& state.rows === 0
+		&& state.diffRows === 0
+		&& !state.finalDiffVisible
+		&& !state.stagedVisible
+		&& state.name === 'Existing manual product'
+		&& state.pictureFiles === 0
+		&& state.counters.product === 0
+		&& state.counters.barcode === 0
+		&& state.counters.category === 0
+		&& state.counters.conversion === 0
+		&& state.counters.userfield === 0
+		&& state.counters.stock === 0
+		&& state.counters.file === 0
+		&& state.counters.save === 0;
+	if (!valid) process.stderr.write(marker + '\n');
+	expect(valid).toBe(true);
+}
+
+test('@enr06 gap duplicate field contract rejection', async ({ page }) =>
+{
+	const duplicate = { ...v2NameReviewEnvelope.suggestions[0], id: 'name:openfoodfacts:1', value: 'Different fixture name', display_value: 'Different fixture name' };
+	const envelope = { ...v2NameReviewEnvelope, suggestions: [...v2NameReviewEnvelope.suggestions, duplicate] };
+	await expectContractInvalidRecovery(page, envelope, 'EXPECTED_RED: browser.duplicate_field');
+});
+
+test('@enr07 gap crossed media source rejection', async ({ page }) =>
+{
+	const envelope = {
+		...v2NameReviewEnvelope,
+		media: [{
+			id: 'front:searxng:0',
+			kind: 'front_package',
+			thumbnail_handle: 'abcdefghijklmnopqrstuvwx',
+			full_handle: 'zyxwvutsrqponmlkjihgfedc',
+			source: { id: 'searxng', label: 'Search result' },
+			confidence_band: 'high',
+			reason_code: 'canonical_structured_front_image',
+			evidence_kind: 'structured_direct',
+			retrieved_at: '2026-08-13T12:00:00Z'
+		}]
+	};
+	await expectContractInvalidRecovery(page, envelope, 'EXPECTED_RED: browser.crossed_media_source');
+});
+
 test('@enr01 contract-v2 name review @enr05 @enr09 renders provenance and remains zero-write', async ({ page }) =>
 {
 	await page.route('**/api/**', async function (route)

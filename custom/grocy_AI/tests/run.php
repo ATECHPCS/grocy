@@ -338,6 +338,207 @@ function runMediaPixelLimitCase(): never
 	exit(0);
 }
 
+final class BoundedReadableTestBody
+{
+	public int $bytesRead = 0;
+	public bool $stringified = false;
+	private int $offset = 0;
+
+	public function __construct(private string $body)
+	{
+	}
+
+	public function read(int $length): string
+	{
+		$chunk = substr($this->body, $this->offset, $length);
+		$this->offset += strlen($chunk);
+		$this->bytesRead += strlen($chunk);
+		return $chunk;
+	}
+
+	public function eof(): bool
+	{
+		return $this->offset >= strlen($this->body);
+	}
+
+	public function __toString(): string
+	{
+		$this->stringified = true;
+		return $this->body;
+	}
+}
+
+function validContractDocument(): array
+{
+	return json_decode(enrichmentV2Fixture('valid_name_review'), true, 512, JSON_THROW_ON_ERROR);
+}
+
+function traceContextForDocument(array &$document): array
+{
+	$traceId = '1234567890abcdef1234567890abcdef';
+	$document['diagnostics']['trace_id'] = $traceId;
+	return [
+		'trace_id' => $traceId,
+		'parent_id' => '1234567890abcdef',
+		'flags' => '01',
+		'traceparent' => '00-' . $traceId . '-1234567890abcdef-01'
+	];
+}
+
+function assertContractInvalidService(string $raw, string $marker, array $response = []): void
+{
+	$document = json_decode($raw, true, 512, JSON_THROW_ON_ERROR);
+	$traceContext = traceContextForDocument($document);
+	$raw = json_encode($document, JSON_THROW_ON_ERROR);
+	$service = new GrocyAiService(static fn(): array => array_merge([
+		'status' => 200,
+		'body' => $raw
+	], $response));
+	try
+	{
+		$service->EnrichByUpc('012345678905', $traceContext);
+		expectedRed($marker, 'The service returned a partial DTO instead of the finite contract-invalid recovery');
+	}
+	catch (GrocyAiServiceException $ex)
+	{
+		if ($ex->GetDiagnosticErrorCode() !== 'contract_invalid')
+		{
+			expectedRed($marker, 'The service did not return the finite contract-invalid recovery');
+		}
+	}
+}
+
+function runDuplicateFieldCase(): never
+{
+	$marker = 'EXPECTED_RED: contract.duplicate_field';
+	$document = validContractDocument();
+	$duplicate = $document['suggestions'][0];
+	$duplicate['id'] = 'name:openfoodfacts:1';
+	$duplicate['value'] = 'Different fixture name';
+	$duplicate['display_value'] = 'Different fixture name';
+	$document['suggestions'][] = $duplicate;
+	$raw = json_encode($document, JSON_THROW_ON_ERROR);
+	try
+	{
+		GrocyAiContract::DecodeAndValidateRaw($raw, '012345678905');
+		expectedRed($marker, 'Two different IDs for the same closed field were accepted');
+	}
+	catch (InvalidArgumentException)
+	{
+		// The all-or-nothing PHP validator rejected the duplicate field.
+	}
+	assertContractInvalidService($raw, $marker);
+	fwrite(STDOUT, "Duplicate suggestion field rejection passed\n");
+	exit(0);
+}
+
+function runCrossedMediaSourceCase(): never
+{
+	$marker = 'EXPECTED_RED: contract.crossed_media_source';
+	$cases = [
+		'front_with_search_source' => ['front_package', 'searxng', 'Search result', 'high', 'canonical_structured_front_image', 'structured_direct'],
+		'front_with_noncanonical_label' => ['front_package', 'openfoodfacts', 'OpenFoodFacts', 'high', 'canonical_structured_front_image', 'structured_direct'],
+		'search_with_structured_source' => ['search_alternative', 'openfoodfacts', 'Open Food Facts', 'unverified', 'unverified_search_result', 'search'],
+		'search_with_noncanonical_label' => ['search_alternative', 'searxng', 'Search Result', 'unverified', 'unverified_search_result', 'search']
+	];
+	foreach ($cases as $caseId => [$kind, $sourceId, $sourceLabel, $confidence, $reason, $evidence])
+	{
+		$document = validContractDocument();
+		$document['media'] = [[
+			'id' => 'media:' . $caseId,
+			'kind' => $kind,
+			'thumbnail_handle' => 'abcdefghijklmnopqrstuvwx',
+			'full_handle' => 'zyxwvutsrqponmlkjihgfedc',
+			'source' => ['id' => $sourceId, 'label' => $sourceLabel],
+			'confidence_band' => $confidence,
+			'reason_code' => $reason,
+			'evidence_kind' => $evidence,
+			'retrieved_at' => '2026-08-13T12:00:00Z'
+		]];
+		$raw = json_encode($document, JSON_THROW_ON_ERROR);
+		try
+		{
+			GrocyAiContract::DecodeAndValidateRaw($raw, '012345678905');
+			expectedRed($marker, "Crossed source pair {$caseId} was accepted");
+		}
+		catch (InvalidArgumentException)
+		{
+			// The all-or-nothing PHP validator rejected the source-pair forgery.
+		}
+		assertContractInvalidService($raw, $marker);
+	}
+	fwrite(STDOUT, "Crossed media source rejection passed\n");
+	exit(0);
+}
+
+function runResponseLimitCase(): never
+{
+	$marker = 'EXPECTED_RED: service.response_limit';
+	if (!defined(GrocyAiService::class . '::MAX_ENRICHMENT_RESPONSE_BYTES'))
+	{
+		expectedRed($marker, 'The enrichment response ceiling is not defined');
+	}
+	$limit = constant(GrocyAiService::class . '::MAX_ENRICHMENT_RESPONSE_BYTES');
+	$document = validContractDocument();
+	$traceContext = traceContextForDocument($document);
+	$raw = json_encode($document, JSON_THROW_ON_ERROR);
+	$oversizedRaw = $raw . str_repeat(' ', $limit + 1 - strlen($raw));
+	foreach ([
+		'declared_oversized' => ['body' => $raw, 'content_length' => (string)($limit + 1)],
+		'declared_malformed' => ['body' => $raw, 'content_length' => '65x536']
+	] as $caseId => $response)
+	{
+		$service = new GrocyAiService(static fn(): array => ['status' => 200] + $response);
+		try
+		{
+			$service->EnrichByUpc('012345678905', $traceContext);
+			expectedRed($marker, "{$caseId} Content-Length was accepted");
+		}
+		catch (GrocyAiServiceException $ex)
+		{
+			if ($ex->GetDiagnosticErrorCode() !== 'contract_invalid') expectedRed($marker, "{$caseId} did not map to contract_invalid");
+		}
+	}
+	$body = new BoundedReadableTestBody($oversizedRaw);
+	$service = new GrocyAiService(static fn() => ['status' => 200, 'body' => $body, 'content_length' => '1']);
+	try
+	{
+		$service->EnrichByUpc('012345678905', $traceContext);
+		expectedRed($marker, 'A stream crossing the response ceiling was accepted');
+	}
+	catch (GrocyAiServiceException $ex)
+	{
+		if ($ex->GetDiagnosticErrorCode() !== 'contract_invalid' || $body->stringified || $body->bytesRead > $limit + 8192)
+		{
+			expectedRed($marker, 'The bounded reader did not stop at the response ceiling');
+		}
+	}
+	fwrite(STDOUT, "Enrichment response limit rejection passed\n");
+	exit(0);
+}
+
+function runDepthLimitCase(): never
+{
+	$marker = 'EXPECTED_RED: contract.depth_limit';
+	if (!defined(GrocyAiContract::class . '::MAX_JSON_DEPTH'))
+	{
+		expectedRed($marker, 'The raw JSON nesting boundary is not defined');
+	}
+	$depth = constant(GrocyAiContract::class . '::MAX_JSON_DEPTH');
+	$raw = str_repeat('[', $depth + 1) . '0' . str_repeat(']', $depth + 1);
+	try
+	{
+		GrocyAiContract::DecodeAndValidateRaw($raw);
+		expectedRed($marker, 'Raw JSON nested beyond the explicit boundary was accepted');
+	}
+	catch (InvalidArgumentException)
+	{
+		// The raw lexical parser failed before a decoded document was accepted.
+	}
+	fwrite(STDOUT, "Raw JSON depth rejection passed\n");
+	exit(0);
+}
+
 if (($argv[1] ?? null) === '--case')
 {
 	$selectedCase = $argv[2] ?? '';
@@ -357,9 +558,43 @@ if (($argv[1] ?? null) === '--case')
 	{
 		runMediaPixelLimitCase();
 	}
+	if ($selectedCase === 'contract.duplicate_field')
+	{
+		runDuplicateFieldCase();
+	}
+	if ($selectedCase === 'contract.crossed_media_source')
+	{
+		runCrossedMediaSourceCase();
+	}
+	if ($selectedCase === 'service.response_limit')
+	{
+		runResponseLimitCase();
+	}
+	if ($selectedCase === 'contract.depth_limit')
+	{
+		runDepthLimitCase();
+	}
 
 	fwrite(STDERR, "Unknown test case: {$selectedCase}\n");
 	exit(2);
+}
+
+if (($argv[1] ?? null) === '--list')
+{
+	foreach ([
+		'contract.duplicate_top_level',
+		'contract.duplicate_nested',
+		'blade.phase2_targets',
+		'media.pixel_limit',
+		'contract.duplicate_field',
+		'contract.crossed_media_source',
+		'service.response_limit',
+		'contract.depth_limit'
+	] as $caseId)
+	{
+		fwrite(STDOUT, $caseId . PHP_EOL);
+	}
+	exit(0);
 }
 
 if (($argv[1] ?? null) === '--group' && ($argv[2] ?? null) === 'contract')
