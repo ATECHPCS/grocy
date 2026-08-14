@@ -59,8 +59,10 @@ views/productform.blade.php
 stable_adapter_paths_end
 
 main_post_candidate_paths_begin
+.planning/HANDOFF.json
 .planning/ROADMAP.md
 .planning/STATE.md
+.planning/phases/02-enrichment-contract-barcode-handoff-secure-media/.continue-here.md
 .planning/phases/02-enrichment-contract-barcode-handoff-secure-media/02-10-PLAN.md
 .planning/phases/02-enrichment-contract-barcode-handoff-secure-media/02-10-SUMMARY.md
 .planning/phases/02-enrichment-contract-barcode-handoff-secure-media/02-11-PLAN.md
@@ -71,10 +73,18 @@ main_post_candidate_paths_begin
 .planning/phases/02-enrichment-contract-barcode-handoff-secure-media/02-13-SUMMARY.md
 .planning/phases/02-enrichment-contract-barcode-handoff-secure-media/02-14-PLAN.md
 .planning/phases/02-enrichment-contract-barcode-handoff-secure-media/02-14-SUMMARY.md
+.planning/phases/02-enrichment-contract-barcode-handoff-secure-media/02-15-PLAN.md
+.planning/phases/02-enrichment-contract-barcode-handoff-secure-media/02-16-PLAN.md
+.planning/phases/02-enrichment-contract-barcode-handoff-secure-media/02-17-PLAN.md
+.planning/phases/02-enrichment-contract-barcode-handoff-secure-media/02-18-PLAN.md
+.planning/phases/02-enrichment-contract-barcode-handoff-secure-media/02-19-PLAN.md
+.planning/phases/02-enrichment-contract-barcode-handoff-secure-media/02-20-PLAN.md
 .planning/phases/02-enrichment-contract-barcode-handoff-secure-media/02-DEPLOYMENT-EVIDENCE.md
 .planning/phases/02-enrichment-contract-barcode-handoff-secure-media/02-PHASE-ACCEPTANCE.md
 .planning/phases/02-enrichment-contract-barcode-handoff-secure-media/02-PHASE1-BASELINE.sha256
 .planning/phases/02-enrichment-contract-barcode-handoff-secure-media/02-RELEASE-MANIFEST.md
+.planning/phases/02-enrichment-contract-barcode-handoff-secure-media/02-REVIEW.md
+.planning/phases/02-enrichment-contract-barcode-handoff-secure-media/02-VERIFICATION.md
 CUSTOMIZATIONS.md
 custom/grocy_AI/phase2-changed-paths.txt
 custom/grocy_AI/portable-files.txt
