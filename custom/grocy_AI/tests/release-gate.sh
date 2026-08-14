@@ -237,6 +237,11 @@ stable_commit_cache=$(git -C "$stable_repo" show "${stable_adapter_sha}:custom/g
 [ "$stable_commit_cache" = "$stable_cache_marker" ] || fail stable_cache_marker
 pass synchronized_markers
 
+selection_summary_call="data-selection-summary=\"{{ \$__t('%s changes selected', '%s') }}\""
+grep -Fq "$selection_summary_call" "$main_repo/views/productform.blade.php" || fail main_selection_summary_localization
+git -C "$stable_repo" show "${stable_adapter_sha}:views/productform.blade.php" | grep -Fq "$selection_summary_call" || fail stable_selection_summary_localization
+pass selection_summary_localization
+
 run_quiet main_php_contract env GROCY_BLADE_AUTOLOAD="$main_repo/packages/autoload.php" php "$main_repo/custom/grocy_AI/tests/run.php"
 run_quiet main_barcode_handoff php "$main_repo/custom/grocy_AI/tests/barcode-handoff.php"
 run_quiet stable_controller_lint php -l "$stable_repo/custom/grocy_AI/src/GrocyAiApiController.php"

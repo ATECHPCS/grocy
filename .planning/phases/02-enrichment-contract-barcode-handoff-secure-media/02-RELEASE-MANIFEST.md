@@ -8,7 +8,7 @@ stable_branch: atech-release
 stable_base_sha: 9f9ce169e155c9ec1fa01a67745c94276d86b2da
 stable_portable_sha: c21c4db88457e0da504fc7fde148da4e5d34e0ce
 stable_portable_parent_sha: 9f9ce169e155c9ec1fa01a67745c94276d86b2da
-stable_adapter_sha: 44634578792457428d2438576fc18fc68de6eb6e
+stable_adapter_sha: ed3565f0cc051047cc90feec7289fa14fcdc7275
 stable_adapter_parent_sha: c21c4db88457e0da504fc7fde148da4e5d34e0ce
 stable_module_version: 2.4.0
 stable_cache_marker: ATECHPCS-grocy_AI-8
@@ -80,6 +80,7 @@ custom/grocy_AI/phase2-changed-paths.txt
 custom/grocy_AI/portable-files.txt
 custom/grocy_AI/tests/deployment-gate.sh
 custom/grocy_AI/tests/release-gate.sh
+views/productform.blade.php
 main_post_candidate_paths_end
 
 portable_blobs_begin
