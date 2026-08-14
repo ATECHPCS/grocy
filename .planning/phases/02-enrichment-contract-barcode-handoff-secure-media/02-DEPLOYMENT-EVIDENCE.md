@@ -1,0 +1,20 @@
+# Phase 02 Deployment Evidence
+
+companion_revision: 9fe07cda5f1ddaee08c5d46709a934170e5956bd
+stable_revision: 44634578792457428d2438576fc18fc68de6eb6e
+prior_companion_image_id: sha256:0f31a2dc1c32164051baae0c84ef2120b6621d8faf24870a34ce0a1c6e4f67f6
+prior_stable_image_id: sha256:2fe2ab1e61be7a8928fab90ac4365cdcbfd9140bd641b5fd8c826f3e1bbab815
+predeploy_fingerprint: 0f815d401dbdd948836063d51448aa94d50d66aa6e7a3c6b01b60c062c532cd9
+companion_image_id: sha256:464304b235042b727144b7469fa3a6e3b82d461be9fe8e1d3f4d64e51baa54d9
+stable_image_id: sha256:7509e46ae4e27f2e163c1b49f4714b9b0cb89d749a2f86578fc0e85064c4f681
+
+predeploy_release_gate: PASS
+predeploy_live_gate: PASS
+collision_audit: PASS
+prior_images_resolvable: PASS
+companion_running_identity: PASS
+stable_running_identity: PASS
+stable_mount_continuity: PASS
+stable_schema_state: PASS
+stable_postdeploy_gate: PASS
+protected_state_after_deploy: MATCH
