@@ -146,7 +146,7 @@ Plans:
 
 **Wave 12** *(blocked on Wave 11 completion)*
 
-- [ ] 02-12-PLAN.md — Create executable release and deployment evidence gates before any deployment.
+- [x] 02-12-PLAN.md — Create executable release and deployment evidence gates before any deployment.
 
 **Wave 13** *(blocked on Wave 12 completion)*
 
@@ -251,7 +251,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7. Dual-bra
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Safety Baseline & Mobile Diagnostics | 9/10 | In Progress|  |
-| 2. Enrichment Contract, Barcode Handoff & Secure Media | 11/14 | In Progress|  |
+| 2. Enrichment Contract, Barcode Handoff & Secure Media | 12/14 | In Progress|  |
 | 3. Food Taxonomy & Categorization Pilot | 0/TBD | Not started | - |
 | 4. Reusable Conversion Model | 0/TBD | Not started | - |
 | 5. Bulk Maintenance & Recovery Engine | 0/TBD | Not started | - |
