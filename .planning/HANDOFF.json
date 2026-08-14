@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "timestamp": "2026-08-14T19:46:21Z",
+  "timestamp": "2026-08-14T20:33:28Z",
   "phase": "02",
   "phase_name": "enrichment-contract-barcode-handoff-secure-media",
   "phase_dir": ".planning/phases/02-enrichment-contract-barcode-handoff-secure-media",
@@ -32,6 +32,6 @@
     }
   ],
   "uncommitted_files": [],
-  "next_action": "Run $gsd-plan-phase 02 --gaps from the grocy repository. Phase verification found three blocking contract gaps; do not rerun the completed Phase 02 plans or human workflow.",
-  "context_notes": "Plan 02-14 approval, redacted acceptance evidence, summary, ROADMAP plan count, and STATE progress are committed. Phase 02 code review (f6bef15d) found one blocker and three warnings. Goal verification (ad9f06e9) scored 1/4 truths and found three blocking gaps: duplicate suggestion fields collapse browser reducer state, media provenance is not bound to evidence class, and companion JSON is unbounded before recursive parsing. Do not repeat the human workflow. Phase 1 physical-phone evidence remains skipped and unaccepted. Security enforcement is enabled and no Phase 02 security report exists yet; run it only after gap closure and before advancement."
+  "next_action": "Run $gsd-execute-phase 02 --gaps-only from the grocy repository. Execute only plans 02-15 through 02-20; do not rerun the completed Phase 02 plans or human workflow.",
+  "context_notes": "Plan 02-14 approval, redacted acceptance evidence, summary, ROADMAP plan count, and STATE progress are committed. Phase 02 code review (f6bef15d) found one blocker and three warnings. Goal verification (ad9f06e9) scored 1/4 truths and found three blocking gaps: duplicate suggestion fields collapse browser reducer state, media provenance is not bound to evidence class, and companion JSON is unbounded before recursive parsing. Gap-closure plans 02-15 through 02-20 were committed in 089c255f after the operator accepted two remaining plan-review concerns about the historical replay's release-scope sequencing. Preserve closed scopes and re-evaluate the release replay during execution; do not treat planning acceptance as evidence that it passes. Do not repeat the human workflow. Phase 1 physical-phone evidence remains skipped and unaccepted. Security enforcement is enabled and no Phase 02 security report exists yet; run it only after gap closure and before advancement."
 }
