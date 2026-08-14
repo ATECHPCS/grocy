@@ -8,9 +8,14 @@ stable_branch: atech-release
 stable_base_sha: 9f9ce169e155c9ec1fa01a67745c94276d86b2da
 stable_portable_sha: c21c4db88457e0da504fc7fde148da4e5d34e0ce
 stable_portable_parent_sha: 9f9ce169e155c9ec1fa01a67745c94276d86b2da
+stable_adapter_sha: 44634578792457428d2438576fc18fc68de6eb6e
+stable_adapter_parent_sha: c21c4db88457e0da504fc7fde148da4e5d34e0ce
+stable_module_version: 2.4.0
+stable_cache_marker: ATECHPCS-grocy_AI-8
 dependency_constraints_sha256: 53c2a4b530e9802d0d0f5587875db0ae72320652dd4627925b06eca2edbb2019
 portable_paths_sha256: fda39b8a8f3a5c14d6d5bebc230cfd4b29c4e570e625f5ae52b709c002501cc7
 phase2_changed_paths_sha256: fda39b8a8f3a5c14d6d5bebc230cfd4b29c4e570e625f5ae52b709c002501cc7
+stable_adapter_paths_sha256: 7599fc38b230df4035aa48271d02322576e78b52a8199b07ce82644e1d164576
 
 portable_paths_begin
 custom/grocy_AI/README.md
@@ -42,6 +47,17 @@ public/custom/grocy_AI/grocy-ai.css
 public/custom/grocy_AI/product-enrichment.js
 phase2_changed_paths_end
 
+stable_adapter_paths_begin
+CUSTOMIZATIONS.md
+Dockerfile.atech
+custom/grocy_AI/routes.php
+custom/grocy_AI/src/GrocyAiApiController.php
+custom/grocy_AI/version.json
+migrations/0256.php
+public/viewjs/productform.js
+views/productform.blade.php
+stable_adapter_paths_end
+
 portable_blobs_begin
 custom/grocy_AI/README.md ac3667c09263d4167882abbb003348f576de0826 f131e267caf13cb6118b525350c72abf5c4f7a8c1550b51f8caeca028dd839c8
 custom/grocy_AI/module-version.json 8f274a4f813a8af39300b064df2ab582c23055d9 9b46dd3b86cb45196860f4315a44839150a3df5b24ff903e5f8047e98a700fc4
@@ -62,6 +78,12 @@ main_php_contract: 113/113 PASS
 main_barcode_handoff: 84/84 PASS
 main_browser_release: 142/142 PASS
 companion_unittest_discovery: 41/41 PASS
+stable_php_contract: 113/113 PASS
+stable_barcode_handoff: 84/84 PASS
+stable_portable_parity: 12/12 PASS
+stable_adapter_scope: 8/8 PASS
+stable_adapter_parent: PASS
+live_canonical_collision_groups: 0
 candidate_gate_results_end
 
 Phase 1 physical evidence remains untouched and `SKIPPED — NOT ACCEPTED`.
