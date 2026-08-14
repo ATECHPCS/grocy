@@ -142,7 +142,7 @@ Plans:
 
 **Wave 11** *(blocked on Wave 10 completion)*
 
-- [ ] 02-11-PLAN.md — Adapt only stable framework seams and prove behavior and parity without changing portable blobs.
+- [x] 02-11-PLAN.md — Adapt only stable framework seams and prove behavior and parity without changing portable blobs.
 
 **Wave 12** *(blocked on Wave 11 completion)*
 
@@ -251,7 +251,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7. Dual-bra
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Safety Baseline & Mobile Diagnostics | 9/10 | In Progress|  |
-| 2. Enrichment Contract, Barcode Handoff & Secure Media | 10/14 | In Progress|  |
+| 2. Enrichment Contract, Barcode Handoff & Secure Media | 11/14 | In Progress|  |
 | 3. Food Taxonomy & Categorization Pilot | 0/TBD | Not started | - |
 | 4. Reusable Conversion Model | 0/TBD | Not started | - |
 | 5. Bulk Maintenance & Recovery Engine | 0/TBD | Not started | - |
