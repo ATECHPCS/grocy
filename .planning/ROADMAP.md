@@ -166,7 +166,7 @@ Plans:
 
 **Wave 17** *(blocked on Wave 16 completion)*
 
-- [ ] 02-17-PLAN.md — Commit the fixed main and companion candidate inputs with new immutable identities.
+- [x] 02-17-PLAN.md — Commit the fixed main and companion candidate inputs with new immutable identities.
 
 **Wave 18** *(blocked on Wave 17 completion)*
 
@@ -275,7 +275,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7. Dual-bra
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Safety Baseline & Mobile Diagnostics | 9/10 | In Progress|  |
-| 2. Enrichment Contract, Barcode Handoff & Secure Media | 16/20 | In Progress|  |
+| 2. Enrichment Contract, Barcode Handoff & Secure Media | 17/20 | In Progress|  |
 | 3. Food Taxonomy & Categorization Pilot | 0/TBD | Not started | - |
 | 4. Reusable Conversion Model | 0/TBD | Not started | - |
 | 5. Bulk Maintenance & Recovery Engine | 0/TBD | Not started | - |
