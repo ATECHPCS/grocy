@@ -58,6 +58,30 @@ public/viewjs/productform.js
 views/productform.blade.php
 stable_adapter_paths_end
 
+main_post_candidate_paths_begin
+.planning/ROADMAP.md
+.planning/STATE.md
+.planning/phases/02-enrichment-contract-barcode-handoff-secure-media/02-10-PLAN.md
+.planning/phases/02-enrichment-contract-barcode-handoff-secure-media/02-10-SUMMARY.md
+.planning/phases/02-enrichment-contract-barcode-handoff-secure-media/02-11-PLAN.md
+.planning/phases/02-enrichment-contract-barcode-handoff-secure-media/02-11-SUMMARY.md
+.planning/phases/02-enrichment-contract-barcode-handoff-secure-media/02-12-PLAN.md
+.planning/phases/02-enrichment-contract-barcode-handoff-secure-media/02-12-SUMMARY.md
+.planning/phases/02-enrichment-contract-barcode-handoff-secure-media/02-13-PLAN.md
+.planning/phases/02-enrichment-contract-barcode-handoff-secure-media/02-13-SUMMARY.md
+.planning/phases/02-enrichment-contract-barcode-handoff-secure-media/02-14-PLAN.md
+.planning/phases/02-enrichment-contract-barcode-handoff-secure-media/02-14-SUMMARY.md
+.planning/phases/02-enrichment-contract-barcode-handoff-secure-media/02-DEPLOYMENT-EVIDENCE.md
+.planning/phases/02-enrichment-contract-barcode-handoff-secure-media/02-PHASE-ACCEPTANCE.md
+.planning/phases/02-enrichment-contract-barcode-handoff-secure-media/02-PHASE1-BASELINE.sha256
+.planning/phases/02-enrichment-contract-barcode-handoff-secure-media/02-RELEASE-MANIFEST.md
+CUSTOMIZATIONS.md
+custom/grocy_AI/phase2-changed-paths.txt
+custom/grocy_AI/portable-files.txt
+custom/grocy_AI/tests/deployment-gate.sh
+custom/grocy_AI/tests/release-gate.sh
+main_post_candidate_paths_end
+
 portable_blobs_begin
 custom/grocy_AI/README.md ac3667c09263d4167882abbb003348f576de0826 f131e267caf13cb6118b525350c72abf5c4f7a8c1550b51f8caeca028dd839c8
 custom/grocy_AI/module-version.json 8f274a4f813a8af39300b064df2ab582c23055d9 9b46dd3b86cb45196860f4315a44839150a3df5b24ff903e5f8047e98a700fc4
