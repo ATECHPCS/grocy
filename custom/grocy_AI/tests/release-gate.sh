@@ -205,7 +205,11 @@ if [ -n "${GROCY_AI_RELEASE_GATE_EXTRA_DIRTY_PATH:-}" ]; then
 fi
 case "$mode" in
 	candidate)
-		dirty_allowed=$(printf '%s\n' '.planning/phases/02-enrichment-contract-barcode-handoff-secure-media/02-RELEASE-MANIFEST.md' 'custom/grocy_AI/tests/release-gate.sh')
+		if [ "${GROCY_AI_RELEASE_GATE_CANDIDATE_STAGE:-release}" = deployment ]; then
+			dirty_allowed=$(printf '%s\n' '.planning/phases/02-enrichment-contract-barcode-handoff-secure-media/02-PHASE1-BASELINE.sha256' 'custom/grocy_AI/tests/deployment-gate.sh' 'custom/grocy_AI/tests/release-gate.sh')
+		else
+			dirty_allowed=$(printf '%s\n' '.planning/phases/02-enrichment-contract-barcode-handoff-secure-media/02-RELEASE-MANIFEST.md' 'custom/grocy_AI/tests/release-gate.sh')
+		fi
 		assert_subset "$dirty_paths" "$dirty_allowed" candidate_dirty_scope
 		;;
 	predeploy)
