@@ -13,6 +13,8 @@ This fork keeps ATECHPCS-specific behavior isolated so upstream Grocy updates re
 
 Phase 1 adds a disabled-by-default, read-only product enrichment module. On the product form, an authorized user can look up a UPC and review product metadata and real package-image candidates returned by a companion service. It does not write Grocy master data, upload images, or change stock.
 
+Phase 2 keeps search and review read-only while adding a closed suggestion contract, canonical barcode ownership, selected-only field/image staging, and same-origin secure media. Durable changes still occur only through Grocy's normal Save workflow; after Grocy establishes a trusted product ID, the Save continuation may attach only the explicitly staged checksum-valid barcode and upload only the selected staged picture.
+
 Public module name: `grocy_AI`  
 Internal PHP namespace: `GrocyAI`
 
@@ -23,6 +25,8 @@ The small upstream integration surface is:
 - `views/productform.blade.php`: conditional product-enrichment panel and assets.
 - `public/viewjs/productform.js`: one post-Save continuation invokes the transient barcode attachment only after Grocy establishes a trusted product ID and before redirect.
 - `migrations/0256.php`: transactional checksum-valid canonical GTIN uniqueness; collisions block without deleting or reassigning household data.
+
+The stable release mirrors the portable module bytes first, then carries one separately reviewable eight-path framework adapter commit. Stable retains its `Grocy\Controllers\BaseApiController` namespace and class-based `JsonMiddleware::class`; the other adapter paths are the feature-gated product-form hook, narrow normal-Save continuation, exact migration, cache marker, customization record, and the Docker overlay that installs both new core adapter files at their runtime paths.
 
 The module implementation and contract are documented in [`custom/grocy_AI/README.md`](custom/grocy_AI/README.md).
 
