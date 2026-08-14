@@ -96,7 +96,7 @@ Plans:
   3. User can review one final diff and save only selected suggestions; search, preview, cancel, timeout, and failed media retrieval leave products, barcodes, categories, stock, conversions, and files unchanged.
   4. User sees an exact structured-source front image before clearly unverified search alternatives and can demand-load/select same-origin media through short-lived handles with URL, redirect, byte, time, MIME, signature, and pixel safeguards.
 
-**Plans**: 14 plans
+**Plans**: 20 plans
 
 Plans:
 
@@ -155,6 +155,30 @@ Plans:
 **Wave 14** *(blocked on Wave 13 completion)*
 
 - [x] 02-14-PLAN.md — Complete the manual evidence automation cannot supply for deployed userfield readability, owner routing, normal Save, and package-media interaction.
+
+**Wave 15** *(blocked on Wave 14 completion)*
+
+- [ ] 02-15-PLAN.md — Restore exact immutable release replay and exercise the production variant-bound companion media route.
+
+**Wave 16** *(blocked on Wave 15 completion)*
+
+- [ ] 02-16-PLAN.md — Close duplicate-field, media-provenance, and bounded companion JSON contract gaps with red-first regressions.
+
+**Wave 17** *(blocked on Wave 16 completion)*
+
+- [ ] 02-17-PLAN.md — Commit the fixed main and companion candidate inputs with new immutable identities.
+
+**Wave 18** *(blocked on Wave 17 completion)*
+
+- [ ] 02-18-PLAN.md — Create the 12-path stable portable mirror from the fixed main candidate.
+
+**Wave 19** *(blocked on Wave 18 completion)*
+
+- [ ] 02-19-PLAN.md — Reapply the stable adapter, replace manifest provenance, and replay release gates.
+
+**Wave 20** *(blocked on Wave 19 completion)*
+
+- [ ] 02-20-PLAN.md — Deploy replacement images and refresh redacted deployment evidence.
 
 **UI hint:** yes
 
