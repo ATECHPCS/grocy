@@ -3,7 +3,7 @@
 main_branch: atech-main
 main_candidate_sha: bff2d79fd8ce4cf8c48d2f8f1ddf07b352c8ca54
 companion_branch: main
-companion_candidate_sha: e49d060bff5e636c5a3e2c1f6f27fae298446401
+companion_candidate_sha: 9fe07cda5f1ddaee08c5d46709a934170e5956bd
 stable_branch: atech-release
 stable_base_sha: 9f9ce169e155c9ec1fa01a67745c94276d86b2da
 stable_portable_sha: c21c4db88457e0da504fc7fde148da4e5d34e0ce
