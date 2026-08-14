@@ -8,7 +8,7 @@ class GrocyAiDiagnostic
 	public const OUTCOMES = ['success', 'partial_image', 'not_found', 'timeout', 'provider_error'];
 	public const STAGE_NAMES = ['grocy_connect', 'grocy_companion', 'federation', 'open_food_facts', 'image_search', 'image_fetch'];
 	public const STAGE_STATUSES = ['ok', 'not_found', 'timeout', 'unavailable', 'error', 'malformed', 'skipped'];
-	public const ERROR_CODES = [null, 'deadline', 'connection', 'http_status', 'invalid_response', 'invalid_gtin', 'not_configured', 'provider_error', 'budget_exhausted'];
+	public const ERROR_CODES = [null, 'deadline', 'connection', 'http_status', 'invalid_response', 'contract_invalid', 'invalid_gtin', 'not_configured', 'provider_error', 'budget_exhausted'];
 	public const CACHE_STATUSES = ['hit', 'miss', 'bypass', 'unknown'];
 	public const SERVER_TIMING_NAMES = ['grocy_connect', 'grocy_companion', 'federation', 'open_food_facts', 'image_search', 'image_fetch'];
 

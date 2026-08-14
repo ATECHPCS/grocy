@@ -3,10 +3,11 @@
 namespace GrocyAI\Services;
 
 use GuzzleHttp\Client;
-use JsonException;
 
 class GrocyAiService
 {
+	public const MAX_ENRICHMENT_RESPONSE_BYTES = 65536;
+	private const RESPONSE_READ_CHUNK_BYTES = 8192;
 	private $Transport;
 
 	public function __construct(?callable $transport = null)
@@ -59,7 +60,7 @@ class GrocyAiService
 		}
 		$headers['traceparent'] = $traceContext['traceparent'];
 
-		$result = $this->Request($url, $headers);
+		$result = $this->Request($url, $headers, self::MAX_ENRICHMENT_RESPONSE_BYTES);
 		if ($result['status'] < 200 || $result['status'] >= 300)
 		{
 			if (in_array($result['status'], [408, 504], true))
@@ -72,23 +73,25 @@ class GrocyAiService
 
 		try
 		{
-			$data = json_decode($result['body'], true, 512, JSON_THROW_ON_ERROR);
+			$data = GrocyAiContract::DecodeAndValidateRaw((string)$result['body'], $upc);
+			if (!hash_equals($traceContext['trace_id'], $data['diagnostics']['trace_id']))
+			{
+				throw new GrocyAiContractException();
+			}
+			return $data;
 		}
-		catch (JsonException $ex)
+		catch (GrocyAiContractException $ex)
 		{
-			throw new GrocyAiServiceException('provider_error', 'malformed', 'invalid_response', 502, $ex);
+			throw new GrocyAiServiceException('provider_error', 'malformed', 'contract_invalid', 502, $ex);
 		}
-
-		if (!is_array($data))
-		{
-			throw new GrocyAiServiceException('provider_error', 'malformed', 'invalid_response', 502);
-		}
-
-		return $this->NormalizeResponse($upc, $data, $traceContext, $result['timing'] ?? []);
 	}
 
-	public function FetchImage(string $token): array
+	public function FetchImage(string $variant, string $token): array
 	{
+		if (!in_array($variant, ['thumbnail', 'full'], true))
+		{
+			throw new \InvalidArgumentException('Invalid image variant');
+		}
 		if (!preg_match('/^[A-Za-z0-9_-]{20,200}$/', $token))
 		{
 			throw new \InvalidArgumentException('Invalid image selection');
@@ -100,7 +103,7 @@ class GrocyAiService
 			throw new \LogicException('The grocy_AI companion service is not configured');
 		}
 
-		$url = rtrim($serviceUrl, '/') . '/v1/products/images/' . rawurlencode($token);
+		$url = rtrim($serviceUrl, '/') . '/v1/products/images/' . rawurlencode($variant) . '/' . rawurlencode($token);
 		$headers = [
 			'Accept' => 'image/png,image/jpeg,image/webp',
 			'User-Agent' => 'grocy_AI/1'
@@ -117,7 +120,7 @@ class GrocyAiService
 			throw new \RuntimeException('The selected image is unavailable; search again');
 		}
 
-		$contentType = strtolower(trim(explode(';', (string)($result['content_type'] ?? ''))[0]));
+		$contentType = strtolower(trim((string)($result['content_type'] ?? '')));
 		if (!in_array($contentType, ['image/jpeg', 'image/png', 'image/webp'], true))
 		{
 			throw new \RuntimeException('The selected file is not a supported product image');
@@ -131,35 +134,27 @@ class GrocyAiService
 		{
 			throw new \RuntimeException('The selected product image has an invalid format');
 		}
+		$imageInfo = @getimagesizefromstring($body);
+		if ($imageInfo === false)
+		{
+			throw new \RuntimeException('The selected product image dimensions are invalid');
+		}
+		$width = (int)($imageInfo[0] ?? 0);
+		$height = (int)($imageInfo[1] ?? 0);
+		if ($width < 32 || $height < 32 || $width > 4096 || $height > 4096 || ($width * $height) > 16000000)
+		{
+			throw new \RuntimeException('The selected product image dimensions are outside the allowed bounds');
+		}
 
 		return ['body' => $body, 'content_type' => $contentType];
 	}
 
 	public static function NormalizeUpc(string $barcode): string
 	{
-		$upc = str_replace([' ', '-'], '', trim($barcode));
-		if (!preg_match('/^\d{8}$|^\d{12,14}$/', $upc))
-		{
-			throw new \InvalidArgumentException('UPC must contain 8, 12, 13, or 14 digits');
-		}
-
-		$weightedSum = 0;
-		$body = substr($upc, 0, -1);
-		for ($offset = 0, $length = strlen($body); $offset < $length; $offset++)
-		{
-			$digit = (int)$body[$length - $offset - 1];
-			$weightedSum += $digit * ($offset % 2 === 0 ? 3 : 1);
-		}
-		$expectedCheckDigit = (10 - ($weightedSum % 10)) % 10;
-		if ((int)$upc[strlen($upc) - 1] !== $expectedCheckDigit)
-		{
-			throw new \InvalidArgumentException('UPC checksum is invalid');
-		}
-
-		return $upc;
+		return GrocyAiGtin::NormalizeOrThrow($barcode);
 	}
 
-	private function Request(string $url, array $headers): array
+	private function Request(string $url, array $headers, ?int $bodyLimit = null): array
 	{
 		$timing = ['transfer_ms' => null, 'connect_ms' => null];
 		$options = $this->RequestOptions($timing);
@@ -172,6 +167,11 @@ class GrocyAiService
 				{
 					throw new GrocyAiServiceException('provider_error', 'malformed', 'invalid_response', 502);
 				}
+				if ($bodyLimit !== null)
+				{
+					$this->ValidateResponseContentLength($result['content_length'] ?? null, $bodyLimit);
+					$result['body'] = $this->ReadBoundedResponseBody($result['body'], $bodyLimit);
+				}
 				$result['timing'] = $timing;
 				return $result;
 			}
@@ -182,9 +182,17 @@ class GrocyAiService
 			$requestOptions['http_errors'] = false;
 			$response = $client->request('GET', $url, $requestOptions);
 
+			$body = $response->getBody();
+			$contentLength = $response->getHeaderLine('Content-Length');
+			if ($bodyLimit !== null)
+			{
+				$this->ValidateResponseContentLength($contentLength, $bodyLimit);
+				$body = $this->ReadBoundedResponseBody($body, $bodyLimit);
+			}
+
 			return [
 				'status' => $response->getStatusCode(),
-				'body' => (string)$response->getBody(),
+				'body' => is_string($body) ? $body : (string)$body,
 				'content_type' => $response->getHeaderLine('Content-Type'),
 				'timing' => $timing
 			];
@@ -204,6 +212,54 @@ class GrocyAiService
 				$ex
 			);
 		}
+	}
+
+	private function ValidateResponseContentLength($contentLength, int $limit): void
+	{
+		if ($contentLength === null || $contentLength === '')
+		{
+			return;
+		}
+		if (!is_string($contentLength) || preg_match('/^\d+$/D', $contentLength) !== 1
+			|| strlen(ltrim($contentLength, '0')) > strlen((string)$limit)
+			|| (int)$contentLength > $limit)
+		{
+			throw new GrocyAiServiceException('provider_error', 'malformed', 'contract_invalid', 502);
+		}
+	}
+
+	private function ReadBoundedResponseBody($body, int $limit): string
+	{
+		if (is_string($body))
+		{
+			if (strlen($body) > $limit)
+			{
+				throw new GrocyAiServiceException('provider_error', 'malformed', 'contract_invalid', 502);
+			}
+			return $body;
+		}
+		if (!is_object($body) || !method_exists($body, 'read') || !method_exists($body, 'eof'))
+		{
+			throw new GrocyAiServiceException('provider_error', 'malformed', 'contract_invalid', 502);
+		}
+
+		$contents = '';
+		while (!$body->eof())
+		{
+			$remaining = $limit - strlen($contents);
+			$chunk = $body->read(min(self::RESPONSE_READ_CHUNK_BYTES, $remaining + 1));
+			if (!is_string($chunk) || $chunk === '')
+			{
+				throw new GrocyAiServiceException('provider_error', 'malformed', 'contract_invalid', 502);
+			}
+			$contents .= $chunk;
+			if (strlen($contents) > $limit)
+			{
+				throw new GrocyAiServiceException('provider_error', 'malformed', 'contract_invalid', 502);
+			}
+		}
+
+		return $contents;
 	}
 
 	private function RequestOptions(array &$timing): array
@@ -229,69 +285,6 @@ class GrocyAiService
 		];
 	}
 
-	private function NormalizeResponse(string $upc, array $data, array $traceContext, array $transportTiming): array
-	{
-		$product = is_array($data['product'] ?? null) ? $data['product'] : [];
-		$images = [];
-		$imageCandidates = is_array($data['images'] ?? null) ? $data['images'] : [];
-		foreach ($imageCandidates as $image)
-		{
-			if (!is_array($image) || !isset($image['url']) || filter_var($image['url'], FILTER_VALIDATE_URL) === false)
-			{
-				continue;
-			}
-
-			$scheme = strtolower((string)parse_url($image['url'], PHP_URL_SCHEME));
-			if (!in_array($scheme, ['http', 'https'], true))
-			{
-				continue;
-			}
-
-			$images[] = [
-				'url' => $image['url'],
-				'download_token' => self::ImageToken($image['download_token'] ?? ''),
-				'source' => self::ScalarString($image['source'] ?? ''),
-				'score' => is_numeric($image['score'] ?? null) ? (float)$image['score'] : null,
-				'match_confidence' => is_numeric($image['match_confidence'] ?? null) ? (float)$image['match_confidence'] : null
-			];
-		}
-
-		$outcome = array_key_exists('outcome', $data)
-			? GrocyAiDiagnostic::NormalizeOutcome($data['outcome'])
-			: ((bool)($data['found'] ?? !empty($product)) ? 'success' : 'not_found');
-		$companionDiagnostics = is_array($data['diagnostics'] ?? null) ? $data['diagnostics'] : [];
-
-		return [
-			'found' => (bool)($data['found'] ?? !empty($product)),
-			'upc' => $upc,
-			'product' => [
-				'name' => self::ScalarString($product['name'] ?? ''),
-				'brand' => self::ScalarString($product['brand'] ?? ''),
-				'size' => self::ScalarString($product['size'] ?? '')
-			],
-			'images' => array_slice($images, 0, 20),
-			'sources' => self::StringList($data['sources'] ?? []),
-			'warnings' => self::StringList($data['warnings'] ?? []),
-			'outcome' => $outcome,
-			'diagnostics' => GrocyAiDiagnostic::NormalizeCompanionDiagnostics(
-				$companionDiagnostics,
-				$traceContext['trace_id'],
-				$outcome,
-				$transportTiming
-			)
-		];
-	}
-
-	private static function ScalarString($value): string
-	{
-		return is_scalar($value) ? trim((string)$value) : '';
-	}
-
-	private static function ImageToken($value): string
-	{
-		$value = self::ScalarString($value);
-		return preg_match('/^[A-Za-z0-9_-]{20,200}$/', $value) ? $value : '';
-	}
 
 	private static function HasImageSignature(string $body, string $contentType): bool
 	{
@@ -308,25 +301,6 @@ class GrocyAiService
 			return strlen($body) >= 12 && str_starts_with($body, 'RIFF') && substr($body, 8, 4) === 'WEBP';
 		}
 		return false;
-	}
-
-	private static function StringList($values): array
-	{
-		if (!is_array($values))
-		{
-			return [];
-		}
-
-		$result = [];
-		foreach ($values as $value)
-		{
-			if (is_scalar($value) && trim((string)$value) !== '')
-			{
-				$result[] = trim((string)$value);
-			}
-		}
-
-		return array_values(array_unique($result));
 	}
 
 	private function GetServiceUrl(): string

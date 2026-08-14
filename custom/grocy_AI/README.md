@@ -40,10 +40,21 @@ Product enrichment always uses a 12-second total request limit and a 2-second co
 ## Grocy routes
 
 - `GET /api/grocy-ai/status`
+- `GET /api/grocy-ai/barcodes/resolve/{barcode}`
 - `GET /api/grocy-ai/products/enrich/upc/{upc}`
-- `GET /api/grocy-ai/images/{selection-token}`
+- `GET /api/grocy-ai/images/{variant}/{selection-token}` where `variant` is exactly `thumbnail` or `full`
 
-All routes use Grocy authentication. UPC enrichment and selected-image retrieval also require the `MASTER_DATA_EDIT` permission.
+All routes use Grocy authentication. Barcode ownership resolution, UPC enrichment, and selected-image retrieval also require the `MASTER_DATA_EDIT` permission.
+
+## Barcode ownership handoff
+
+`GrocyAiGtin` is the single predicate owner for both PHP and generated SQLite expressions. It accepts only checksum-valid digit strings whose exact lengths are GTIN-8, GTIN-12, GTIN-13, or GTIN-14. The exact scanned string remains the display value; ownership comparisons use its left-zero-padded 14-character canonical key. Unsupported lengths, text, and checksum-invalid numeric-looking values return no canonical key and remain ordinary arbitrary Grocy barcodes outside this enrichment boundary.
+
+The authenticated barcode route is read-only and checks `MASTER_DATA_EDIT` before any ownership lookup. It searches locally before provider enrichment, returns only a bounded database-owned product ID for an existing owner, and never accepts an owner ID or destination from browser or companion input. An existing owner suppresses provider work. An unused valid GTIN may be staged once in transient browser state as `Ready to add on Save`, where it remains removable and disappears on invalidation, cancellation, stale results, or navigation.
+
+Migration `0256.php` audits with `GrocyAiGtin::CanonicalSqlExpression('barcode')` and creates `ix_product_barcodes_canonical_gtin` inside a transaction only when the canonical collision count is zero. It never deletes, rewrites, or reassigns stored barcodes. Because the expression returns `NULL` for unsupported text and checksum-invalid numeric-looking values, those ordinary Grocy barcodes remain outside canonical uniqueness while the existing exact-text index continues to apply.
+
+Grocy's normal product Save remains the only persistence gesture. After the existing product/userfield/picture path has a trusted product ID, one narrow continuation re-resolves the staged barcode owner and posts at most one `{product_id, barcode, amount: 1}` row. Current-product ownership is idempotent success; another owner blocks and exposes only the trusted owner route. A partial attachment failure retains the created product ID and exact barcode in transient state, and `Retry barcode attachment` repeats only ownership resolution plus at most one barcode insert attempt—never product creation or update. Nutrition Facts, allergen, dietary, and medical data remain rejected and deferred.
 
 ## Companion-service contract
 
@@ -56,42 +67,65 @@ X-API-Key: {GROCY_AI_SERVICE_API_KEY}   # only when configured
 traceparent: 00-{trace-id}-{owned-parent-id}-{flags}
 ```
 
-Expected response:
+Expected contract-v2 response:
 
 ```json
 {
-  "found": true,
-  "upc": "012345678905",
-  "product": {
-    "name": "Example product",
-    "brand": "Example brand",
-    "size": "12 oz"
+  "contract_version": 2,
+  "outcome": "found",
+  "barcode": {
+    "scanned_gtin": "012345678905",
+    "canonical_gtin": "00012345678905",
+    "equivalents_checked": ["012345678905", "00012345678905"],
+    "status": "unused",
+    "owner_product_id": null
   },
-  "images": [
+  "suggestions": [
     {
-      "url": "https://images.example/product-front.png",
-      "download_token": "short-lived-opaque-handle",
-      "source": "openfoodfacts",
-      "score": 100,
-      "match_confidence": 1
+      "id": "name:openfoodfacts:0",
+      "field": "name",
+      "value": "Example product",
+      "display_value": "Example product",
+      "source": {"id": "openfoodfacts", "label": "Open Food Facts"},
+      "confidence_band": "high",
+      "reason_code": "canonical_structured_match",
+      "evidence_kind": "structured_direct",
+      "retrieved_at": "2026-08-13T12:00:00Z",
+      "source_updated_at": null,
+      "target": null
     }
   ],
-  "sources": ["openfoodfacts", "searxng"],
+  "media": [
+    {
+      "id": "image:openfoodfacts:front",
+      "kind": "front_package",
+      "thumbnail_handle": "opaque-thumbnail-capability",
+      "full_handle": "distinct-opaque-full-capability",
+      "source": {"id": "openfoodfacts", "label": "Open Food Facts"},
+      "confidence_band": "high",
+      "reason_code": "canonical_structured_front_image",
+      "evidence_kind": "structured_direct",
+      "retrieved_at": "2026-08-13T12:00:00Z"
+    }
+  ],
   "warnings": [],
-  "outcome": "success",
-  "diagnostics": {
-    "schema_version": 1,
-    "contract_version": "1",
-    "companion_version": "0.1.0",
-    "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
-    "outcome": "success",
-    "stages": [],
-    "overall_duration_ms": 25
-  }
+  "diagnostics": {"trace_id": "4bf92f3577b34da6a3ce929d0e0e4736"}
 }
 ```
 
-Only `http` and `https` image URLs are returned to the browser. Image downloads use short-lived opaque handles, so the browser cannot turn either server into an arbitrary URL fetcher. The UI renders values as text and applies nothing without a button click; the chosen values are persisted only through Grocy's normal Save action.
+Grocy preserves the raw response until a duplicate-aware lexical walk has rejected repeated member names at every object depth. It then validates exact version, members, enums, types, IDs, timestamps, targets, provenance, and unique IDs as one all-or-nothing boundary. Any malformed, unknown, duplicate, URL-bearing, nutrition, allergen, dietary, or medical content becomes the single redacted `contract_invalid` recovery state; no partial suggestion survives.
+
+Contract v2 contains no external image URL or provider dictionary. Secure media is represented only by distinct short-lived variant-bound opaque handles and authenticated same-origin routes. Exact structured-source front-package imagery is ordered first. SearXNG candidates appear only in the separate `Unverified search alternatives` group with `unverified` confidence and `search` evidence; they are never equivalent to structured evidence or preselected. The browser makes zero image request until `Load thumbnail` or `Select image` is activated.
+
+The companion revalidates URL syntax, DNS answers, and the actual connected peer at every hop, refuses mixed or non-global addresses, disables environment proxies and automatic redirects, allows at most two manually checked redirects, and forbids HTTPS downgrade. It enforces a 2-second connect deadline, 12-second total deadline, 2,000–3,000,000 streamed bytes, and exact matching JPEG/PNG/WebP MIME and magic. Handles live for 900 seconds in a maximum 512-entry LRU store.
+
+Grocy independently checks the closed variant and token, byte count, exact MIME, magic, decoded width and height of 32–4096 pixels, and a maximum 16,000,000 pixels before returning fixed-name bytes with `Cache-Control: private, no-store` and `X-Content-Type-Options: nosniff`. Thumbnail object URLs and the selected full `File` remain transient module state. Only `Stage selected changes` assigns that `File` to the native picture input, and only Grocy's unchanged normal Save can persist it. Candidate failure preserves every other suggestion, manual form value, selection, and Save control; stale, replaced, cancelled, and navigation state abort requests and revoke obsolete object URLs.
+
+The review renders name, brand, package size, product group, quantity unit, food type, and product image as independent current/suggested decisions with field-local provenance. Only a blank native destination backed by high-confidence direct structured canonical evidence starts selected. Mapped, inferred, search, missing-target, inactive-target, whitespace, and non-empty cases require an explicit decision or remain disabled.
+
+The only Phase 2 brand destination is the revalidated `products.brand` single-line product userfield. Package size and food type remain visible evidence with no destination; this module does not create userfields or a Phase 3 taxonomy surrogate. Product-group and quantity-unit suggestions must name an active local option. Nutrition Facts, allergen, dietary, and medical members remain rejected and deferred.
+
+Selection state, captured current values, and the selected-only final diff are transient. The browser re-reads each native control before opening the diff and again before staging. A changed value is marked `Needs review`, removed from the diff, and cannot stage until the user explicitly selects it against the new current value. `Stage selected changes` dispatches only local native input/change behavior for selected live rows and makes no API request. An unused checksum-valid barcode can join that transient review state; its only write boundary is the normal-Save continuation described above. Grocy's unchanged normal Save buttons are the sole persistence authority.
 
 ## Diagnostic and privacy contract
 
@@ -99,9 +133,9 @@ Only `http` and `https` image URLs are returned to the browser. Image downloads 
 
 The product-form JavaScript and CSS query token is the grocy_AI `module_version`, not Grocy's core release version. Bump `module-version.json` whenever either custom asset changes and update the one `grocyAiAssetVersion` literal in `views/productform.blade.php` to the same value. The native contract suite enforces that both asset URLs use that matching module token and remain independent from core `$version`, preventing a stable browser cache from serving older custom bytes across deployments.
 
-Grocy rebuilds diagnostics field-by-field. The v1 browser envelope contains only schema/version values, the trace ID, a finite outcome, allowlisted stages, and bounded or nullable millisecond durations. The supplementary `Server-Timing` header contains only allowlisted metric names and durations. Diagnostics and status never contain GTINs, product or inventory values, service URLs, request/response headers, credentials, cookies, payload bodies, image handles, or raw exception text.
+Grocy validates contract-v2 diagnostics as the single owned trace ID. The browser still creates its closed local diagnostic report without copying raw response fields. Diagnostics and status never contain GTINs, product or inventory values, service URLs, request/response headers, credentials, cookies, payload bodies, image handles, or raw exception text.
 
-Enrichment and diagnostics remain authenticated GET/read operations. They do not write database rows, files, product data, barcodes, stock, or inventory state. Suggested names and selected images remain previews until the user invokes Grocy's existing Save workflow.
+Enrichment and diagnostics remain authenticated GET/read operations. Search, review, selection, final-diff display, staleness handling, and local form staging do not write database rows, files, product data, barcodes, categories, conversions, stock, or inventory state. Unselected controls receive no value or dirty event. Suggested fields and image evidence remain review state until the user invokes Grocy's existing Save workflow.
 
 Run the standalone module checks with:
 
@@ -170,4 +204,4 @@ Perform this smoke only after the portable and adapter commits exist in `/Users/
 
 ## Next phase
 
-Add an optional create-product barcode handoff and broader structured field mappings after the review-before-save workflow is verified on desktop and mobile.
+Attach the reviewed transient barcode through Grocy's normal Save boundary and enforce canonical uniqueness only after the migration and rollback gates pass.

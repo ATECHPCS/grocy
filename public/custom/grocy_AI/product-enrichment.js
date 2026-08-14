@@ -9,7 +9,7 @@
 	}
 
 	var REQUEST_DEADLINE_MS = 15000;
-	var ALLOWED_OUTCOMES = ['success', 'partial_image', 'not_found', 'timeout', 'provider_error', 'cancelled', 'offline'];
+	var ALLOWED_OUTCOMES = ['success', 'partial_image', 'found', 'not_found', 'timeout', 'provider_error', 'contract_invalid', 'cancelled', 'offline'];
 	var ALLOWED_STAGE_NAMES = ['browser', 'grocy_connect', 'grocy_companion', 'federation', 'open_food_facts', 'image_search', 'image_fetch'];
 	var ALLOWED_STAGE_STATUSES = ['ok', 'not_found', 'timeout', 'unavailable', 'error', 'malformed', 'skipped', 'cancelled', 'offline'];
 	var ALLOWED_ERROR_CODES = [null, 'deadline', 'connection', 'http_status', 'invalid_response', 'invalid_gtin', 'not_configured', 'provider_error', 'budget_exhausted', 'cancelled', 'offline'];
@@ -29,10 +29,25 @@
 	var requestSequence = 0;
 	var activeRequest = null;
 	var currentDiagnostic = null;
+	var reviewState = null;
+	var FIELD_LABELS = {
+		name: 'Name',
+		brand: 'Brand',
+		package_size: 'Package size',
+		product_group: 'Product group',
+		quantity_unit: 'Quantity unit',
+		food_type: 'Food type',
+		product_image: 'Product image'
+	};
 
 	function localized(name, fallback)
 	{
 		return root.dataset[name] || fallback;
+	}
+
+	function translated(value)
+	{
+		return typeof window.__t === 'function' ? window.__t(value) : value;
 	}
 
 	function textElement(tag, className, value)
@@ -107,6 +122,71 @@
 	}
 
 	var ui = ensureUi();
+	var reviewUi = {
+		section: document.getElementById('grocy-ai-field-review'),
+		rows: document.getElementById('grocy-ai-field-rows'),
+		selectionStatus: document.getElementById('grocy-ai-selection-status'),
+		reviewButton: document.getElementById('grocy-ai-review-selected-button'),
+		diff: document.getElementById('grocy-ai-final-diff'),
+		diffHeading: document.getElementById('grocy-ai-final-diff-heading'),
+		diffList: document.getElementById('grocy-ai-final-diff-list'),
+		backButton: document.getElementById('grocy-ai-back-to-suggestions-button'),
+		stageButton: document.getElementById('grocy-ai-stage-selected-button'),
+		stagingFeedback: document.getElementById('grocy-ai-staging-feedback')
+	};
+
+	function ensureMediaUi()
+	{
+		var section = document.getElementById('grocy-ai-media-review');
+		if (!section)
+		{
+			section = document.createElement('section');
+			section.id = 'grocy-ai-media-review';
+			section.className = 'grocy-ai-media-review d-none';
+			section.setAttribute('aria-labelledby', 'grocy-ai-media-heading');
+			var heading = textElement('h5', '', localized('imageSectionHeading', 'Choose a product image'));
+			heading.id = 'grocy-ai-media-heading';
+			section.appendChild(heading);
+			[
+				['structured', localized('structuredImageHeading', 'Front package image')],
+				['search', localized('searchImageHeading', 'Unverified search alternatives')]
+			].forEach(function (definition)
+			{
+				var group = document.createElement('section');
+				group.id = 'grocy-ai-' + definition[0] + '-media-group';
+				group.className = 'grocy-ai-media-group d-none';
+				group.appendChild(textElement('h6', '', definition[1]));
+				var grid = document.createElement('div');
+				grid.id = 'grocy-ai-' + definition[0] + '-media';
+				grid.className = 'grocy-ai-media-grid';
+				group.appendChild(grid);
+				section.appendChild(group);
+			});
+			reviewUi.section.insertAdjacentElement('afterend', section);
+		}
+		return {
+			section: section,
+			structuredGroup: document.getElementById('grocy-ai-structured-media-group'),
+			structuredGrid: document.getElementById('grocy-ai-structured-media'),
+			searchGroup: document.getElementById('grocy-ai-search-media-group'),
+			searchGrid: document.getElementById('grocy-ai-search-media')
+		};
+	}
+
+	var mediaUi = ensureMediaUi();
+	var barcodeUi = {
+		scanned: document.getElementById('grocy-ai-scanned-barcode'),
+		equivalents: document.getElementById('grocy-ai-barcode-equivalents'),
+		outcome: document.getElementById('grocy-ai-barcode-outcome'),
+		ownerLink: document.getElementById('grocy-ai-open-existing-product'),
+		removeButton: document.getElementById('grocy-ai-remove-staged-barcode')
+	};
+	var attachmentState = {
+		productId: null,
+		barcode: null,
+		pending: null,
+		completed: false
+	};
 
 	function normalizeGtin(value)
 	{
@@ -343,7 +423,7 @@
 
 	function renderState(state)
 	{
-		var retry = ['offline', 'timeout', 'not_found', 'companion_unavailable', 'provider_error', 'partial_image'].indexOf(state) !== -1;
+		var retry = ['offline', 'timeout', 'not_found', 'companion_unavailable', 'provider_error', 'partial_image', 'contract_invalid'].indexOf(state) !== -1;
 		ui.retryButton.classList.toggle('d-none', !retry);
 		cancelButton.classList.toggle('d-none', state !== 'searching');
 		searchButton.disabled = state === 'searching' || !validateGtin(upcInput.value).valid;
@@ -375,6 +455,10 @@
 		{
 			setStatus('', localized('providerErrorMessage', 'A product data provider could not respond. Retry, or continue editing manually.'), 'danger', false, 'fa-circle-exclamation');
 		}
+		else if (state === 'contract_invalid')
+		{
+			setStatus('', localized('contractError', 'Suggestions could not be verified. Retry the search, or continue editing manually. Nothing was changed.'), 'danger', false, 'fa-circle-exclamation');
+		}
 		else if (state === 'partial_image')
 		{
 			setStatus('', localized('partialImageMessage', 'Product details were found, but images are unavailable. You can continue without an image.'), 'warning', false, 'fa-triangle-exclamation');
@@ -391,7 +475,32 @@
 
 	function clearResults()
 	{
-		results.replaceChildren();
+		disposeMediaState(reviewState);
+		reviewState = null;
+		if (barcodeUi.scanned) barcodeUi.scanned.textContent = '';
+		if (barcodeUi.equivalents) barcodeUi.equivalents.textContent = '';
+		if (barcodeUi.outcome) barcodeUi.outcome.replaceChildren();
+		if (barcodeUi.ownerLink)
+		{
+			barcodeUi.ownerLink.removeAttribute('href');
+			barcodeUi.ownerLink.classList.add('d-none');
+		}
+		if (barcodeUi.removeButton) barcodeUi.removeButton.classList.add('d-none');
+		if (reviewUi.rows) reviewUi.rows.replaceChildren();
+		if (reviewUi.diffList) reviewUi.diffList.replaceChildren();
+		if (reviewUi.diff) reviewUi.diff.classList.add('d-none');
+		if (reviewUi.stagingFeedback)
+		{
+			reviewUi.stagingFeedback.textContent = '';
+			reviewUi.stagingFeedback.classList.add('d-none');
+		}
+		if (reviewUi.selectionStatus) reviewUi.selectionStatus.textContent = localized('selectionSummary', '%s changes selected').replace('%s', '0');
+		if (reviewUi.reviewButton) reviewUi.reviewButton.disabled = true;
+		if (mediaUi.structuredGrid) mediaUi.structuredGrid.replaceChildren();
+		if (mediaUi.searchGrid) mediaUi.searchGrid.replaceChildren();
+		if (mediaUi.structuredGroup) mediaUi.structuredGroup.classList.add('d-none');
+		if (mediaUi.searchGroup) mediaUi.searchGroup.classList.add('d-none');
+		if (mediaUi.section) mediaUi.section.remove();
 		results.classList.add('d-none');
 	}
 
@@ -438,163 +547,1088 @@
 		return validation;
 	}
 
-	function feedback(message, isError)
+	function hasExactKeys(value, expected)
 	{
-		var existing = results.querySelector('.grocy-ai-feedback');
-		if (existing) existing.remove();
-		var alert = textElement('div', 'grocy-ai-feedback alert ' + (isError ? 'alert-danger' : 'alert-success') + ' mt-3 mb-0', message);
-		results.appendChild(alert);
+		if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+		return Object.keys(value).sort().join('|') === expected.slice().sort().join('|');
 	}
 
-	function applySuggestedName(name)
+	function validTimestamp(value)
 	{
-		if (!productNameInput || !name) return;
-		productNameInput.value = name;
-		productNameInput.dispatchEvent(new Event('keyup', { bubbles: true }));
-		productNameInput.focus();
-		feedback('Suggested product name applied. It will be saved only when you save the product.', false);
+		return typeof value === 'string'
+			&& /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(value)
+			&& !Number.isNaN(Date.parse(value));
 	}
 
-	function imageFileExtension(contentType)
+	function validText(value)
 	{
-		if (contentType === 'image/png') return 'png';
-		if (contentType === 'image/webp') return 'webp';
-		return 'jpg';
+		return typeof value === 'string' && value.trim() !== '' && value.length <= 500 && !/https?:\/\//i.test(value);
 	}
 
-	function useSelectedImage(candidate, card, button, gtin)
+	function validSource(source)
 	{
-		if (!candidate.download_token || !productPictureInput)
+		return hasExactKeys(source, ['id', 'label'])
+			&& ['openfoodfacts', 'bb-federation', 'searxng'].indexOf(source.id) !== -1
+			&& validText(source.label);
+	}
+
+	function validTarget(target)
+	{
+		return target === null || (hasExactKeys(target, ['kind', 'id', 'label'])
+			&& ['product_field', 'userfield', 'product_group', 'quantity_unit', 'food_type'].indexOf(target.kind) !== -1
+			&& Number.isInteger(target.id) && target.id > 0
+			&& validText(target.label));
+	}
+
+	function validSuggestion(suggestion)
+	{
+		return hasExactKeys(suggestion, ['id', 'field', 'value', 'display_value', 'source', 'confidence_band', 'reason_code', 'evidence_kind', 'retrieved_at', 'source_updated_at', 'target'])
+			&& validText(suggestion.id)
+			&& ['name', 'brand', 'package_size', 'product_group', 'quantity_unit', 'food_type'].indexOf(suggestion.field) !== -1
+			&& validText(suggestion.value)
+			&& validText(suggestion.display_value)
+			&& validSource(suggestion.source)
+			&& ['high', 'medium', 'low', 'unverified'].indexOf(suggestion.confidence_band) !== -1
+			&& ['canonical_structured_match', 'mapped_local_option', 'inferred_provider_data', 'unverified_search_result'].indexOf(suggestion.reason_code) !== -1
+			&& ['structured_direct', 'mapped', 'inferred', 'search'].indexOf(suggestion.evidence_kind) !== -1
+			&& validTimestamp(suggestion.retrieved_at)
+			&& (suggestion.source_updated_at === null || validTimestamp(suggestion.source_updated_at))
+			&& validTarget(suggestion.target);
+	}
+
+	function validMedia(media)
+	{
+		var structured = media && media.kind === 'front_package';
+		var search = media && media.kind === 'search_alternative';
+		var sourceMatchesKind = structured
+			? hasExactKeys(media.source, ['id', 'label']) && media.source.id === 'openfoodfacts' && media.source.label === 'Open Food Facts'
+			: search && hasExactKeys(media.source, ['id', 'label']) && media.source.id === 'searxng' && media.source.label === 'Search result';
+		return hasExactKeys(media, ['id', 'kind', 'thumbnail_handle', 'full_handle', 'source', 'confidence_band', 'reason_code', 'evidence_kind', 'retrieved_at'])
+			&& validText(media.id)
+			&& (structured || search)
+			&& typeof media.thumbnail_handle === 'string' && /^[A-Za-z0-9_-]{20,200}$/.test(media.thumbnail_handle)
+			&& typeof media.full_handle === 'string' && /^[A-Za-z0-9_-]{20,200}$/.test(media.full_handle)
+			&& media.thumbnail_handle !== media.full_handle
+			&& sourceMatchesKind
+			&& ((structured
+				&& media.confidence_band === 'high'
+				&& media.reason_code === 'canonical_structured_front_image'
+				&& media.evidence_kind === 'structured_direct')
+				|| (search
+					&& media.confidence_band === 'unverified'
+					&& media.reason_code === 'unverified_search_result'
+					&& media.evidence_kind === 'search'))
+			&& validTimestamp(media.retrieved_at);
+	}
+
+	function validContract(data, requestedGtin)
+	{
+		var barcodeKeys = data && data.barcode && typeof data.barcode === 'object' && !Array.isArray(data.barcode)
+			? Object.keys(data.barcode).sort().join('|')
+			: '';
+		var requiredBarcodeKeys = ['scanned_gtin', 'canonical_gtin', 'equivalents_checked', 'status', 'owner_product_id'].sort().join('|');
+		var extendedBarcodeKeys = ['scanned_gtin', 'canonical_gtin', 'equivalents_checked', 'status', 'owner_product_id', 'owner_label'].sort().join('|');
+		if (!hasExactKeys(data, ['contract_version', 'outcome', 'barcode', 'suggestions', 'media', 'warnings', 'diagnostics'])
+			|| data.contract_version !== 2
+			|| ['found', 'not_found', 'timeout', 'provider_error'].indexOf(data.outcome) === -1
+			|| [requiredBarcodeKeys, extendedBarcodeKeys].indexOf(barcodeKeys) === -1
+			|| data.barcode.scanned_gtin !== requestedGtin
+			|| !/^\d{14}$/.test(data.barcode.canonical_gtin)
+			|| data.barcode.canonical_gtin !== requestedGtin.padStart(14, '0')
+			|| !Array.isArray(data.barcode.equivalents_checked) || data.barcode.equivalents_checked.length < 1 || data.barcode.equivalents_checked.length > 4
+			|| data.barcode.equivalents_checked.some(function (value) { return typeof value !== 'string' || [8, 12, 13, 14].indexOf(value.length) === -1 || !/^\d+$/.test(value); })
+			|| data.barcode.equivalents_checked.indexOf(requestedGtin) === -1
+			|| data.barcode.equivalents_checked.indexOf(data.barcode.canonical_gtin) === -1
+			|| ['unused', 'owned_current', 'owned_other'].indexOf(data.barcode.status) === -1
+			|| (data.barcode.status === 'unused' && data.barcode.owner_product_id !== null)
+			|| (data.barcode.status !== 'unused' && (!Number.isInteger(data.barcode.owner_product_id) || data.barcode.owner_product_id <= 0))
+			|| (data.barcode.status !== 'unused' && (!Array.isArray(data.suggestions) || !Array.isArray(data.media) || data.suggestions.length !== 0 || data.media.length !== 0))
+			|| (Object.prototype.hasOwnProperty.call(data.barcode, 'owner_label')
+				&& data.barcode.owner_label !== null
+				&& (typeof data.barcode.owner_label !== 'string' || data.barcode.owner_label.length > 120 || /https?:\/\//i.test(data.barcode.owner_label)))
+			|| !Array.isArray(data.suggestions) || !Array.isArray(data.media) || !Array.isArray(data.warnings)
+			|| !hasExactKeys(data.diagnostics, ['trace_id']) || !TRACE_ID_PATTERN.test(data.diagnostics.trace_id))
 		{
-			feedback('This image cannot be selected. Run the search again.', true);
-			return;
+			return false;
 		}
-		button.disabled = true;
-		button.textContent = 'Downloading…';
-		var xhr = new XMLHttpRequest();
-		xhr.open('GET', U('/api/grocy-ai/images/' + encodeURIComponent(candidate.download_token)), true);
-		xhr.responseType = 'blob';
-		xhr.onload = function ()
+		if (/https?:\/\//i.test(JSON.stringify(data))) return false;
+		var ids = {};
+		var fields = {};
+		var suggestionsValid = data.suggestions.every(function (suggestion)
 		{
-			button.disabled = false;
-			button.textContent = 'Use as product picture';
-			if (xhr.status !== 200 || !xhr.response || !xhr.response.type.startsWith('image/'))
-			{
-				feedback('The selected image could not be downloaded. Search again or choose another candidate.', true);
-				return;
-			}
-			try
-			{
-				var fileName = 'grocy-ai-' + gtin + '.' + imageFileExtension(xhr.response.type);
-				var file = new File([xhr.response], fileName, { type: xhr.response.type });
-				var transfer = new DataTransfer();
-				transfer.items.add(file);
-				productPictureInput.files = transfer.files;
-				productPictureInput.dispatchEvent(new Event('change', { bubbles: true }));
-				var pictureLabel = document.getElementById('product-picture-label');
-				if (pictureLabel) pictureLabel.textContent = fileName;
-				results.querySelectorAll('.grocy-ai-image-candidate-selected').forEach(function (selected)
-				{
-					selected.classList.remove('grocy-ai-image-candidate-selected');
-				});
-				card.classList.add('grocy-ai-image-candidate-selected');
-				feedback('Product picture selected. It will be uploaded only when you save the product.', false);
-			}
-			catch (error)
-			{
-				feedback('This browser cannot attach the downloaded image to the form. Open the original image and upload it manually.', true);
-			}
-		};
-		xhr.onerror = function ()
+			if (!validSuggestion(suggestion) || ids[suggestion.id] || fields[suggestion.field]) return false;
+			ids[suggestion.id] = true;
+			fields[suggestion.field] = true;
+			return true;
+		});
+		var searchMediaSeen = false;
+		var mediaValid = data.media.every(function (media)
 		{
-			button.disabled = false;
-			button.textContent = 'Use as product picture';
-			feedback('The image download was interrupted.', true);
-		};
-		xhr.send();
+			if (!validMedia(media) || ids[media.id]) return false;
+			if (media.kind === 'front_package' && searchMediaSeen) return false;
+			if (media.kind === 'search_alternative') searchMediaSeen = true;
+			ids[media.id] = true;
+			return true;
+		});
+		var warningsValid = data.warnings.every(function (warning)
+		{
+			return ['image_search_unavailable', 'no_structured_record', 'no_media', 'provider_timeout', 'provider_error'].indexOf(warning) !== -1;
+		});
+		return suggestionsValid && mediaValid && warningsValid;
 	}
 
-	function safeCandidateUrl(value)
+	function reasonLabel(reasonCode)
 	{
+		return translated({
+			canonical_structured_match: 'Exact canonical barcode match',
+			mapped_local_option: 'Mapped to a Grocy option',
+			inferred_provider_data: 'Inferred from provider data',
+			unverified_search_result: 'Unverified search result',
+			canonical_structured_front_image: 'Front package image'
+		}[reasonCode] || '');
+	}
+
+	function confidenceLabel(confidenceBand)
+	{
+		return translated(confidenceBand.charAt(0).toUpperCase() + confidenceBand.slice(1) + ' confidence');
+	}
+
+	function deepFreeze(value)
+	{
+		if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value;
+		Object.keys(value).forEach(function (key) { deepFreeze(value[key]); });
+		return Object.freeze(value);
+	}
+
+	function activeOption(control, id, label)
+	{
+		if (!control) return null;
+		return Array.from(control.options).find(function (option)
+		{
+			return option.value === String(id) && !option.disabled && option.textContent.trim() === label;
+		}) || null;
+	}
+
+	function brandControl(suggestion)
+	{
+		if (!suggestion.target || suggestion.target.kind !== 'userfield'
+			|| String(suggestion.target.id) !== root.dataset.brandTargetId
+			|| root.dataset.brandTargetName !== 'products.brand') return null;
+		var matches = Array.from(document.querySelectorAll('.userfield-input')).filter(function (control)
+		{
+			return control.dataset.userfieldName === root.dataset.brandTargetName && control.type === 'text';
+		});
+		return matches.length === 1 ? matches[0] : null;
+	}
+
+	function targetAdapter(suggestion)
+	{
+		var control = null;
+		var unavailable = '';
+		var stagedValue = suggestion.value;
+		if (suggestion.field === 'name' && suggestion.target === null)
+		{
+			control = productNameInput;
+		}
+		else if (suggestion.field === 'brand')
+		{
+			control = brandControl(suggestion);
+			unavailable = localized('noFieldMessage', 'No matching Grocy field is configured.');
+		}
+		else if (suggestion.field === 'package_size')
+		{
+			unavailable = localized('noFieldMessage', 'No matching Grocy field is configured.');
+		}
+		else if (suggestion.field === 'product_group')
+		{
+			control = document.getElementById('product_group_id');
+			if (!suggestion.target || suggestion.target.kind !== 'product_group'
+				|| !activeOption(control, suggestion.target.id, suggestion.display_value)) control = null;
+			stagedValue = suggestion.target ? String(suggestion.target.id) : '';
+			unavailable = localized('noOptionMessage', 'No matching Grocy option is available.');
+		}
+		else if (suggestion.field === 'quantity_unit')
+		{
+			control = document.getElementById('qu_id_stock');
+			if (!suggestion.target || suggestion.target.kind !== 'quantity_unit'
+				|| !activeOption(control, suggestion.target.id, suggestion.display_value)) control = null;
+			stagedValue = suggestion.target ? String(suggestion.target.id) : '';
+			unavailable = localized('noOptionMessage', 'No matching Grocy option is available.');
+		}
+		else if (suggestion.field === 'food_type')
+		{
+			unavailable = localized('noFoodTypeMessage', 'No local food type is configured.');
+		}
+
+		return {
+			control: control,
+			available: Boolean(control),
+			stagedValue: stagedValue,
+			unavailable: control ? '' : unavailable
+		};
+	}
+
+	function currentDisplay(row, value)
+	{
+		if (row.field === 'product_image') return value || translated('No picture');
+		if (value === '') return localized('blankLabel', 'Blank');
+		if (row.control && row.control.tagName === 'SELECT')
+		{
+			var option = row.control.options[row.control.selectedIndex];
+			return option ? option.textContent.trim() : value;
+		}
+		return value;
+	}
+
+	function trustedProductHref(productId)
+	{
+		if (!Number.isInteger(productId) || productId <= 0) return null;
+		var template = root.dataset.productRouteTemplate || '';
+		if (template.indexOf('__PRODUCT_ID__') === -1) return null;
 		try
 		{
-			var url = new URL(value, window.location.origin);
-			if (url.protocol === 'http:' || url.protocol === 'https:') return url.href;
+			var target = new URL(template.replace('__PRODUCT_ID__', String(productId)), window.location.origin);
+			if (target.origin !== window.location.origin) return null;
+			return target.pathname + target.search + target.hash;
 		}
 		catch (error)
 		{
-			// Invalid provider URLs are omitted from the preview.
+			return null;
 		}
-		return null;
 	}
 
-	function renderPreview(data)
+	function appendOutcomeText(message, className)
 	{
-		results.replaceChildren();
-		var product = data.product && typeof data.product === 'object' ? data.product : {};
-		var summary = document.createElement('div');
-		summary.className = 'grocy-ai-summary mb-3';
-		summary.appendChild(textElement('strong', '', typeof product.name === 'string' && product.name ? product.name : 'Unnamed product'));
-		if (typeof product.brand === 'string' && product.brand) summary.appendChild(textElement('span', '', 'Brand: ' + product.brand));
-		if (typeof product.size === 'string' && product.size) summary.appendChild(textElement('span', '', 'Size: ' + product.size));
-		if (Array.isArray(data.sources) && data.sources.length > 0)
-		{
-			var sources = data.sources.filter(function (source) { return typeof source === 'string' && /^[a-z0-9_-]{1,40}$/i.test(source); }).slice(0, 4);
-			if (sources.length > 0) summary.appendChild(textElement('small', 'text-muted', 'Sources: ' + sources.join(', ')));
-		}
-		if (typeof product.name === 'string' && product.name)
-		{
-			var applyNameButton = textElement('button', 'btn btn-sm btn-outline-primary mt-2 align-self-start', 'Apply suggested name');
-			applyNameButton.type = 'button';
-			applyNameButton.addEventListener('click', function () { applySuggestedName(product.name); });
-			summary.appendChild(applyNameButton);
-		}
-		results.appendChild(summary);
+		barcodeUi.outcome.appendChild(textElement('span', className || '', message));
+	}
 
-		var images = Array.isArray(data.images) ? data.images.slice(0, 6) : [];
-		var safeImages = images.map(function (candidate)
+	function renderBarcodeOwnership(barcode)
+	{
+		barcodeUi.scanned.textContent = barcode.scanned_gtin;
+		barcodeUi.equivalents.textContent = barcode.equivalents_checked.join(', ');
+		barcodeUi.outcome.replaceChildren();
+		barcodeUi.ownerLink.removeAttribute('href');
+		barcodeUi.ownerLink.classList.add('d-none');
+		barcodeUi.removeButton.classList.add('d-none');
+		reviewState.stagedBarcode = null;
+
+		if (barcode.status === 'unused')
 		{
-			return candidate && typeof candidate === 'object' ? {
-				safeUrl: safeCandidateUrl(candidate.url),
-				download_token: typeof candidate.download_token === 'string' ? candidate.download_token : '',
-				source: typeof candidate.source === 'string' && /^[a-z0-9_-]{1,40}$/i.test(candidate.source) ? candidate.source : 'Unknown source'
-			} : null;
-		}).filter(function (candidate) { return candidate && candidate.safeUrl !== null; });
-		if (safeImages.length > 0)
+			reviewState.stagedBarcode = barcode.scanned_gtin;
+			appendOutcomeText(localized('unusedBarcodeMessage', 'This barcode is not assigned in Grocy.'), 'grocy-ai-barcode-message');
+			appendOutcomeText(localized('stagedBarcodeLabel', 'Ready to add on Save'), 'badge badge-success grocy-ai-barcode-badge');
+			barcodeUi.removeButton.classList.remove('d-none');
+		}
+		else if (barcode.status === 'owned_current')
 		{
-			results.appendChild(textElement('h5', '', 'Real image candidates'));
-			var imageGrid = document.createElement('div');
-			imageGrid.className = 'grocy-ai-images';
-			safeImages.forEach(function (candidate)
-			{
-				var card = document.createElement('div');
-				card.className = 'grocy-ai-image-candidate img-thumbnail';
-				var originalLink = document.createElement('a');
-				originalLink.href = candidate.safeUrl;
-				originalLink.target = '_blank';
-				originalLink.rel = 'noopener noreferrer';
-				var image = document.createElement('img');
-				image.src = candidate.safeUrl;
-				image.alt = typeof product.name === 'string' && product.name ? product.name + ' package candidate' : 'Product package candidate';
-				image.loading = 'lazy';
-				image.referrerPolicy = 'no-referrer';
-				originalLink.appendChild(image);
-				card.appendChild(originalLink);
-				card.appendChild(textElement('small', 'grocy-ai-image-source text-muted', candidate.source));
-				var useButton = textElement('button', 'btn btn-sm btn-primary mt-auto', 'Use as product picture');
-				useButton.type = 'button';
-				useButton.disabled = !candidate.download_token;
-				useButton.addEventListener('click', function () { useSelectedImage(candidate, card, useButton, data.upc); });
-				card.appendChild(useButton);
-				imageGrid.appendChild(card);
-			});
-			results.appendChild(imageGrid);
+			appendOutcomeText(localized('ownedCurrentMessage', 'This barcode is already attached to this product.'), 'grocy-ai-barcode-message');
 		}
 		else
 		{
-			results.appendChild(textElement('div', 'alert alert-secondary mb-0', 'Product metadata was found, but no safe image candidates were returned.'));
+			appendOutcomeText(localized('ownedOtherMessage', 'This barcode already belongs to an existing product.'), 'grocy-ai-barcode-message');
+			if (barcode.owner_label)
+			{
+				appendOutcomeText(barcode.owner_label, 'grocy-ai-owner-label');
+			}
+			var href = trustedProductHref(barcode.owner_product_id);
+			if (href)
+			{
+				barcodeUi.ownerLink.href = href;
+				barcodeUi.ownerLink.classList.remove('d-none');
+			}
 		}
+	}
+
+	function selectionCount()
+	{
+		if (!reviewState) return 0;
+		var fieldCount = Object.keys(reviewState.rows).filter(function (field) { return reviewState.rows[field].selected; }).length;
+		return fieldCount + (reviewState.stagedBarcode ? 1 : 0);
+	}
+
+	function updateSelectionSummary()
+	{
+		var count = selectionCount();
+		reviewUi.selectionStatus.textContent = localized('selectionSummary', '%s changes selected').replace('%s', String(count));
+		reviewUi.reviewButton.disabled = count === 0;
+	}
+
+	function hideFinalDiff()
+	{
+		if (!reviewState) return;
+		reviewState.finalDiffVisible = false;
+		reviewUi.diff.classList.add('d-none');
+		reviewUi.diffList.replaceChildren();
+	}
+
+	function renderProvenance(container, suggestion)
+	{
+		container.appendChild(textElement('span', 'grocy-ai-source', suggestion.source.label));
+		container.appendChild(textElement('span', 'grocy-ai-confidence badge badge-' + (suggestion.confidence_band === 'high' ? 'success' : 'secondary'), confidenceLabel(suggestion.confidence_band)));
+		container.appendChild(textElement('span', 'grocy-ai-reason', reasonLabel(suggestion.reason_code)));
+		container.appendChild(textElement('span', 'grocy-ai-freshness', translated('Retrieved') + ' ' + new Date(suggestion.retrieved_at).toLocaleString()));
+		container.appendChild(textElement('span', 'grocy-ai-freshness', suggestion.source_updated_at === null
+			? localized('sourceUpdateUnavailable', 'Source update time unavailable')
+			: translated('Source updated') + ' ' + new Date(suggestion.source_updated_at).toLocaleString()));
+	}
+
+	function renderReviewRow(row)
+	{
+		var section = document.createElement('section');
+		section.className = 'grocy-ai-field-review';
+		section.dataset.grocyAiField = row.field;
+		var headingId = 'grocy-ai-' + row.field.replace(/_/g, '-') + '-heading';
+		var currentId = headingId + '-current';
+		var suggestedId = headingId + '-suggested';
+		var provenanceId = headingId + '-provenance';
+		var header = document.createElement('div');
+		header.className = 'grocy-ai-field-header';
+		var heading = textElement('h6', '', translated(FIELD_LABELS[row.field]));
+		heading.id = headingId;
+		header.appendChild(heading);
+		var selectionWrapper = document.createElement('div');
+		selectionWrapper.className = 'custom-control custom-checkbox grocy-ai-selection-control';
+		var selection = document.createElement('input');
+		selection.type = 'checkbox';
+		selection.className = 'custom-control-input';
+		selection.id = 'grocy-ai-use-' + row.field.replace(/_/g, '-');
+		selection.checked = row.selected;
+		selection.disabled = !row.available;
+		selection.setAttribute('aria-labelledby', headingId + ' ' + selection.id + '-label');
+		selection.setAttribute('aria-describedby', currentId + ' ' + suggestedId + ' ' + provenanceId);
+		selectionWrapper.appendChild(selection);
+		var selectionLabel = textElement('label', 'custom-control-label', localized('selectionLabel', 'Use suggested value'));
+		selectionLabel.id = selection.id + '-label';
+		selectionLabel.htmlFor = selection.id;
+		selectionWrapper.appendChild(selectionLabel);
+		header.appendChild(selectionWrapper);
+		section.appendChild(header);
+
+		var comparison = document.createElement('div');
+		comparison.className = 'grocy-ai-comparison-grid';
+		var current = document.createElement('div');
+		current.className = 'grocy-ai-value-cell grocy-ai-current-value';
+		current.id = currentId;
+		current.appendChild(textElement('strong', '', localized('currentLabel', 'Current')));
+		var currentValue = textElement('span', 'grocy-ai-value', currentDisplay(row, row.currentSnapshot));
+		current.appendChild(currentValue);
+		var suggested = document.createElement('div');
+		suggested.className = 'grocy-ai-value-cell grocy-ai-suggested-value';
+		suggested.id = suggestedId;
+		suggested.appendChild(textElement('strong', '', localized('suggestedLabel', 'Suggested')));
+		suggested.appendChild(textElement('span', 'grocy-ai-value', row.suggestion.display_value));
+		var provenance = document.createElement('div');
+		provenance.className = 'grocy-ai-provenance';
+		provenance.id = provenanceId;
+		renderProvenance(provenance, row.suggestion);
+		suggested.appendChild(provenance);
+		comparison.appendChild(current);
+		comparison.appendChild(suggested);
+		section.appendChild(comparison);
+
+		var origin = textElement('div', 'grocy-ai-selection-origin', row.origin === 'automatic' ? localized('automaticOrigin', 'Preselected — blank field and exact structured match') : '');
+		section.appendChild(origin);
+		var unavailable = textElement('div', 'grocy-ai-unavailable text-muted', row.unavailable);
+		if (!row.unavailable) unavailable.classList.add('d-none');
+		section.appendChild(unavailable);
+		var stale = textElement('div', 'grocy-ai-stale alert alert-warning d-none', '');
+		stale.setAttribute('role', 'alert');
+		section.appendChild(stale);
+
+		row.element = section;
+		row.checkbox = selection;
+		row.currentValueElement = currentValue;
+		row.originElement = origin;
+		row.staleElement = stale;
+		selection.addEventListener('change', function ()
+		{
+			row.selected = selection.checked;
+			row.origin = selection.checked ? 'explicit' : null;
+			row.stale = false;
+			stale.textContent = '';
+			stale.classList.add('d-none');
+			origin.textContent = selection.checked ? localized('explicitOrigin', 'Selected by you') : '';
+			hideFinalDiff();
+			updateSelectionSummary();
+		});
+		reviewUi.rows.appendChild(section);
+	}
+
+	function mediaSuggestion(media)
+	{
+		return {
+			display_value: media.kind === 'front_package'
+				? localized('structuredImageHeading', 'Front package image')
+				: localized('searchImageHeading', 'Unverified search alternatives'),
+			source: media.source,
+			confidence_band: media.confidence_band,
+			reason_code: media.reason_code,
+			retrieved_at: media.retrieved_at,
+			source_updated_at: null
+		};
+	}
+
+	function mediaEvidenceRow(media)
+	{
+		return {
+			field: 'product_image',
+			suggestion: mediaSuggestion(media),
+			control: productPictureInput,
+			available: false,
+			unavailable: '',
+			stagedValue: '',
+			currentSnapshot: productPictureInput && productPictureInput.files && productPictureInput.files.length ? productPictureInput.files[0].name : '',
+			selected: false,
+			origin: null,
+			stale: false
+		};
+	}
+
+	function imageSignatureMatches(bytes, contentType)
+	{
+		if (contentType === 'image/png')
+		{
+			return bytes.length >= 8 && [137, 80, 78, 71, 13, 10, 26, 10].every(function (value, index) { return bytes[index] === value; });
+		}
+		if (contentType === 'image/jpeg') return bytes.length >= 3 && bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255;
+		if (contentType === 'image/webp')
+		{
+			return bytes.length >= 12
+				&& String.fromCharCode.apply(null, bytes.slice(0, 4)) === 'RIFF'
+				&& String.fromCharCode.apply(null, bytes.slice(8, 12)) === 'WEBP';
+		}
+		return false;
+	}
+
+	function validatedMediaBlob(response)
+	{
+		if (!response.ok)
+		{
+			var unavailable = new Error('media unavailable');
+			unavailable.expired = response.status === 404 || response.status === 410;
+			throw unavailable;
+		}
+		var contentType = (response.headers.get('Content-Type') || '').toLowerCase();
+		if (['image/jpeg', 'image/png', 'image/webp'].indexOf(contentType) === -1) throw new Error('media unavailable');
+		return response.blob().then(function (blob)
+		{
+			if (blob.size < 2000 || blob.size > 3000000 || blob.type !== contentType) throw new Error('media unavailable');
+			return blob.arrayBuffer().then(function (buffer)
+			{
+				if (!imageSignatureMatches(new Uint8Array(buffer), contentType)) throw new Error('media unavailable');
+				return blob;
+			});
+		});
+	}
+
+	function mediaRequest(candidate, variant)
+	{
+		var handle = candidate.media[variant + '_handle'];
+		var controller = new AbortController();
+		candidate.controllers.push(controller);
+		return fetch(U('/api/grocy-ai/images/' + variant + '/' + encodeURIComponent(handle)), {
+			method: 'GET',
+			credentials: 'same-origin',
+			cache: 'no-store',
+			headers: { Accept: 'image/png,image/jpeg,image/webp' },
+			signal: controller.signal
+		}).then(validatedMediaBlob).finally(function ()
+		{
+			candidate.controllers = candidate.controllers.filter(function (item) { return item !== controller; });
+		});
+	}
+
+	function setCandidateError(candidate, error)
+	{
+		candidate.error.textContent = error && error.expired
+			? localized('mediaExpired', 'This image preview expired. Search again to load it.')
+			: localized('mediaError', 'This image could not be loaded safely. Choose another image or continue without one.');
+		candidate.error.classList.remove('d-none');
+	}
+
+	function updateMediaSelectionUi()
+	{
+		if (!reviewState || !reviewState.mediaCandidates) return;
+		reviewState.mediaCandidates.forEach(function (candidate)
+		{
+			var selected = reviewState.rows.product_image
+				&& reviewState.rows.product_image.selected
+				&& reviewState.rows.product_image.candidate === candidate;
+			candidate.element.classList.toggle('grocy-ai-media-selected', Boolean(selected));
+			candidate.selectedText.classList.toggle('d-none', !selected);
+			candidate.removeButton.classList.toggle('d-none', !selected);
+		});
+	}
+
+	function selectMediaCandidate(candidate)
+	{
+		var state = reviewState;
+		candidate.selectButton.disabled = true;
+		candidate.error.classList.add('d-none');
+		mediaRequest(candidate, 'full').then(function (blob)
+		{
+			if (reviewState !== state || !candidate.element.isConnected) return;
+			var extension = { 'image/png': 'png', 'image/webp': 'webp', 'image/jpeg': 'jpg' }[blob.type];
+			var file = new File([blob], 'product-image.' + extension, { type: blob.type });
+			reviewState.rows.product_image = {
+				field: 'product_image',
+				suggestion: mediaSuggestion(candidate.media),
+				control: productPictureInput,
+				currentSnapshot: productPictureInput && productPictureInput.files && productPictureInput.files.length ? productPictureInput.files[0].name : '',
+				selected: true,
+				origin: 'explicit',
+				stale: false,
+				file: file,
+				candidate: candidate
+			};
+			hideFinalDiff();
+			updateMediaSelectionUi();
+			updateSelectionSummary();
+		}).catch(function (error)
+		{
+			if (error && error.name === 'AbortError') return;
+			if (reviewState === state && candidate.element.isConnected) setCandidateError(candidate, error);
+		}).finally(function ()
+		{
+			if (reviewState === state && candidate.element.isConnected) candidate.selectButton.disabled = false;
+		});
+	}
+
+	function removeMediaSelection(candidate)
+	{
+		if (!reviewState || !reviewState.rows.product_image || reviewState.rows.product_image.candidate !== candidate) return;
+		delete reviewState.rows.product_image;
+		hideFinalDiff();
+		updateMediaSelectionUi();
+		updateSelectionSummary();
+	}
+
+	function loadMediaThumbnail(candidate)
+	{
+		var state = reviewState;
+		candidate.loadButton.disabled = true;
+		candidate.loadButton.textContent = localized('thumbnailBusy', 'Loading thumbnail…');
+		candidate.error.classList.add('d-none');
+		mediaRequest(candidate, 'thumbnail').then(function (blob)
+		{
+			if (reviewState !== state || !candidate.element.isConnected) return;
+			if (candidate.objectUrl) URL.revokeObjectURL(candidate.objectUrl);
+			candidate.objectUrl = URL.createObjectURL(blob);
+			candidate.image.src = candidate.objectUrl;
+			candidate.image.classList.remove('d-none');
+			candidate.placeholder.classList.add('d-none');
+			candidate.loadButton.classList.add('d-none');
+			candidate.selectButton.classList.remove('d-none');
+		}).catch(function (error)
+		{
+			if (error && error.name === 'AbortError') return;
+			if (reviewState === state && candidate.element.isConnected) setCandidateError(candidate, error);
+		}).finally(function ()
+		{
+			if (reviewState === state && candidate.element.isConnected)
+			{
+				candidate.loadButton.disabled = false;
+				candidate.loadButton.textContent = localized('thumbnailAction', 'Load thumbnail');
+			}
+		});
+	}
+
+	function renderMediaCandidate(media, grid)
+	{
+		var element = document.createElement('article');
+		element.className = 'grocy-ai-media-candidate';
+		element.dataset.grocyAiMediaId = media.id;
+		var frame = document.createElement('div');
+		frame.className = 'grocy-ai-media-frame';
+		var placeholder = textElement('span', 'grocy-ai-media-placeholder', translated('Image not loaded'));
+		var image = document.createElement('img');
+		image.className = 'img-thumbnail d-none';
+		image.alt = (productNameInput.value || translated('Product')) + ' — ' + media.source.label + ' ' + translated('package candidate');
+		frame.appendChild(placeholder);
+		frame.appendChild(image);
+		element.appendChild(frame);
+		element.appendChild(textElement('span', 'grocy-ai-media-source', media.source.label));
+		if (media.kind === 'search_alternative')
+		{
+			element.appendChild(textElement('span', 'badge badge-secondary', translated('Unverified')));
+			element.appendChild(textElement('span', 'grocy-ai-media-evidence', translated('Search result')));
+		}
+		else
+		{
+			element.appendChild(textElement('span', 'badge badge-success', translated('High confidence')));
+		}
+		var loadButton = textElement('button', 'btn btn-outline-primary', localized('thumbnailAction', 'Load thumbnail'));
+		loadButton.type = 'button';
+		var selectButton = textElement('button', 'btn btn-primary d-none', localized('imageSelect', 'Select image'));
+		selectButton.type = 'button';
+		var selectedText = textElement('span', 'grocy-ai-media-selected-text d-none', localized('imageSelected', 'Selected'));
+		var removeButton = textElement('button', 'btn btn-outline-secondary d-none', localized('imageRemove', 'Remove selection'));
+		removeButton.type = 'button';
+		var error = textElement('div', 'grocy-ai-media-error alert alert-warning d-none', '');
+		error.setAttribute('role', 'alert');
+		element.appendChild(loadButton);
+		element.appendChild(selectButton);
+		element.appendChild(selectedText);
+		element.appendChild(removeButton);
+		element.appendChild(error);
+		var candidate = {
+			media: media,
+			element: element,
+			placeholder: placeholder,
+			image: image,
+			loadButton: loadButton,
+			selectButton: selectButton,
+			selectedText: selectedText,
+			removeButton: removeButton,
+			error: error,
+			objectUrl: null,
+			controllers: []
+		};
+		loadButton.addEventListener('click', function () { loadMediaThumbnail(candidate); });
+		selectButton.addEventListener('click', function () { selectMediaCandidate(candidate); });
+		removeButton.addEventListener('click', function () { removeMediaSelection(candidate); });
+		reviewState.mediaCandidates.push(candidate);
+		grid.appendChild(element);
+	}
+
+	function renderMedia(media)
+	{
+		if (!media.length) return;
+		mediaUi = ensureMediaUi();
+		mediaUi.section.classList.remove('d-none');
+		media.forEach(function (candidate)
+		{
+			var structured = candidate.kind === 'front_package';
+			var group = structured ? mediaUi.structuredGroup : mediaUi.searchGroup;
+			var grid = structured ? mediaUi.structuredGrid : mediaUi.searchGrid;
+			group.classList.remove('d-none');
+			renderMediaCandidate(candidate, grid);
+		});
+	}
+
+	function disposeMediaState(state)
+	{
+		if (!state || !state.mediaCandidates) return;
+		state.mediaCandidates.forEach(function (candidate)
+		{
+			candidate.controllers.forEach(function (controller) { controller.abort(); });
+			candidate.controllers = [];
+			if (candidate.objectUrl)
+			{
+				URL.revokeObjectURL(candidate.objectUrl);
+				candidate.objectUrl = null;
+			}
+		});
+	}
+
+	function renderReview(data)
+	{
+		clearResults();
+		var frozenData = deepFreeze(data);
+		reviewState = { data: frozenData, rows: {}, mediaCandidates: [], stagedBarcode: null, finalDiffVisible: false, staged: false };
+		renderBarcodeOwnership(frozenData.barcode);
+		frozenData.suggestions.forEach(function (suggestion)
+		{
+			if (reviewState.rows[suggestion.field])
+			{
+				clearResults();
+				return;
+			}
+			var adapter = targetAdapter(suggestion);
+			var currentValue = adapter.control ? adapter.control.value : '';
+			var automatic = adapter.available && currentValue === ''
+				&& suggestion.confidence_band === 'high'
+				&& suggestion.evidence_kind === 'structured_direct'
+				&& suggestion.reason_code === 'canonical_structured_match';
+			var row = {
+				field: suggestion.field,
+				suggestion: suggestion,
+				control: adapter.control,
+				available: adapter.available,
+				unavailable: adapter.unavailable,
+				stagedValue: adapter.stagedValue,
+				currentSnapshot: currentValue,
+				selected: automatic,
+				origin: automatic ? 'automatic' : null,
+				stale: false
+			};
+			reviewState.rows[row.field] = row;
+			renderReviewRow(row);
+		});
+		if (!reviewState) return false;
+		if (frozenData.media.length > 0)
+		{
+			var imageRow = mediaEvidenceRow(frozenData.media[0]);
+			reviewState.rows.product_image = imageRow;
+			renderReviewRow(imageRow);
+		}
+		renderMedia(frozenData.media);
+		updateSelectionSummary();
 		results.classList.remove('d-none');
+		return true;
+	}
+
+	function selectedRows()
+	{
+		return Object.keys(reviewState.rows).map(function (field) { return reviewState.rows[field]; }).filter(function (row) { return row.selected; });
+	}
+
+	function revalidateSelectedRows()
+	{
+		var firstStale = null;
+		selectedRows().forEach(function (row)
+		{
+			if (!row.control) return;
+			if (row.field === 'product_image')
+			{
+				var livePicture = row.control.files && row.control.files.length ? row.control.files[0].name : '';
+				if (livePicture === row.currentSnapshot) return;
+				row.currentSnapshot = livePicture;
+				row.selected = false;
+				row.origin = null;
+				row.stale = true;
+				row.candidate.error.textContent = localized('staleFieldMessage', 'This field changed after the search. Review it again before staging.');
+				row.candidate.error.classList.remove('d-none');
+				updateMediaSelectionUi();
+				if (!firstStale) firstStale = { checkbox: row.candidate.selectButton };
+				return;
+			}
+			var liveValue = row.control.value;
+			if (liveValue === row.currentSnapshot) return;
+			row.currentSnapshot = liveValue;
+			row.currentValueElement.textContent = currentDisplay(row, liveValue);
+			row.selected = false;
+			row.origin = null;
+			row.stale = true;
+			row.checkbox.checked = false;
+			row.originElement.textContent = '';
+			row.staleElement.textContent = localized('staleFieldMessage', 'This field changed after the search. Review it again before staging.');
+			row.staleElement.classList.remove('d-none');
+			if (!firstStale) firstStale = row;
+		});
+		updateSelectionSummary();
+		return firstStale;
+	}
+
+	function renderDiffList()
+	{
+		reviewUi.diffList.replaceChildren();
+		var rows = selectedRows();
+		if (reviewState.stagedBarcode)
+		{
+			var barcodeItem = document.createElement('section');
+			barcodeItem.className = 'grocy-ai-diff-item';
+			barcodeItem.dataset.grocyAiDiffField = 'barcode';
+			barcodeItem.appendChild(textElement('h6', '', translated('Barcode')));
+			var barcodeGrid = document.createElement('div');
+			barcodeGrid.className = 'grocy-ai-diff-grid';
+			var barcodeCurrent = document.createElement('div');
+			barcodeCurrent.className = 'grocy-ai-value-cell';
+			barcodeCurrent.appendChild(textElement('strong', '', localized('currentLabel', 'Current')));
+			barcodeCurrent.appendChild(textElement('span', 'grocy-ai-value', translated('Not attached')));
+			var barcodeSuggested = document.createElement('div');
+			barcodeSuggested.className = 'grocy-ai-value-cell';
+			barcodeSuggested.appendChild(textElement('strong', '', localized('suggestedLabel', 'Suggested')));
+			barcodeSuggested.appendChild(textElement('span', 'grocy-ai-value', reviewState.stagedBarcode));
+			barcodeGrid.appendChild(barcodeCurrent);
+			barcodeGrid.appendChild(barcodeSuggested);
+			barcodeItem.appendChild(barcodeGrid);
+			barcodeItem.appendChild(textElement('div', 'grocy-ai-diff-provenance', translated('Grocy ownership check') + ' · ' + localized('explicitOrigin', 'Selected by you')));
+			reviewUi.diffList.appendChild(barcodeItem);
+		}
+		if (rows.length === 0 && !reviewState.stagedBarcode)
+		{
+			var empty = document.createElement('div');
+			empty.className = 'alert alert-secondary';
+			empty.appendChild(textElement('h6', '', localized('emptySelectionHeading', 'No changes selected')));
+			empty.appendChild(textElement('span', '', localized('emptySelectionBody', 'Select one or more suggestions, or continue editing the product manually.')));
+			reviewUi.diffList.appendChild(empty);
+			return;
+		}
+		rows.forEach(function (row)
+		{
+			var item = document.createElement('section');
+			item.className = 'grocy-ai-diff-item';
+			item.dataset.grocyAiDiffField = row.field;
+			item.appendChild(textElement('h6', '', translated(FIELD_LABELS[row.field])));
+			var grid = document.createElement('div');
+			grid.className = 'grocy-ai-diff-grid';
+			var current = document.createElement('div');
+			current.className = 'grocy-ai-value-cell';
+			current.appendChild(textElement('strong', '', localized('currentLabel', 'Current')));
+			current.appendChild(textElement('span', 'grocy-ai-value', currentDisplay(row, row.currentSnapshot)));
+			var suggested = document.createElement('div');
+			suggested.className = 'grocy-ai-value-cell';
+			suggested.appendChild(textElement('strong', '', localized('suggestedLabel', 'Suggested')));
+			suggested.appendChild(textElement('span', 'grocy-ai-value', row.suggestion.display_value));
+			grid.appendChild(current);
+			grid.appendChild(suggested);
+			item.appendChild(grid);
+			item.appendChild(textElement('div', 'grocy-ai-diff-provenance', row.suggestion.source.label + ' · ' + (row.origin === 'automatic' ? translated('Preselected') : localized('explicitOrigin', 'Selected by you'))));
+			reviewUi.diffList.appendChild(item);
+		});
+	}
+
+	function openFinalDiff()
+	{
+		if (!reviewState || selectionCount() === 0) return;
+		var firstStale = revalidateSelectedRows();
+		renderDiffList();
+		reviewState.finalDiffVisible = true;
+		reviewUi.diff.classList.remove('d-none');
+		if (firstStale) firstStale.checkbox.focus();
+		else reviewUi.diffHeading.focus();
+	}
+
+	function backToSuggestions()
+	{
+		hideFinalDiff();
+		reviewUi.reviewButton.focus();
+	}
+
+	function stageSelectedRows()
+	{
+		if (!reviewState) return;
+		var firstStale = revalidateSelectedRows();
+		renderDiffList();
+		if (firstStale)
+		{
+			firstStale.checkbox.focus();
+			return;
+		}
+		selectedRows().forEach(function (row)
+		{
+			if (!row.control) return;
+			if (row.field === 'product_image')
+			{
+				var transfer = new DataTransfer();
+				transfer.items.add(row.file);
+				row.control.files = transfer.files;
+				row.control.dispatchEvent(new Event('change', { bubbles: true }));
+				row.currentSnapshot = row.file.name;
+				return;
+			}
+			row.control.value = row.stagedValue;
+			row.control.dispatchEvent(new Event('input', { bubbles: true }));
+			row.control.dispatchEvent(new Event('change', { bubbles: true }));
+			row.currentSnapshot = row.stagedValue;
+		});
+		reviewState.staged = true;
+		reviewUi.stagingFeedback.textContent = localized('stagingSuccess', "Selected changes are staged in the form. Review the form, then use Grocy's Save button to save them.");
+		reviewUi.stagingFeedback.classList.remove('d-none');
+		updateSelectionSummary();
+	}
+
+	function removeStagedBarcode()
+	{
+		if (!reviewState || !reviewState.stagedBarcode) return;
+		reviewState.stagedBarcode = null;
+		barcodeUi.removeButton.classList.add('d-none');
+		barcodeUi.outcome.replaceChildren();
+		appendOutcomeText(localized('unusedBarcodeMessage', 'This barcode is not assigned in Grocy.'), 'grocy-ai-barcode-message');
+		hideFinalDiff();
+		updateSelectionSummary();
+	}
+
+	function getStagedBarcode()
+	{
+		return reviewState && typeof reviewState.stagedBarcode === 'string'
+			? reviewState.stagedBarcode
+			: null;
+	}
+
+	function normalizedOwnership(data, barcode, productId)
+	{
+		var ownership = data && data.barcode && typeof data.barcode === 'object' ? data.barcode : data;
+		if (!ownership || ownership.scanned_gtin !== barcode
+			|| ownership.canonical_gtin !== barcode.padStart(14, '0')
+			|| ['unused', 'owned_current', 'owned_other'].indexOf(ownership.status) === -1
+			|| (ownership.status === 'unused' && ownership.owner_product_id !== null)
+			|| (ownership.status === 'owned_current' && ownership.owner_product_id !== productId)
+			|| (ownership.status === 'owned_other' && (!Number.isInteger(ownership.owner_product_id) || ownership.owner_product_id <= 0)))
+		{
+			throw attachmentError('ownership_invalid', null);
+		}
+		return ownership;
+	}
+
+	function attachmentError(code, ownership)
+	{
+		var error = new Error('Barcode attachment failed');
+		error.code = code;
+		error.ownership = ownership || null;
+		return error;
+	}
+
+	function resolveBarcodeOwnership(barcode, productId)
+	{
+		return new Promise(function (resolve, reject)
+		{
+			Grocy.Api.Get(
+				'grocy-ai/barcodes/resolve/' + encodeURIComponent(barcode) + '?current_product_id=' + encodeURIComponent(productId),
+				function (data)
+				{
+					try
+					{
+						resolve(normalizedOwnership(data, barcode, productId));
+					}
+					catch (error)
+					{
+						reject(error);
+					}
+				},
+				function () { reject(attachmentError('ownership_unavailable', null)); }
+			);
+		});
+	}
+
+	function postStagedBarcode(barcode, productId)
+	{
+		return new Promise(function (resolve, reject)
+		{
+			Grocy.Api.Post(
+				'objects/product_barcodes',
+				{ product_id: productId, barcode: barcode, amount: 1 },
+				resolve,
+				function () { reject(attachmentError('insert_failed', null)); }
+			);
+		});
+	}
+
+	function clearAttachmentError()
+	{
+		var existing = document.getElementById('grocy-ai-barcode-attachment-error');
+		if (existing) existing.remove();
+	}
+
+	function showAttachmentError(error)
+	{
+		clearAttachmentError();
+		var alert = document.createElement('div');
+		alert.id = 'grocy-ai-barcode-attachment-error';
+		alert.className = 'alert alert-danger mt-3';
+		alert.setAttribute('role', 'alert');
+		alert.appendChild(textElement('span', 'grocy-ai-barcode-attachment-message', localized(
+			'partialBarcodeError',
+			'The product was saved, but the barcode was not attached. Retry the barcode only; the product will not be created again.'
+		)));
+		if (!error || error.code !== 'owned_other')
+		{
+			var retry = textElement('button', 'btn btn-outline-primary', localized('barcodeRetry', 'Retry barcode attachment'));
+			retry.id = 'grocy-ai-retry-barcode-attachment';
+			retry.type = 'button';
+			retry.addEventListener('click', function () { retryBarcodeAttachment(); });
+			alert.appendChild(retry);
+		}
+		root.appendChild(alert);
+	}
+
+	function clearAttachedBarcode()
+	{
+		if (reviewState) reviewState.stagedBarcode = null;
+		if (barcodeUi.removeButton) barcodeUi.removeButton.classList.add('d-none');
+		hideFinalDiff();
+		updateSelectionSummary();
+		clearAttachmentError();
+	}
+
+	function handleResolvedOwner(ownership, barcode, productId)
+	{
+		if (ownership.status === 'owned_current')
+		{
+			return { status: 'owned_current', product_id: productId };
+		}
+		if (ownership.status === 'owned_other')
+		{
+			if (reviewState) reviewState.stagedBarcode = null;
+			var href = trustedProductHref(ownership.owner_product_id);
+			if (href)
+			{
+				barcodeUi.ownerLink.href = href;
+				barcodeUi.ownerLink.classList.remove('d-none');
+			}
+			throw attachmentError('owned_other', ownership);
+		}
+		return postStagedBarcode(barcode, productId).then(function ()
+		{
+			return { status: 'inserted', product_id: productId };
+		}).catch(function ()
+		{
+			return resolveBarcodeOwnership(barcode, productId).then(function (resolved)
+			{
+				if (resolved.status === 'owned_current') return { status: 'owned_current', product_id: productId };
+				if (resolved.status === 'owned_other')
+				{
+					var href = trustedProductHref(resolved.owner_product_id);
+					if (href)
+					{
+						barcodeUi.ownerLink.href = href;
+						barcodeUi.ownerLink.classList.remove('d-none');
+					}
+					throw attachmentError('owned_other', resolved);
+				}
+				throw attachmentError('insert_failed', null);
+			});
+		});
+	}
+
+	function attachStagedBarcode(productId)
+	{
+		if (!Number.isInteger(productId) || productId <= 0)
+		{
+			return Promise.reject(attachmentError('product_invalid', null));
+		}
+		var barcode = getStagedBarcode() || (attachmentState.completed ? attachmentState.barcode : null);
+		if (barcode === null)
+		{
+			return Promise.resolve({ status: 'nothing_staged', product_id: productId });
+		}
+		if (attachmentState.productId !== null
+			&& (attachmentState.productId !== productId || attachmentState.barcode !== barcode))
+		{
+			return Promise.reject(attachmentError('attachment_context_changed', null));
+		}
+		if (attachmentState.completed)
+		{
+			return Promise.resolve({ status: 'already_attached', product_id: productId });
+		}
+		if (attachmentState.pending) return attachmentState.pending;
+
+		attachmentState.productId = productId;
+		attachmentState.barcode = barcode;
+		clearAttachmentError();
+		attachmentState.pending = resolveBarcodeOwnership(barcode, productId)
+			.then(function (ownership) { return handleResolvedOwner(ownership, barcode, productId); })
+			.then(function (result)
+			{
+				attachmentState.completed = true;
+				clearAttachedBarcode();
+				return result;
+			})
+			.catch(function (error)
+			{
+				if (error && error.code === 'owned_other')
+				{
+					if (reviewState) reviewState.stagedBarcode = null;
+					barcodeUi.removeButton.classList.add('d-none');
+					hideFinalDiff();
+					updateSelectionSummary();
+				}
+				showAttachmentError(error);
+				throw error;
+			})
+			.finally(function () { attachmentState.pending = null; });
+		return attachmentState.pending;
+	}
+
+	function retryBarcodeAttachment(productId)
+	{
+		var trustedProductId = productId === undefined ? attachmentState.productId : productId;
+		if (attachmentState.barcode === null || attachmentState.completed)
+		{
+			return Promise.resolve({ status: 'nothing_staged', product_id: trustedProductId });
+		}
+		return attachStagedBarcode(trustedProductId);
 	}
 
 	function companionUnavailable(data)
@@ -604,6 +1638,15 @@
 		{
 			return stage && stage.name === 'grocy_companion'
 				&& (stage.status === 'unavailable' || stage.error_code === 'connection' || stage.error_code === 'not_configured');
+		});
+	}
+
+	function contractInvalidFailure(data)
+	{
+		var stages = data && data.diagnostics && Array.isArray(data.diagnostics.stages) ? data.diagnostics.stages : [];
+		return stages.some(function (stage)
+		{
+			return stage && stage.error_code === 'contract_invalid';
 		});
 	}
 
@@ -637,17 +1680,27 @@
 			terminal(request, 'companion_unavailable', null, false);
 			return;
 		}
-		var legacyOutcome = data.found === true ? 'success' : 'not_found';
-		var outcome = allowed(data.outcome, ['success', 'partial_image', 'not_found', 'timeout', 'provider_error'], legacyOutcome);
-		if (outcome === 'success' && data.found === true)
+		if (contractInvalidFailure(data))
 		{
-			renderPreview(data);
-			terminal(request, 'success', data, false);
+			clearResults();
+			terminal(request, 'contract_invalid', data, false);
+			return;
 		}
-		else if (outcome === 'partial_image' && data.found === true)
+		if (request.xhr.status >= 200 && request.xhr.status < 300 && !validContract(data, request.gtin))
 		{
-			renderPreview(data);
-			terminal(request, 'partial_image', data, false);
+			clearResults();
+			terminal(request, 'contract_invalid', data, false);
+			return;
+		}
+		var outcome = allowed(data.outcome, ['found', 'not_found', 'timeout', 'provider_error'], 'provider_error');
+		if (outcome === 'found')
+		{
+			if (!renderReview(data))
+			{
+				terminal(request, 'contract_invalid', data, false);
+				return;
+			}
+			terminal(request, 'success', data, false);
 		}
 		else if (outcome === 'not_found') terminal(request, 'not_found', data, false);
 		else if (outcome === 'timeout') terminal(request, 'timeout', data, true);
@@ -684,7 +1737,12 @@
 			deadlineTimer: null
 		};
 		activeRequest = request;
-		xhr.open('GET', U('/api/grocy-ai/products/enrich/upc/' + encodeURIComponent(request.gtin)), true);
+		var endpoint = '/api/grocy-ai/products/enrich/upc/' + encodeURIComponent(request.gtin);
+		if (/^[1-9][0-9]{0,9}$/.test(root.dataset.currentProductId || ''))
+		{
+			endpoint += '?current_product_id=' + encodeURIComponent(root.dataset.currentProductId);
+		}
+		xhr.open('GET', U(endpoint), true);
 		xhr.timeout = REQUEST_DEADLINE_MS;
 		xhr.setRequestHeader('traceparent', request.traceparent);
 		xhr.onload = function () { if (isCurrent(request)) handleResponse(request); };
@@ -712,11 +1770,10 @@
 
 	function lifecycleCancel(reason)
 	{
-		if (!activeRequest) return;
-		invalidateActiveRequest(reason);
+		if (activeRequest) invalidateActiveRequest(reason);
 		clearResults();
 		hideDiagnostics();
-		renderState('ready');
+		if (validateGtin(upcInput.value).valid) renderState('ready');
 	}
 
 	function showCameraUnavailable()
@@ -801,7 +1858,16 @@
 		});
 	}
 
+	window.GrocyAI = window.GrocyAI || {};
+	window.GrocyAI.GetStagedBarcode = getStagedBarcode;
+	window.GrocyAI.AttachStagedBarcode = attachStagedBarcode;
+	window.GrocyAI.RetryBarcodeAttachment = retryBarcodeAttachment;
+
 	searchButton.addEventListener('click', function () { search('search'); });
+	if (reviewUi.reviewButton) reviewUi.reviewButton.addEventListener('click', openFinalDiff);
+	if (reviewUi.backButton) reviewUi.backButton.addEventListener('click', backToSuggestions);
+	if (reviewUi.stageButton) reviewUi.stageButton.addEventListener('click', stageSelectedRows);
+	if (barcodeUi.removeButton) barcodeUi.removeButton.addEventListener('click', removeStagedBarcode);
 	ui.retryButton.addEventListener('click', function () { search('retry'); });
 	cancelButton.addEventListener('click', cancelSearch);
 	ui.copyButton.addEventListener('click', copyDiagnostic);
