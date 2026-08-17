@@ -174,7 +174,7 @@ Plans:
 
 **Wave 19** *(blocked on Wave 18 completion)*
 
-- [ ] 02-19-PLAN.md — Reapply the stable adapter, replace manifest provenance, and replay release gates.
+- [x] 02-19-PLAN.md — Reapply the stable adapter, replace manifest provenance, and replay release gates.
 
 **Wave 20** *(blocked on Wave 19 completion)*
 
