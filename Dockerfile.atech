@@ -7,7 +7,18 @@ COPY config-dist.php routes.php /app/www/
 COPY custom/grocy_AI/version.json /app/www/version.json
 COPY migrations/0256.php /app/www/migrations/0256.php
 COPY public/viewjs/productform.js /app/www/public/viewjs/productform.js
+COPY public/viewjs/components/productamountpicker.js /app/www/public/viewjs/components/productamountpicker.js
 COPY views/productform.blade.php /app/www/views/productform.blade.php
+COPY views/consume.blade.php /app/www/views/consume.blade.php
+COPY views/inventory.blade.php /app/www/views/inventory.blade.php
+COPY views/mealplan.blade.php /app/www/views/mealplan.blade.php
+COPY views/productbarcodeform.blade.php /app/www/views/productbarcodeform.blade.php
+COPY views/purchase.blade.php /app/www/views/purchase.blade.php
+COPY views/recipeform.blade.php /app/www/views/recipeform.blade.php
+COPY views/recipeposform.blade.php /app/www/views/recipeposform.blade.php
+COPY views/recipes.blade.php /app/www/views/recipes.blade.php
+COPY views/shoppinglistitemform.blade.php /app/www/views/shoppinglistitemform.blade.php
+COPY views/transfer.blade.php /app/www/views/transfer.blade.php
 COPY custom/grocy_AI /app/www/custom/grocy_AI
 COPY public/custom/grocy_AI /app/www/public/custom/grocy_AI
 

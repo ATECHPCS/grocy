@@ -9,7 +9,7 @@
 @section('content')
 <script>
 	Grocy.QuantityUnits = {!! json_encode($quantityUnits) !!};
-	Grocy.QuantityUnitConversionsResolved = {!! json_encode($quantityUnitConversionsResolved) !!};
+	Grocy.QuantityUnitConversionsResolved = {};
 </script>
 
 <div class="row">

@@ -9,7 +9,7 @@
 @section('content')
 <script>
 	Grocy.QuantityUnits = {!! json_encode($quantityUnits) !!};
-	Grocy.QuantityUnitConversionsResolved = {!! json_encode($quantityUnitConversionsResolved) !!};
+	Grocy.QuantityUnitConversionsResolved = {};
 	Grocy.DefaultMinAmount = '{{ $DEFAULT_MIN_AMOUNT }}';
 </script>
 

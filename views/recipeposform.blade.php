@@ -31,7 +31,7 @@
 			Grocy.EditObjectParentId = {{ $recipe->id }};
 			Grocy.EditObject = {!! json_encode($recipePos) !!};
 			Grocy.QuantityUnits = {!! json_encode($quantityUnits) !!};
-			Grocy.QuantityUnitConversionsResolved = {!! json_encode($quantityUnitConversionsResolved) !!};
+			Grocy.QuantityUnitConversionsResolved = {};
 		</script>
 
 		@if($mode == 'edit')

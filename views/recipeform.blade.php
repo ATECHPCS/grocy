@@ -16,7 +16,7 @@
 		<script>
 			Grocy.EditMode = '{{ $mode }}';
 			Grocy.QuantityUnits = {!! json_encode($quantityunits) !!};
-			Grocy.QuantityUnitConversionsResolved = {!! json_encode($quantityUnitConversionsResolved) !!};
+			Grocy.QuantityUnitConversionsResolved = {};
 		</script>
 
 		@if($mode == 'edit')

@@ -111,6 +111,20 @@ class GrocyAiApiController extends BaseApiController
 		}
 	}
 
+	public function QuantityUnitConversions(Request $request, Response $response, array $args): Response
+	{
+		$productId = filter_var($args['productId'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+		if ($productId === false || $this->getDatabase()->products($productId) === null)
+		{
+			return $this->GenericErrorResponse($response, 'Product not found', 404);
+		}
+
+		return $this->ApiResponse(
+			$response,
+			$this->getDatabase()->cache__quantity_unit_conversions_resolved()->where('product_id', $productId)->fetchAll()
+		);
+	}
+
 	public function FetchImage(Request $request, Response $response, array $args): Response
 	{
 		User::CheckPermission($request, User::PERMISSION_MASTER_DATA_EDIT);
