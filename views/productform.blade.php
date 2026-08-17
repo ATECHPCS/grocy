@@ -4,7 +4,7 @@
 
 @if(GROCY_FEATURE_FLAG_GROCY_AI)
 @php
-$grocyAiAssetVersion = '1.0.1';
+$grocyAiAssetVersion = '2.4.1';
 @endphp
 @push('pageStyles')
 <link rel="stylesheet"
@@ -925,6 +925,7 @@ $grocyAiAssetVersion = '1.0.1';
 		@if(GROCY_FEATURE_FLAG_GROCY_AI)
 		@php
 		$grocyAiBarcode = '';
+		$grocyAiBrandTargets = [];
 		if ($mode === 'edit')
 		{
 			foreach ($barcodes as $grocyAiProductBarcode)
@@ -936,9 +937,62 @@ $grocyAiAssetVersion = '1.0.1';
 				}
 			}
 		}
+		foreach ($userfields as $grocyAiUserfield)
+		{
+			if ($grocyAiUserfield->name === 'products.brand' && $grocyAiUserfield->type === 'text-single-line')
+			{
+				$grocyAiBrandTargets[] = $grocyAiUserfield;
+			}
+		}
+		$grocyAiBrandTarget = count($grocyAiBrandTargets) === 1 ? $grocyAiBrandTargets[0] : null;
 		@endphp
 		<div class="row @if($mode == 'edit') mt-5 @endif permission-MASTER_DATA_EDIT"
 			id="grocy-ai-product-enrichment"
+			data-current-product-id="@if($mode === 'edit'){{ $product->id }}@endif"
+			data-product-route-template="{{ $U('/product/__PRODUCT_ID__') }}"
+			data-brand-target-id="@if($grocyAiBrandTarget !== null){{ $grocyAiBrandTarget->id }}@endif"
+			data-brand-target-name="@if($grocyAiBrandTarget !== null){{ $grocyAiBrandTarget->name }}@endif"
+			data-brand-target-label="@if($grocyAiBrandTarget !== null){{ $grocyAiBrandTarget->caption }}@endif"
+			data-package-size-target-available="false"
+			data-food-type-target-available="false"
+			data-contract-error="{{ $__t('Suggestions could not be verified. Retry the search, or continue editing manually. Nothing was changed.') }}"
+			data-review-heading="{{ $__t('Review suggested fields') }}"
+			data-current-label="{{ $__t('Current') }}"
+			data-suggested-label="{{ $__t('Suggested') }}"
+			data-blank-label="{{ $__t('Blank') }}"
+			data-selection-label="{{ $__t('Use suggested value') }}"
+			data-automatic-origin="{{ $__t('Preselected — blank field and exact structured match') }}"
+			data-explicit-origin="{{ $__t('Selected by you') }}"
+			data-no-field-message="{{ $__t('No matching Grocy field is configured.') }}"
+			data-no-option-message="{{ $__t('No matching Grocy option is available.') }}"
+			data-no-food-type-message="{{ $__t('No local food type is configured.') }}"
+			data-source-update-unavailable="{{ $__t('Source update time unavailable') }}"
+			data-image-section-heading="{{ $__t('Choose a product image') }}"
+			data-structured-image-heading="{{ $__t('Front package image') }}"
+			data-search-image-heading="{{ $__t('Unverified search alternatives') }}"
+			data-thumbnail-action="{{ $__t('Load thumbnail') }}"
+			data-thumbnail-busy="{{ $__t('Loading thumbnail…') }}"
+			data-image-select="{{ $__t('Select image') }}"
+			data-image-selected="{{ $__t('Selected') }}"
+			data-image-remove="{{ $__t('Remove selection') }}"
+			data-media-error="{{ $__t('This image could not be loaded safely. Choose another image or continue without one.') }}"
+			data-media-expired="{{ $__t('This image preview expired. Search again to load it.') }}"
+			data-selection-summary="{{ $__t('%s changes selected', '%s') }}"
+			data-review-action="{{ $__t('Review selected changes') }}"
+			data-empty-selection-heading="{{ $__t('No changes selected') }}"
+			data-empty-selection-body="{{ $__t('Select one or more suggestions, or continue editing the product manually.') }}"
+			data-stage-action="{{ $__t('Stage selected changes') }}"
+			data-back-action="{{ $__t('Back to suggestions') }}"
+			data-staging-success="{{ $__t('Selected changes are staged in the form. Review the form, then use Grocy\'s Save button to save them.') }}"
+			data-stale-field-message="{{ $__t('This field changed after the search. Review it again before staging.') }}"
+			data-scanned-barcode-label="{{ $__t('Scanned barcode') }}"
+			data-equivalents-label="{{ $__t('Canonical equivalents checked') }}"
+			data-unused-barcode-message="{{ $__t('This barcode is not assigned in Grocy.') }}"
+			data-staged-barcode-label="{{ $__t('Ready to add on Save') }}"
+			data-remove-staged-barcode="{{ $__t('Remove staged barcode') }}"
+			data-owned-other-message="{{ $__t('This barcode already belongs to an existing product.') }}"
+			data-owned-current-message="{{ $__t('This barcode is already attached to this product.') }}"
+			data-open-existing-product="{{ $__t('Open existing product') }}"
 			data-ready-message="{{ $__t('GTIN ready.') }}"
 			data-busy-message="{{ $__t('Searching product details…') }}"
 			data-success-heading="{{ $__t('Product details found') }}"
@@ -963,7 +1017,7 @@ $grocyAiAssetVersion = '1.0.1';
 				<div class="card grocy-ai-card">
 					<div class="card-body">
 						<h4 class="card-title">{{ $__t('grocy_AI product enrichment') }}</h4>
-						<p class="text-muted grocy-ai-description">{{ $__t('Scan or enter a GTIN to search product details. Results are previews and are not saved automatically.') }}</p>
+						<p class="text-muted grocy-ai-description">{{ $__t('Scan or enter a GTIN to find product suggestions. Review and stage selected changes; nothing is saved until you save the product.') }}</p>
 						<div class="form-group mb-0">
 							<label for="grocy-ai-upc">{{ $__t('GTIN') }}</label>
 							<input type="text"
@@ -1031,9 +1085,76 @@ $grocyAiAssetVersion = '1.0.1';
 									aria-label="{{ $__t('Redacted diagnostic report') }}"></textarea>
 							</div>
 						</details>
-						<div class="mt-3 d-none"
+						<div class="grocy-ai-results mt-3 d-none"
 							id="grocy-ai-results"
-							aria-label="{{ $__t('Product enrichment preview') }}"></div>
+							aria-label="{{ $__t('Product enrichment preview') }}">
+							<section class="grocy-ai-barcode-ownership"
+								id="grocy-ai-barcode-ownership"
+								aria-labelledby="grocy-ai-barcode-heading">
+								<h5 id="grocy-ai-barcode-heading">{{ $__t('Barcode ownership') }}</h5>
+								<dl class="mb-0">
+									<dt>{{ $__t('Scanned barcode') }}</dt>
+									<dd id="grocy-ai-scanned-barcode"></dd>
+									<dt>{{ $__t('Canonical equivalents checked') }}</dt>
+									<dd id="grocy-ai-barcode-equivalents"></dd>
+								</dl>
+								<div id="grocy-ai-barcode-outcome"
+									role="status"
+									aria-live="polite"></div>
+								<a class="btn btn-primary d-none"
+									id="grocy-ai-open-existing-product"
+									href="#">{{ $__t('Open existing product') }}</a>
+								<button class="btn btn-outline-secondary d-none"
+									id="grocy-ai-remove-staged-barcode"
+									type="button">{{ $__t('Remove staged barcode') }}</button>
+							</section>
+							<section class="grocy-ai-review-section"
+								id="grocy-ai-field-review"
+								aria-labelledby="grocy-ai-review-heading">
+								<h5 id="grocy-ai-review-heading"
+									tabindex="-1">{{ $__t('Review suggested fields') }}</h5>
+								<div class="grocy-ai-field-rows"
+									id="grocy-ai-field-rows"></div>
+							</section>
+							<section class="grocy-ai-media-review d-none"
+								id="grocy-ai-media-review"
+								aria-labelledby="grocy-ai-media-heading">
+								<h5 id="grocy-ai-media-heading">{{ $__t('Choose a product image') }}</h5>
+								<section class="grocy-ai-media-group d-none" id="grocy-ai-structured-media-group">
+									<h6>{{ $__t('Front package image') }}</h6>
+									<div class="grocy-ai-media-grid" id="grocy-ai-structured-media"></div>
+								</section>
+								<section class="grocy-ai-media-group d-none" id="grocy-ai-search-media-group">
+									<h6>{{ $__t('Unverified search alternatives') }}</h6>
+									<div class="grocy-ai-media-grid" id="grocy-ai-search-media"></div>
+								</section>
+							</section>
+							<div class="grocy-ai-selection-status"
+								id="grocy-ai-selection-status"
+								role="status"
+								aria-live="polite">{{ $__t('%s changes selected', 0) }}</div>
+							<button class="btn btn-primary"
+								id="grocy-ai-review-selected-button"
+								type="button"
+								disabled>{{ $__t('Review selected changes') }}</button>
+							<section class="grocy-ai-final-diff d-none"
+								id="grocy-ai-final-diff"
+								aria-labelledby="grocy-ai-final-diff-heading">
+								<h5 id="grocy-ai-final-diff-heading"
+									tabindex="-1">{{ $__t('Review selected changes') }}</h5>
+								<div id="grocy-ai-final-diff-list"></div>
+								<div class="grocy-ai-actions">
+									<button class="btn btn-outline-secondary"
+										id="grocy-ai-back-to-suggestions-button"
+										type="button">{{ $__t('Back to suggestions') }}</button>
+									<button class="btn btn-primary"
+										id="grocy-ai-stage-selected-button"
+										type="button">{{ $__t('Stage selected changes') }}</button>
+								</div>
+							</section>
+							<div class="alert alert-success d-none"
+								id="grocy-ai-staging-feedback"></div>
+						</div>
 					</div>
 				</div>
 			</div>

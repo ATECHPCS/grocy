@@ -5,6 +5,8 @@ FROM lscr.io/linuxserver/grocy:v4.6.0-ls334
 
 COPY config-dist.php routes.php /app/www/
 COPY custom/grocy_AI/version.json /app/www/version.json
+COPY migrations/0256.php /app/www/migrations/0256.php
+COPY public/viewjs/productform.js /app/www/public/viewjs/productform.js
 COPY views/productform.blade.php /app/www/views/productform.blade.php
 COPY custom/grocy_AI /app/www/custom/grocy_AI
 COPY public/custom/grocy_AI /app/www/public/custom/grocy_AI
