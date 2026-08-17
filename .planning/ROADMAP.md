@@ -178,7 +178,7 @@ Plans:
 
 **Wave 20** *(blocked on Wave 19 completion)*
 
-- [ ] 02-20-PLAN.md — Deploy replacement images and refresh redacted deployment evidence.
+- [x] 02-20-PLAN.md — Deploy replacement images and refresh redacted deployment evidence.
 
 **UI hint:** yes
 
