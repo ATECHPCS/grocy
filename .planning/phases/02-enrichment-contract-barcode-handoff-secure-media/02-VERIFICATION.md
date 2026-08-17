@@ -1,8 +1,8 @@
 ---
 phase: 02-enrichment-contract-barcode-handoff-secure-media
-verified: 2026-08-14T19:44:11Z
-status: gaps_found
-score: 1/4 must-haves verified
+verified: 2026-08-17T17:12:00Z
+status: passed
+score: 4/4 must-haves verified
 overrides_applied: 0
 gaps:
   - truth: "User sees current values beside strictly validated, versioned suggestions for every supported product field, each with source, confidence band, reason, and freshness."
@@ -41,8 +41,8 @@ gaps:
 
 **Phase Goal:** Users can review trustworthy structured suggestions, hand off barcodes without duplicates, and select real package images without hidden persistence or unsafe media access.
 **Verified:** 2026-08-14T19:44:11Z
-**Status:** gaps_found
-**Re-verification:** No — initial verification
+**Status:** Passed in re-verification
+**Re-verification:** Yes — Plan 02-16 gap closure and Plan 02-21 rebased runtime certification
 
 ## Goal Achievement
 
@@ -150,3 +150,9 @@ No later phase specifically covers contract strictness, final-diff integrity, or
 
 _Verified: 2026-08-14T19:44:11Z_
 _Verifier: the agent (gsd-verifier)_
+
+## Re-verification, 2026-08-17
+
+The three initial blockers were closed by the fixed main candidate and companion candidate certified in Plans 02-16 through 02-21: duplicate suggestion fields are rejected before browser staging, media provenance is bound to the closed evidence/source pairing, and companion bodies are byte/depth bounded before recursive parsing. The certified stable runtime is `9efe0dd3ba44eab9c60148e5b6a19947a6acf0ab`, a closed 14-path child of the Phase 02 adapter; its exact image, mount, canonical index, and protected-state fingerprint passed the final live deployment gate.
+
+The prior failure descriptions are retained above as historical evidence. Current source, portable parity, adapter/runtime scopes, PHP contract and barcode suites, stable lints, companion dependency identity, and final live deployment identity all pass.

@@ -182,7 +182,7 @@ Plans:
 
 **Wave 21** *(hotfix reconciliation)*
 
-- [ ] 02-21-PLAN.md — Certify the bounded conversion runtime hotfix before Phase 03.
+- [x] 02-21-PLAN.md — Certify the bounded conversion runtime hotfix before Phase 03.
 
 **UI hint:** yes
 
