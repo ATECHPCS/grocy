@@ -82,12 +82,14 @@ assert_repo_identities()
 {
 	main_sha=$(field main_candidate_sha "$manifest")
 	companion_sha=$(field companion_candidate_sha "$manifest")
-	stable_sha=$(field stable_adapter_sha "$manifest")
+	stable_sha=$(field stable_runtime_sha "$manifest")
+	stable_adapter=$(field stable_adapter_sha "$manifest")
 	stable_portable=$(field stable_portable_sha "$manifest")
 	git -C "$main_repo" merge-base --is-ancestor "$main_sha" HEAD || fail main_candidate_ancestor
 	[ "$(git -C /Users/ian/Documents/Repos/grocy-mcp rev-parse HEAD)" = "$companion_sha" ] || fail companion_candidate_head
 	[ "$(git -C /Users/ian/Documents/Repos/grocy-atech-release rev-parse HEAD)" = "$stable_sha" ] || fail stable_adapter_head
-	[ "$(git -C /Users/ian/Documents/Repos/grocy-atech-release rev-parse "${stable_sha}^")" = "$stable_portable" ] || fail stable_adapter_parent
+	[ "$(git -C /Users/ian/Documents/Repos/grocy-atech-release rev-parse "${stable_adapter}^")" = "$stable_portable" ] || fail stable_adapter_parent
+	[ "$(git -C /Users/ian/Documents/Repos/grocy-atech-release rev-parse "${stable_sha}^")" = "$stable_adapter" ] || fail stable_runtime_parent
 	pass immutable_repository_identities
 }
 
@@ -229,7 +231,7 @@ assert_companion_deployment()
 
 assert_stable_deployment()
 {
-	expected_revision=$(field stable_adapter_sha "$manifest")
+	expected_revision=$(field stable_runtime_sha "$manifest")
 	expected_image=$(evidence_field stable_image_id "$evidence")
 	is_sha256 "$expected_image" || fail stable_image_format
 	assert_container_running "$grocy_container" stable

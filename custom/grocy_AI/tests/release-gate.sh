@@ -140,6 +140,8 @@ stable_branch=$(field stable_branch "$manifest")
 stable_portable_sha=$(field stable_portable_sha "$manifest")
 stable_adapter_sha=$(field stable_adapter_sha "$manifest")
 stable_adapter_parent_sha=$(field stable_adapter_parent_sha "$manifest")
+stable_runtime_sha=$(field stable_runtime_sha "$manifest")
+stable_runtime_parent_sha=$(field stable_runtime_parent_sha "$manifest")
 stable_module_version=$(field stable_module_version "$manifest")
 stable_cache_marker=$(field stable_cache_marker "$manifest")
 dependency_hash=$(field dependency_constraints_sha256 "$manifest")
@@ -153,15 +155,19 @@ assert_commit "$main_repo" "$main_sha" main_candidate
 assert_commit "$companion_repo" "$companion_sha" companion_candidate
 assert_commit "$stable_repo" "$stable_portable_sha" stable_portable
 assert_commit "$stable_repo" "$stable_adapter_sha" stable_adapter
+assert_commit "$stable_repo" "$stable_runtime_sha" stable_runtime
 
 git -C "$main_repo" merge-base --is-ancestor "$main_sha" HEAD || fail main_candidate_ancestor
 [ "$(git -C "$companion_repo" rev-parse HEAD)" = "$companion_sha" ] || fail companion_head
-[ "$(git -C "$stable_repo" rev-parse HEAD)" = "$stable_adapter_sha" ] || fail stable_adapter_head
+[ "$(git -C "$stable_repo" rev-parse HEAD)" = "$stable_runtime_sha" ] || fail stable_runtime_head
 [ "$stable_adapter_parent_sha" = "$stable_portable_sha" ] || fail adapter_manifest_parent
 [ "$(git -C "$stable_repo" rev-parse "${stable_adapter_sha}^")" = "$stable_portable_sha" ] || fail adapter_git_parent
+[ "$stable_runtime_parent_sha" = "$stable_adapter_sha" ] || fail runtime_manifest_parent
+[ "$(git -C "$stable_repo" rev-parse "${stable_runtime_sha}^")" = "$stable_adapter_sha" ] || fail runtime_git_parent
 pass immutable_ancestry
 
 assert_sorted_unique_block stable_adapter_paths "$manifest"
+assert_sorted_unique_block stable_runtime_paths "$manifest"
 assert_sorted_unique_block main_post_candidate_paths "$manifest"
 
 portable_expected=$(LC_ALL=C sort "$main_repo/custom/grocy_AI/phase2-changed-paths.txt")
@@ -171,6 +177,10 @@ assert_exact_list "$portable_actual" "$portable_expected" stable_portable_scope
 adapter_expected=$(block stable_adapter_paths "$manifest")
 adapter_actual=$(git -C "$stable_repo" diff-tree --no-commit-id --name-only -r "$stable_adapter_sha" | LC_ALL=C sort)
 assert_exact_list "$adapter_actual" "$adapter_expected" stable_adapter_scope
+
+runtime_expected=$(block stable_runtime_paths "$manifest")
+runtime_actual=$(git -C "$stable_repo" diff-tree --no-commit-id --name-only -r "$stable_runtime_sha" | LC_ALL=C sort)
+assert_exact_list "$runtime_actual" "$runtime_expected" stable_runtime_scope
 
 portable_count=0
 while IFS= read -r path || [ -n "$path" ]; do
@@ -230,8 +240,8 @@ actual_dependency_hash=$(LC_ALL=C sort "$companion_repo/constraints-phase2.txt" 
 pass companion_dependencies
 
 main_module_version=$(sed -n 's/.*"module_version": "\([^"]*\)".*/\1/p' "$main_repo/custom/grocy_AI/module-version.json")
-stable_blade_version=$(git -C "$stable_repo" show "${stable_adapter_sha}:views/productform.blade.php" | sed -n "s/.*\$grocyAiAssetVersion = '\([^']*\)'.*/\1/p" | head -1)
-stable_commit_cache=$(git -C "$stable_repo" show "${stable_adapter_sha}:custom/grocy_AI/version.json" | sed -n 's/.*"Customization": "\([^"]*\)".*/\1/p')
+stable_blade_version=$(git -C "$stable_repo" show "${stable_runtime_sha}:views/productform.blade.php" | sed -n "s/.*\$grocyAiAssetVersion = '\([^']*\)'.*/\1/p" | head -1)
+stable_commit_cache=$(git -C "$stable_repo" show "${stable_runtime_sha}:custom/grocy_AI/version.json" | sed -n 's/.*"Customization": "\([^"]*\)".*/\1/p')
 [ "$main_module_version" = "$stable_module_version" ] || fail module_manifest_marker
 [ "$stable_blade_version" = "$stable_module_version" ] || fail blade_module_marker
 [ "$stable_commit_cache" = "$stable_cache_marker" ] || fail stable_cache_marker
@@ -239,7 +249,7 @@ pass synchronized_markers
 
 selection_summary_call="data-selection-summary=\"{{ \$__t('%s changes selected', '%s') }}\""
 grep -Fq "$selection_summary_call" "$main_repo/views/productform.blade.php" || fail main_selection_summary_localization
-git -C "$stable_repo" show "${stable_adapter_sha}:views/productform.blade.php" | grep -Fq "$selection_summary_call" || fail stable_selection_summary_localization
+git -C "$stable_repo" show "${stable_runtime_sha}:views/productform.blade.php" | grep -Fq "$selection_summary_call" || fail stable_selection_summary_localization
 pass selection_summary_localization
 
 run_quiet main_php_contract env GROCY_BLADE_AUTOLOAD="$main_repo/packages/autoload.php" php "$main_repo/custom/grocy_AI/tests/run.php"

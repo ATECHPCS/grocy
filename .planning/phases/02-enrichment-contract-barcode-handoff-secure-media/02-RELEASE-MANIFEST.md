@@ -10,6 +10,8 @@ stable_portable_sha: c222fb760b2dcd9da843c49a03fc7c6f6d6c97c8
 stable_portable_parent_sha: 9f9ce169e155c9ec1fa01a67745c94276d86b2da
 stable_adapter_sha: 505d5673e36df96745a37fcfcdaadce768e60eb1
 stable_adapter_parent_sha: c222fb760b2dcd9da843c49a03fc7c6f6d6c97c8
+stable_runtime_sha: 8b90b56a72914247f3a3f96fcba733a612cabfaa
+stable_runtime_parent_sha: 505d5673e36df96745a37fcfcdaadce768e60eb1
 stable_module_version: 2.4.1
 stable_cache_marker: ATECHPCS-grocy_AI-9
 main_post_candidate_tracking_exception: user-approved finite GSD handoff, state, roadmap, and checkpoint paths
@@ -59,6 +61,23 @@ public/viewjs/productform.js
 views/productform.blade.php
 stable_adapter_paths_end
 
+stable_runtime_paths_begin
+Dockerfile.atech
+custom/grocy_AI/routes.php
+custom/grocy_AI/src/GrocyAiApiController.php
+public/viewjs/components/productamountpicker.js
+views/consume.blade.php
+views/inventory.blade.php
+views/mealplan.blade.php
+views/productbarcodeform.blade.php
+views/purchase.blade.php
+views/recipeform.blade.php
+views/recipeposform.blade.php
+views/recipes.blade.php
+views/shoppinglistitemform.blade.php
+views/transfer.blade.php
+stable_runtime_paths_end
+
 main_post_candidate_paths_begin
 .planning/HANDOFF.json
 .planning/ROADMAP.md
@@ -72,8 +91,12 @@ main_post_candidate_paths_begin
 .planning/phases/02-enrichment-contract-barcode-handoff-secure-media/02-19-SUMMARY.md
 .planning/phases/02-enrichment-contract-barcode-handoff-secure-media/02-20-PLAN.md
 .planning/phases/02-enrichment-contract-barcode-handoff-secure-media/02-20-SUMMARY.md
+.planning/phases/02-enrichment-contract-barcode-handoff-secure-media/02-21-PLAN.md
+.planning/phases/02-enrichment-contract-barcode-handoff-secure-media/02-21-SUMMARY.md
 .planning/phases/02-enrichment-contract-barcode-handoff-secure-media/02-DEPLOYMENT-EVIDENCE.md
 .planning/phases/02-enrichment-contract-barcode-handoff-secure-media/02-RELEASE-MANIFEST.md
+custom/grocy_AI/tests/deployment-gate.sh
+custom/grocy_AI/tests/release-gate.sh
 main_post_candidate_paths_end
 
 portable_blobs_begin

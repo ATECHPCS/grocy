@@ -180,6 +180,10 @@ Plans:
 
 - [x] 02-20-PLAN.md — Deploy replacement images and refresh redacted deployment evidence.
 
+**Wave 21** *(hotfix reconciliation)*
+
+- [ ] 02-21-PLAN.md — Certify the bounded conversion runtime hotfix before Phase 03.
+
 **UI hint:** yes
 
 ### Phase 3: Food Taxonomy & Categorization Pilot
