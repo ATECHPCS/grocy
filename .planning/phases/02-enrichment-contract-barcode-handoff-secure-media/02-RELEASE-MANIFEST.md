@@ -13,7 +13,7 @@ stable_adapter_parent_sha: d0fd0dfa2bf7748a6fab5a758c471d06192bc382
 stable_runtime_sha: 9efe0dd3ba44eab9c60148e5b6a19947a6acf0ab
 stable_runtime_parent_sha: cf317830e0ce5138506edff75a45b19407a67672
 stable_module_version: 2.4.1
-stable_cache_marker: ATECHPCS-grocy_AI-3
+stable_cache_marker: ATECHPCS-grocy_AI-9
 main_post_candidate_tracking_exception: user-approved finite GSD handoff, state, roadmap, and checkpoint paths
 dependency_constraints_sha256: 53c2a4b530e9802d0d0f5587875db0ae72320652dd4627925b06eca2edbb2019
 portable_paths_sha256: fda39b8a8f3a5c14d6d5bebc230cfd4b29c4e570e625f5ae52b709c002501cc7
