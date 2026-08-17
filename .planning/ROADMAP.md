@@ -170,7 +170,7 @@ Plans:
 
 **Wave 18** *(blocked on Wave 17 completion)*
 
-- [ ] 02-18-PLAN.md — Create the 12-path stable portable mirror from the fixed main candidate.
+- [x] 02-18-PLAN.md — Create the 12-path stable portable mirror from the fixed main candidate.
 
 **Wave 19** *(blocked on Wave 18 completion)*
 
