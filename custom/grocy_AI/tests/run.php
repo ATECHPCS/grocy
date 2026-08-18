@@ -612,6 +612,11 @@ if (($argv[1] ?? null) === 'taxonomy-assignment')
 	runTaxonomyAssignment();
 }
 
+if (($argv[1] ?? null) === 'taxonomy-validation')
+{
+	runTaxonomyValidation();
+}
+
 if (($argv[1] ?? null) === '--list')
 {
 	foreach ([

@@ -190,3 +190,57 @@ function runTaxonomyAssignment(): never
 	fwrite(STDOUT, "Taxonomy assignment tests passed\n");
 	exit(0);
 }
+
+function runTaxonomyValidation(): never
+{
+	$pdo = taxonomyPdo();
+	$pdo->exec("INSERT INTO products (id, name) VALUES (2, 'Mapped fixture'), (3, 'Excluded fixture'), (4, 'Low confidence fixture'), (5, 'Conflict fixture')");
+	$service = new GrocyAiTaxonomyService($pdo);
+	$pdo->prepare('INSERT INTO grocy_ai_taxonomy_evidence (product_id, provider_category, mapping_version, confidence_band, reason_code) VALUES (?, ?, ?, ?, ?)')->execute([2, 'produce', 'v1', 'high', 'provider_category']);
+	$pdo->prepare('INSERT INTO grocy_ai_taxonomy_evidence (product_id, provider_category, mapping_version, confidence_band, reason_code) VALUES (?, ?, ?, ?, ?)')->execute([3, 'baby food', 'v1', 'high', 'provider_category']);
+	$pdo->prepare('INSERT INTO grocy_ai_taxonomy_evidence (product_id, provider_category, mapping_version, confidence_band, reason_code) VALUES (?, ?, ?, ?, ?)')->execute([4, 'dairy', 'v1', 'low', 'provider_category']);
+	$pdo->prepare('INSERT INTO grocy_ai_taxonomy_evidence (product_id, provider_category, mapping_version, confidence_band, reason_code) VALUES (?, ?, ?, ?, ?)')->execute([5, 'produce', 'v1', 'medium', 'conflicting_evidence']);
+
+	$tables = $pdo->query("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")->fetchAll(PDO::FETCH_COLUMN);
+	$before = taxonomySnapshots($pdo, $tables);
+	$report = $service->ValidateInventoryTaxonomy();
+	$after = taxonomySnapshots($pdo, $tables);
+	$expectedKeys = ['ruleset_version', 'frozen_preserved_boundary', 'in_scope_products', 'mapped', 'unclassified', 'excluded', 'conflicting', 'low_confidence'];
+	if (array_keys($report) !== $expectedKeys
+		|| $report['ruleset_version'] !== 'v1'
+		|| $report['frozen_preserved_boundary'] !== 'Frozen and preserved are handling/location concerns, not taxonomy identities.'
+		|| $report['in_scope_products'] !== 5
+		|| $report['mapped'] !== 1
+		|| $report['unclassified'] !== 1
+		|| $report['excluded'] !== 1
+		|| $report['conflicting'] !== 1
+		|| $report['low_confidence'] !== 1)
+	{
+		expectedRed('EXPECTED_RED: taxonomy-validation', 'The validation report must contain only the required redacted aggregate outcomes');
+	}
+	if ($before !== $after)
+	{
+		expectedRed('EXPECTED_RED: taxonomy-validation', 'Inventory validation must not write any fixture table');
+	}
+	if (str_contains(json_encode($report, JSON_THROW_ON_ERROR), 'fixture'))
+	{
+		expectedRed('EXPECTED_RED: taxonomy-validation', 'Validation output must not disclose product fixture values');
+	}
+
+	fwrite(STDOUT, "Taxonomy validation tests passed\n");
+	exit(0);
+}
+
+function taxonomySnapshots(PDO $pdo, array $tables): array
+{
+	$snapshots = [];
+	foreach ($tables as $table)
+	{
+		if (preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/D', (string)$table) !== 1)
+		{
+			throw new RuntimeException('Unsafe fixture table name');
+		}
+		$snapshots[$table] = $pdo->query('SELECT * FROM "' . $table . '" ORDER BY rowid')->fetchAll(PDO::FETCH_ASSOC);
+	}
+	return $snapshots;
+}

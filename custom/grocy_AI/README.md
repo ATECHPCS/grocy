@@ -143,6 +143,18 @@ Run the standalone module checks with:
 php custom/grocy_AI/tests/run.php
 ```
 
+## Taxonomy v1 validation
+
+Run the maintainer-only taxonomy report with:
+
+```sh
+php custom/grocy_AI/tests/run.php taxonomy-validation
+```
+
+The report evaluates local products and local module evidence only. It makes no provider request and does not create assignments or taxonomy leaves, edit products, or change stock, history, recipes, locations, prices, or handling data. Its output is intentionally limited to taxonomy version and aggregate mapped, Unclassified, excluded, conflicting, and low-confidence counts; it never includes household product names, barcodes, provider URLs, or raw evidence.
+
+Frozen and preserved are handling/location concerns, not taxonomy identities. This report records that boundary but does not decide or apply classifications. Phase 6 owns any later bulk preview, approval, apply, recovery, or inventory cleanup workflow.
+
 When `packages/autoload.php` is present, the native suite also compiles the complete product form and renders the custom asset-version fixture with Grocy's installed Blade engine. To point the same regression at an exact external Composer runtime, set `GROCY_BLADE_AUTOLOAD` to that runtime's `autoload.php`.
 
 ## Deterministic release gates

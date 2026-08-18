@@ -108,6 +108,29 @@ class GrocyAiTaxonomyService
 		return $this->ReadProductTaxonomy($productId);
 	}
 
+	public function ValidateInventoryTaxonomy(): array
+	{
+		$products = $this->Db->query('SELECT id FROM products ORDER BY id')->fetchAll(PDO::FETCH_COLUMN);
+		$report = [
+			'ruleset_version' => GrocyAiTaxonomyMigration::VERSION,
+			'frozen_preserved_boundary' => 'Frozen and preserved are handling/location concerns, not taxonomy identities.',
+			'in_scope_products' => count($products),
+			'mapped' => 0,
+			'unclassified' => 0,
+			'excluded' => 0,
+			'conflicting' => 0,
+			'low_confidence' => 0
+		];
+
+		foreach ($products as $productId)
+		{
+			$outcome = $this->ValidationOutcome((int)$productId);
+			$report[$outcome]++;
+		}
+
+		return $report;
+	}
+
 	private function CurrentLeaf(int $productId): ?array
 	{
 		$statement = $this->Db->prepare('SELECT node.id, node.slug, node.label FROM grocy_ai_taxonomy_classifications AS classification INNER JOIN grocy_ai_taxonomy_nodes AS node ON node.id = classification.leaf_id WHERE classification.product_id = ? AND classification.ruleset_version = ?');
@@ -149,6 +172,39 @@ class GrocyAiTaxonomyService
 			'confidence_band' => $evidence['confidence_band'],
 			'reason_code' => 'mapped_provider_category'
 		];
+	}
+
+	private function ValidationOutcome(int $productId): string
+	{
+		$statement = $this->Db->prepare('SELECT provider_category, mapping_version, confidence_band, reason_code FROM grocy_ai_taxonomy_evidence WHERE product_id = ?');
+		$statement->execute([$productId]);
+		$evidence = $statement->fetch(PDO::FETCH_ASSOC);
+		if (!is_array($evidence) || $evidence['mapping_version'] !== GrocyAiTaxonomyMigration::VERSION)
+		{
+			return 'unclassified';
+		}
+		if (str_contains(strtolower((string)$evidence['reason_code']), 'conflict'))
+		{
+			return 'conflicting';
+		}
+
+		$rule = $this->Db->prepare('SELECT disposition FROM grocy_ai_taxonomy_mapping_rules WHERE provider_category = ? AND version = ?');
+		$rule->execute([self::ProviderCategoryKey((string)$evidence['provider_category']), GrocyAiTaxonomyMigration::VERSION]);
+		$mapping = $rule->fetch(PDO::FETCH_ASSOC);
+		if (is_array($mapping) && $mapping['disposition'] === 'excluded')
+		{
+			return 'excluded';
+		}
+		if (is_array($mapping) && $mapping['disposition'] === 'mapped' && !in_array($evidence['confidence_band'], ['high', 'medium'], true))
+		{
+			return 'low_confidence';
+		}
+		if (is_array($mapping) && $mapping['disposition'] === 'mapped')
+		{
+			return 'mapped';
+		}
+
+		return 'unclassified';
 	}
 
 	private function Unclassified(string $reasonCode): array
