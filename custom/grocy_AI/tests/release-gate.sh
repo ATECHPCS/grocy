@@ -123,6 +123,7 @@ taxonomy_release_gate()
 	temporary_root=$(mktemp -d "${TMPDIR:-/tmp}/grocy-ai-release-gate.XXXXXX")
 	trap 'rm -rf "$temporary_root"' EXIT HUP INT TERM
 	required_portable_paths=$(printf '%s\n' \
+		'custom/grocy_AI/bin/validate-inventory-taxonomy.php' \
 		'custom/grocy_AI/src/GrocyAiTaxonomyMigration.php' \
 		'custom/grocy_AI/src/GrocyAiTaxonomyService.php' \
 		'custom/grocy_AI/tests/taxonomy.php' \
@@ -148,6 +149,7 @@ EOF
 	pass taxonomy_stable_overlay
 
 	run_quiet taxonomy_validation php "$main_repo/custom/grocy_AI/tests/run.php" taxonomy-validation
+	run_quiet taxonomy_production_paths php "$main_repo/custom/grocy_AI/tests/run.php" taxonomy-production-paths
 	run_quiet taxonomy_service_lint php -l "$main_repo/custom/grocy_AI/src/GrocyAiTaxonomyService.php"
 
 	echo "RELEASE_GATE: PASS (taxonomy)"
