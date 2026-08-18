@@ -1,0 +1,609 @@
+<!doctype html>
+	<html lang="en" data-core-version="4.6.0" data-grocy-ai-module-version="2.4.2">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>grocy_AI product form fixture</title>
+	<style>
+		:root { --primary: #007bff; --success: #28a745; }
+		* { box-sizing: border-box; }
+		body { margin: 0; padding: 16px; font-family: Roboto, sans-serif; color: #212529; }
+		.row { display: flex; flex-wrap: wrap; margin: 0 -8px; }
+		.col, .col-12 { width: 100%; padding: 0 8px; }
+		.card { border: 1px solid #dee2e6; border-radius: 4px; background: #fff; }
+		.card-body { padding: 16px; }
+		.card-title { margin: 0 0 8px; font-size: 24px; font-weight: 500; }
+		.text-muted { color: #6c757d; }
+		.input-group { display: flex; width: 100%; }
+		.input-group-append { display: flex; }
+		.form-control { min-width: 0; flex: 1 1 auto; padding: 8px; border: 1px solid #ced4da; }
+		.form-control.is-invalid { border-color: #dc3545; }
+		.form-control:focus { border-color: #80bdff; box-shadow: 0 0 0 .2rem rgba(0, 123, 255, .25); outline: 0; }
+		.btn { min-height: 44px; padding: 8px 12px; border: 1px solid transparent; border-radius: 4px; background: #f8f9fa; }
+		.btn:disabled { opacity: .65; }
+		.btn-outline-primary { color: #007bff; border-color: #007bff; }
+		.btn-success { color: #fff; background: #28a745; }
+		.btn-info { color: #fff; background: #17a2b8; }
+		.invalid-feedback { color: #dc3545; }
+		.d-none { display: none !important; }
+		.d-block { display: block !important; }
+		.mt-3 { margin-top: 16px; }
+		.mb-0 { margin-bottom: 0; }
+		.alert { padding: 12px; border: 1px solid transparent; border-radius: 4px; }
+		.alert-warning { background: #fff3cd; color: #856404; }
+		.alert-secondary { background: #e2e3e5; color: #383d41; }
+		.alert-success { background: #d4edda; color: #155724; }
+		.alert-danger { background: #f8d7da; color: #721c24; }
+		.product-form-grid { display: grid; gap: 24px; }
+		.form-group { margin-bottom: 16px; }
+		.form-group label { display: block; margin-bottom: 4px; }
+		.save-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+		@media (min-width: 992px) { .product-form-grid { grid-template-columns: 1fr 1fr; } }
+	</style>
+	<link rel="stylesheet" href="/assets/grocy-ai.css?v=2.4.2">
+</head>
+<body>
+	<main class="product-form-grid">
+		<form id="product-form" novalidate>
+			<div class="form-group">
+				<label for="name">Name</label>
+				<input class="form-control" id="name" name="name" value="Existing manual product">
+			</div>
+			<div class="form-group">
+				<label for="product_group_id">Product group</label>
+				<select class="custom-control custom-select" id="product_group_id" name="product_group_id">
+					<option value=""></option>
+					<option value="2" selected>Existing pantry group</option>
+					<option value="4">Breakfast foods</option>
+					<option value="9" disabled>Inactive group</option>
+				</select>
+			</div>
+			<div class="form-group">
+				<label for="qu_id_stock">Quantity unit stock</label>
+				<select class="custom-control custom-select" id="qu_id_stock" name="qu_id_stock">
+					<option value="1" selected>Piece</option>
+					<option value="5">Package</option>
+					<option value="8" disabled>Inactive unit</option>
+				</select>
+			</div>
+			<div id="userfields-form" data-entity="products">
+				<div class="form-group">
+					<label for="fixture-brand">Brand</label>
+					<input class="form-control userfield-input"
+						id="fixture-brand"
+						data-userfield-id="27"
+						data-userfield-name="products.brand"
+						data-userfield-type="text-single-line"
+						value="">
+				</div>
+			</div>
+			<div class="save-actions">
+				<button id="save-product-button" class="save-product-button btn btn-success" type="button" data-location="continue">Save &amp; continue</button>
+				<button class="save-product-button btn btn-info" type="button" data-location="return">Save &amp; return to products</button>
+			</div>
+		</form>
+
+		<section>
+			<div class="row permission-MASTER_DATA_EDIT"
+				id="grocy-ai-product-enrichment"
+				data-current-product-id="91"
+				data-product-route-template="/product/__PRODUCT_ID__"
+				data-brand-target-id="27"
+				data-brand-target-name="products.brand"
+				data-brand-target-label="Brand"
+				data-package-size-target-available="false"
+				data-food-type-target-available="false"
+				data-contract-error="Suggestions could not be verified. Retry the search, or continue editing manually. Nothing was changed."
+				data-review-heading="Review suggested fields"
+				data-current-label="Current"
+				data-suggested-label="Suggested"
+				data-blank-label="Blank"
+				data-selection-label="Use suggested value"
+				data-automatic-origin="Preselected — blank field and exact structured match"
+				data-explicit-origin="Selected by you"
+				data-no-field-message="No matching Grocy field is configured."
+				data-no-option-message="No matching Grocy option is available."
+				data-no-food-type-message="No local food type is configured."
+				data-source-update-unavailable="Source update time unavailable"
+				data-selection-summary="%s changes selected"
+				data-review-action="Review selected changes"
+				data-empty-selection-heading="No changes selected"
+				data-empty-selection-body="Select one or more suggestions, or continue editing the product manually."
+				data-stage-action="Stage selected changes"
+				data-back-action="Back to suggestions"
+				data-staging-success="Selected changes are staged in the form. Review the form, then use Grocy's Save button to save them."
+				data-stale-field-message="This field changed after the search. Review it again before staging."
+				data-image-heading="Choose a product image"
+				data-structured-image-heading="Front package image"
+				data-search-image-heading="Unverified search alternatives"
+				data-load-thumbnail="Load thumbnail"
+				data-loading-thumbnail="Loading thumbnail…"
+				data-select-image="Select image"
+				data-selected-image="Selected"
+				data-remove-image-selection="Remove selection"
+				data-media-error="This image could not be loaded safely. Choose another image or continue without one."
+				data-media-expired="This image preview expired. Search again to load it."
+				data-scanned-barcode-label="Scanned barcode"
+				data-equivalents-label="Canonical equivalents checked"
+				data-unused-barcode-message="This barcode is not assigned in Grocy."
+				data-staged-barcode-label="Ready to add on Save"
+				data-remove-staged-barcode="Remove staged barcode"
+				data-owned-other-message="This barcode already belongs to an existing product."
+				data-owned-current-message="This barcode is already attached to this product."
+				data-open-existing-product="Open existing product"
+				data-partial-barcode-error="The product was saved, but the barcode was not attached. Retry the barcode only; the product will not be created again."
+				data-barcode-retry="Retry barcode attachment"
+				data-ready-message="GTIN ready."
+				data-busy-message="Searching product details…"
+				data-success-heading="Product details found"
+				data-success-body="Review the preview before applying anything. Changes are saved only when you save the product."
+				data-invalid-length="Enter an 8, 12, 13, or 14 digit GTIN."
+				data-invalid-checksum="That GTIN has an invalid check digit. Check the number and try again."
+				data-camera-unavailable="Camera scanning is unavailable. Enter the GTIN manually."
+				data-cancelled-message="Search cancelled. No changes were made."
+				data-timeout-message="The search took too long. Retry, or continue editing manually."
+				data-not-found-message="No exact product match was found. Check the GTIN or continue editing manually."
+				data-error-message="Product search is temporarily unavailable. Retry, or continue editing manually.">
+				<div class="col">
+					<div class="card grocy-ai-card">
+						<div class="card-body">
+							<h4 class="card-title">grocy_AI product enrichment</h4>
+							<p class="text-muted grocy-ai-description">Scan or enter a GTIN to find product suggestions. Review and stage selected changes; nothing is saved until you save the product.</p>
+							<div class="form-group mb-0">
+								<label for="grocy-ai-upc">GTIN</label>
+								<input class="form-control barcodescanner-input"
+									id="grocy-ai-upc"
+									type="text"
+									inputmode="numeric"
+									autocomplete="off"
+									placeholder="8, 12, 13, or 14 digits"
+									aria-describedby="grocy-ai-error grocy-ai-status"
+									data-target="grocy-ai-upc">
+							</div>
+							<div class="invalid-feedback d-block d-none" id="grocy-ai-error" role="alert"></div>
+							<div class="grocy-ai-actions">
+								<button class="btn btn-outline-primary" id="grocy-ai-scan-button" type="button">Scan barcode</button>
+								<button class="btn btn-primary" id="grocy-ai-search-button" type="button" disabled>Search product</button>
+								<button class="btn btn-outline-secondary d-none" id="grocy-ai-cancel-button" type="button">Cancel search</button>
+							</div>
+							<div class="grocy-ai-status alert alert-secondary mt-3 mb-0"
+								id="grocy-ai-status"
+								role="status"
+								aria-live="polite"
+								aria-atomic="true"
+								aria-busy="false">
+								<strong>No enrichment result yet</strong>
+								<span>Scan or enter a GTIN, then search. You can continue editing this product without enrichment.</span>
+							</div>
+							<div class="mt-3 d-none" id="grocy-ai-results" aria-label="Product enrichment preview">
+								<section class="grocy-ai-barcode-ownership" id="grocy-ai-barcode-ownership" aria-labelledby="grocy-ai-barcode-heading">
+									<h5 id="grocy-ai-barcode-heading">Barcode ownership</h5>
+									<dl class="mb-0">
+										<dt>Scanned barcode</dt>
+										<dd id="grocy-ai-scanned-barcode"></dd>
+										<dt>Canonical equivalents checked</dt>
+										<dd id="grocy-ai-barcode-equivalents"></dd>
+									</dl>
+									<div id="grocy-ai-barcode-outcome" role="status" aria-live="polite"></div>
+									<a class="btn btn-primary d-none" id="grocy-ai-open-existing-product" href="#">Open existing product</a>
+									<button class="btn btn-outline-secondary d-none" id="grocy-ai-remove-staged-barcode" type="button">Remove staged barcode</button>
+								</section>
+								<section class="grocy-ai-review-section" id="grocy-ai-field-review" aria-labelledby="grocy-ai-review-heading">
+									<h5 id="grocy-ai-review-heading" tabindex="-1">Review suggested fields</h5>
+									<div class="grocy-ai-field-rows" id="grocy-ai-field-rows"></div>
+								</section>
+								<div class="grocy-ai-selection-status" id="grocy-ai-selection-status" role="status" aria-live="polite">0 changes selected</div>
+								<button class="btn btn-primary" id="grocy-ai-review-selected-button" type="button" disabled>Review selected changes</button>
+								<section class="grocy-ai-final-diff d-none" id="grocy-ai-final-diff" aria-labelledby="grocy-ai-final-diff-heading">
+									<h5 id="grocy-ai-final-diff-heading" tabindex="-1">Review selected changes</h5>
+									<div id="grocy-ai-final-diff-list"></div>
+									<div class="grocy-ai-actions">
+										<button class="btn btn-outline-secondary" id="grocy-ai-back-to-suggestions-button" type="button">Back to suggestions</button>
+										<button class="btn btn-primary" id="grocy-ai-stage-selected-button" type="button">Stage selected changes</button>
+									</div>
+								</section>
+								<div class="alert alert-success d-none" id="grocy-ai-staging-feedback" role="status" aria-live="polite"></div>
+							</div>
+						</div>
+					</div>
+				</div>
+			</div>
+			<section class="card grocy-ai-card grocy-ai-taxonomy-card mt-3" id="grocy-ai-product-taxonomy"
+				data-product-id="91"
+				data-empty-title="No food type suggested"
+				data-empty-body="No accepted evidence is available. You can leave this product Unclassified or choose a household food type."
+				data-save-error="This food type could not be saved. Check the product is still available, then try again. Your product details and stock were not changed."
+				data-save-success="Food type updated. Product details, stock, recipes, prices, history, and location were not changed.">
+				<div class="card-body">
+					<h4 id="grocy-ai-taxonomy-heading" tabindex="-1">Food classification</h4>
+					<div id="grocy-ai-taxonomy-status" role="status" aria-live="polite"></div>
+					<div id="grocy-ai-taxonomy-current"></div>
+					<section class="grocy-ai-taxonomy-evidence" aria-labelledby="grocy-ai-taxonomy-evidence-heading">
+						<h5 id="grocy-ai-taxonomy-evidence-heading">Why this type is suggested</h5>
+						<div id="grocy-ai-taxonomy-evidence-body"></div>
+					</section>
+					<label for="grocy-ai-taxonomy-group">Household food group</label>
+					<select id="grocy-ai-taxonomy-group" class="form-control"></select>
+					<fieldset id="grocy-ai-taxonomy-leaves"><legend>Food type</legend></fieldset>
+					<div class="grocy-ai-actions">
+						<button class="btn btn-primary" type="button" id="grocy-ai-taxonomy-assign">Assign food type</button>
+						<button class="btn btn-outline-primary" type="button" id="grocy-ai-taxonomy-unclassified">Leave Unclassified</button>
+					</div>
+				</div>
+			</section>
+
+			<div class="form-group mt-3">
+				<label for="product-picture">Picture</label>
+				<input id="product-picture" type="file" accept="image/*">
+				<span id="product-picture-label"></span>
+			</div>
+		</section>
+	</main>
+
+	<script>
+	(function ()
+	{
+		'use strict';
+
+		window.__fixtureAdapterVersion = 'jquery-compatible-fixture-1.0.0';
+		window.__fixtureCounters = {
+			apiCalls: [],
+			fieldEvents: {},
+			cameraDelegations: 0,
+			enrichment: 0,
+			taxonomy: 0,
+			product: 0,
+			barcode: 0,
+			category: 0,
+			conversion: 0,
+			userfield: 0,
+			stock: 0,
+			file: 0,
+			save: 0,
+			saveClicks: 0,
+			objectUrlsCreated: 0,
+			objectUrlsRevoked: 0,
+			mediaRequests: 0,
+			mediaThumbnail: 0,
+			mediaFull: 0,
+			externalRequests: 0,
+			mutationFamilies: {
+				products: 0,
+				product_barcodes: 0,
+				userfields: 0,
+				product_groups: 0,
+				stock: 0,
+				stock_log: 0,
+				conversions: 0,
+				upload: 0,
+				delete: 0
+			},
+			unknownWrites: []
+		};
+		window.__fixturePersistence = {
+			enabled: false,
+			productId: 501,
+			createdProductId: null,
+			continuationCalls: 0,
+			lastOutcome: null
+		};
+
+		function JQueryCompatible(target)
+		{
+			if (!(this instanceof JQueryCompatible))
+			{
+				return new JQueryCompatible(target);
+			}
+
+			if (typeof target === 'string')
+			{
+				this.elements = Array.from(document.querySelectorAll(target));
+			}
+			else if (target === window || target === document || target instanceof Element)
+			{
+				this.elements = [target];
+			}
+			else
+			{
+				this.elements = [];
+			}
+		}
+
+		JQueryCompatible.prototype.on = function (eventName, handler)
+		{
+			this.elements.forEach(function (element)
+			{
+				element.addEventListener(eventName, function (event)
+				{
+					var args = Array.isArray(event.detail) ? event.detail : [];
+					handler.apply(element, [event].concat(args));
+				});
+			});
+			return this;
+		};
+
+		JQueryCompatible.prototype.trigger = function (eventName, args)
+		{
+			this.elements.forEach(function (element)
+			{
+				element.dispatchEvent(new CustomEvent(eventName, { bubbles: true, detail: args || [] }));
+			});
+			return this;
+		};
+
+		JQueryCompatible.prototype.collapse = function (action)
+		{
+			this.elements.forEach(function (element)
+			{
+				var show = action === 'show' || (action === 'toggle' && !element.classList.contains('show'));
+				element.classList.toggle('show', show);
+				element.classList.toggle('d-none', !show);
+			});
+			return this;
+		};
+
+		JQueryCompatible.prototype.modal = JQueryCompatible.prototype.collapse;
+		JQueryCompatible.prototype.jquery = window.__fixtureAdapterVersion;
+		window.$ = window.jQuery = JQueryCompatible;
+		window.$.fn = JQueryCompatible.prototype;
+
+		window.U = function (path)
+		{
+			return path;
+		};
+		window.GetUriParam = function (key)
+		{
+			var value = new URL(window.location.href).searchParams.get(key);
+			return value === null ? undefined : value;
+		};
+
+		function classifyApiCall(method, url)
+		{
+			var counters = window.__fixtureCounters;
+			method = String(method || 'GET').toUpperCase();
+			counters.apiCalls.push({ method: method, url: url });
+			var parsed;
+			try
+			{
+				parsed = new URL(url, window.location.origin);
+			}
+			catch (error)
+			{
+				counters.externalRequests++;
+				return;
+			}
+			if (parsed.origin !== window.location.origin)
+			{
+				counters.externalRequests++;
+				return;
+			}
+			var mediaMatch = /^\/api\/grocy-ai\/images\/(thumbnail|full)\/[A-Za-z0-9_-]{20,200}$/.exec(parsed.pathname);
+			if (mediaMatch)
+			{
+				counters.mediaRequests++;
+				if (mediaMatch[1] === 'thumbnail') counters.mediaThumbnail++;
+				if (mediaMatch[1] === 'full') counters.mediaFull++;
+				return;
+			}
+			if (parsed.pathname.indexOf('/api/grocy-ai/products/enrich/upc/') === 0)
+			{
+				counters.enrichment++;
+				return;
+			}
+			if (/^\/api\/grocy-ai\/products\/[1-9][0-9]*\/taxonomy$/.test(parsed.pathname))
+			{
+				counters.taxonomy++;
+				return;
+			}
+			if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return;
+
+			var path = parsed.pathname;
+			var family = null;
+			if (/^\/api\/(objects\/products|products)(\/|$)/.test(path)) family = 'products';
+			else if (/^\/api\/(objects\/product_barcodes|product_barcodes)(\/|$)/.test(path)) family = 'product_barcodes';
+			else if (/^\/api\/(userfields|objects\/userfields)(\/|$)/.test(path)) family = 'userfields';
+			else if (/^\/api\/(objects\/product_groups|product_groups|objects\/categories|categories)(\/|$)/.test(path)) family = 'product_groups';
+			else if (/^\/api\/(stock_log|objects\/stock_log)(\/|$)/.test(path)) family = 'stock_log';
+			else if (/^\/api\/(stock|objects\/stock)(\/|$)/.test(path)) family = 'stock';
+			else if (/^\/api\/.*(quantity.*conversion|conversion)/.test(path)) family = 'conversions';
+			else if (method === 'DELETE' && /^\/api\/(files|objects\/files|.*upload)(\/|$)/.test(path)) family = 'delete';
+			else if (/^\/api\/(files|objects\/files|.*upload)(\/|$)/.test(path)) family = 'upload';
+
+			if (!family)
+			{
+				var unknown = method + ' ' + path;
+				counters.unknownWrites.push(unknown);
+				throw new Error('Default-deny fixture blocked unknown mutation: ' + unknown);
+			}
+
+			counters.mutationFamilies[family]++;
+			if (family === 'products') counters.product++;
+			if (family === 'product_barcodes') counters.barcode++;
+			if (family === 'product_groups') counters.category++;
+			if (family === 'conversions') counters.conversion++;
+			if (family === 'userfields') counters.userfield++;
+			if (family === 'stock' || family === 'stock_log') counters.stock++;
+			if (family === 'upload' || family === 'delete') counters.file++;
+			counters.save++;
+		}
+
+		var nativeXhrOpen = window.XMLHttpRequest.prototype.open;
+		window.XMLHttpRequest.prototype.open = function (method, url)
+		{
+			classifyApiCall(method, url);
+			return nativeXhrOpen.apply(this, arguments);
+		};
+
+		var nativeFetch = window.fetch.bind(window);
+		window.fetch = function (input, init)
+		{
+			var url = input instanceof Request ? input.url : String(input);
+			classifyApiCall((init && init.method) || (input instanceof Request && input.method) || 'GET', url);
+			return nativeFetch(input, init);
+		};
+
+		window.Grocy = {
+			Api: {},
+			FrontendHelpers: {
+				ValidateForm: function () { return true; },
+				BeginUiBusy: function () {},
+				EndUiBusy: function () {},
+				ShowGenericError: function () {}
+			},
+			Components: {
+				CameraBarcodeScanner: { CurrentTarget: 'grocy-ai-upc' }
+			}
+		};
+
+		window.Grocy.BarcodeScanned = function (barcode, target)
+		{
+			window.$(document).trigger('Grocy.BarcodeScanned', [barcode, target]);
+		};
+
+		window.Grocy.Api.Get = function (apiFunction, success, error)
+		{
+			var url = window.U('/api/' + apiFunction);
+			var xhr = new XMLHttpRequest();
+			xhr.onreadystatechange = function ()
+			{
+				if (xhr.readyState !== XMLHttpRequest.DONE) return;
+				if (xhr.status === 200 || xhr.status === 204)
+				{
+					if (success) success(xhr.status === 200 ? JSON.parse(xhr.responseText) : {});
+				}
+				else if (error)
+				{
+					error(xhr);
+				}
+			};
+			xhr.open('GET', url, true);
+			xhr.send();
+			return xhr;
+		};
+
+		window.Grocy.Api.Post = function (apiFunction, data, success, error)
+		{
+			var url = window.U('/api/' + apiFunction);
+			if (!window.__fixturePersistence.enabled)
+			{
+				throw new Error('Persistence is intentionally unavailable in the browser fixture');
+			}
+
+			var xhr = new XMLHttpRequest();
+			xhr.onreadystatechange = function ()
+			{
+				if (xhr.readyState !== XMLHttpRequest.DONE) return;
+				if (xhr.status >= 200 && xhr.status < 300)
+				{
+					if (success) success(xhr.responseText ? JSON.parse(xhr.responseText) : {});
+				}
+				else if (error)
+				{
+					error(xhr);
+				}
+			};
+			xhr.open('POST', url, true);
+			xhr.setRequestHeader('Content-Type', 'application/json');
+			xhr.send(JSON.stringify(data || {}));
+			return xhr;
+		};
+
+		['Put', 'Delete', 'UploadFile', 'DeleteFile'].forEach(function (methodName)
+		{
+			window.Grocy.Api[methodName] = function (apiFunction)
+			{
+				classifyApiCall(methodName.toUpperCase(), '/api/' + apiFunction);
+				throw new Error('Persistence is intentionally unavailable in the browser fixture');
+			};
+		});
+
+		if (!navigator.clipboard)
+		{
+			Object.defineProperty(navigator, 'clipboard', {
+				value: { writeText: async function () {} }
+			});
+		}
+
+		window.URL.createObjectURL = function ()
+		{
+			window.__fixtureCounters.objectUrlsCreated++;
+			return 'blob:grocy-ai-fixture-' + window.__fixtureCounters.objectUrlsCreated;
+		};
+		window.URL.revokeObjectURL = function ()
+		{
+			window.__fixtureCounters.objectUrlsRevoked++;
+		};
+
+		document.querySelectorAll('.save-product-button').forEach(function (button)
+		{
+			button.addEventListener('click', function ()
+			{
+				window.__fixtureCounters.saveClicks++;
+				if (!window.__fixturePersistence.enabled || window.__fixturePersistence.createdProductId !== null) return;
+				window.Grocy.Api.Post('objects/products', { name: document.getElementById('name').value }, function (result)
+				{
+					var productId = Number(result.created_object_id || window.__fixturePersistence.productId);
+					window.__fixturePersistence.createdProductId = productId;
+					window.__fixtureContinueProductSave(productId);
+				});
+			});
+		});
+
+		window.__fixtureContinueProductSave = function (productId)
+		{
+			window.__fixturePersistence.continuationCalls++;
+			if (!window.GrocyAI || typeof window.GrocyAI.AttachStagedBarcode !== 'function')
+			{
+				window.__fixturePersistence.lastOutcome = 'missing-continuation';
+				return Promise.reject(new Error('Barcode Save continuation is not implemented'));
+			}
+			return window.GrocyAI.AttachStagedBarcode(productId).then(function (result)
+			{
+				window.__fixturePersistence.lastOutcome = result && result.status ? result.status : 'success';
+				return result;
+			}).catch(function (error)
+			{
+				window.__fixturePersistence.lastOutcome = error && error.code ? error.code : 'failed';
+				return null;
+			});
+		};
+
+		['name', 'product_group_id', 'qu_id_stock', 'fixture-brand', 'product-picture'].forEach(function (id)
+		{
+			var control = document.getElementById(id);
+			window.__fixtureCounters.fieldEvents[id] = { input: 0, change: 0 };
+			['input', 'change'].forEach(function (eventName)
+			{
+				control.addEventListener(eventName, function ()
+				{
+					window.__fixtureCounters.fieldEvents[id][eventName]++;
+					if (control.classList.contains('userfield-input')) control.classList.add('is-dirty');
+				});
+			});
+		});
+
+		var cameraControl = document.createElement('button');
+		cameraControl.id = 'camerabarcodescanner-start-button';
+		cameraControl.type = 'button';
+		cameraControl.dataset.target = 'grocy-ai-upc';
+		cameraControl.className = 'd-none';
+		cameraControl.addEventListener('click', function ()
+		{
+			window.__fixtureCounters.cameraDelegations++;
+		});
+		document.body.appendChild(cameraControl);
+
+		document.getElementById('grocy-ai-scan-button').addEventListener('click', function ()
+		{
+			// Model Chrome's late click-default focus transition after permission handling.
+			window.setTimeout(function ()
+			{
+				if (document.activeElement) document.activeElement.blur();
+			}, 0);
+		});
+	})();
+	</script>
+	<script src="/assets/product-enrichment.js?v=2.4.2"></script>
+	<script src="/assets/product-taxonomy.js?v=2.4.2"></script>
+</body>
+</html>
