@@ -153,7 +153,7 @@ function runTaxonomyAssignment(): never
 		expectedRed('EXPECTED_RED: taxonomy-assignment', 'Replacement must leave exactly one current leaf');
 	}
 	$unclassified = $service->AssignProductTaxonomy(1, ['unclassified' => true, 'ruleset_version' => 'v1']);
-	if (($unclassified['current_leaf'] ?? 'missing') !== null)
+	if (!array_key_exists('current_leaf', $unclassified) || $unclassified['current_leaf'] !== null)
 	{
 		expectedRed('EXPECTED_RED: taxonomy-assignment', 'Explicit Unclassified must clear the current leaf without deleting the module record');
 	}

@@ -20,5 +20,6 @@ $app->group('/api/grocy-ai', function (RouteCollectorProxy $group)
 	$group->get('/barcodes/resolve/{barcode}', [GrocyAiApiController::class, 'ResolveBarcode']);
 	$group->get('/products/enrich/upc/{upc}', [GrocyAiApiController::class, 'EnrichByUpc']);
 	$group->get('/products/{productId}/taxonomy', [GrocyAiApiController::class, 'ProductTaxonomy']);
+	$group->put('/products/{productId}/taxonomy', [GrocyAiApiController::class, 'AssignProductTaxonomy']);
 	$group->get('/images/{variant}/{token}', [GrocyAiApiController::class, 'FetchImage']);
 })->add(new CorsMiddleware($container, $app->getResponseFactory()))->add(new JsonMiddleware($container, $app->getResponseFactory()));

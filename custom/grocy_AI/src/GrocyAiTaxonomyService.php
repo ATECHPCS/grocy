@@ -58,6 +58,56 @@ class GrocyAiTaxonomyService
 		];
 	}
 
+	public function AssignProductTaxonomy(int $productId, array $assignment): array
+	{
+		if ($productId < 1 || array_keys($assignment) !== ['leaf_slug', 'ruleset_version'] && array_keys($assignment) !== ['unclassified', 'ruleset_version'])
+		{
+			throw new \InvalidArgumentException('Invalid taxonomy assignment');
+		}
+		if (($assignment['ruleset_version'] ?? null) !== GrocyAiTaxonomyMigration::VERSION)
+		{
+			throw new \InvalidArgumentException('Stale taxonomy ruleset');
+		}
+
+		$isUnclassified = ($assignment['unclassified'] ?? null) === true;
+		if (!$isUnclassified && (!is_string($assignment['leaf_slug'] ?? null) || !isset($assignment['leaf_slug'])))
+		{
+			throw new \InvalidArgumentException('Invalid taxonomy assignment');
+		}
+
+		$this->Db->beginTransaction();
+		try
+		{
+			$product = $this->Db->prepare('SELECT id FROM products WHERE id = ?');
+			$product->execute([$productId]);
+			if ($product->fetchColumn() === false)
+			{
+				throw new \RuntimeException('Product unavailable');
+			}
+
+			$this->Evidence($productId);
+			$leafId = null;
+			if (!$isUnclassified)
+			{
+				$leaf = $this->LeafBySlug($assignment['leaf_slug']);
+				$leafId = $leaf['id'];
+			}
+			$write = $this->Db->prepare('INSERT INTO grocy_ai_taxonomy_classifications (product_id, leaf_id, ruleset_version, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(product_id) DO UPDATE SET leaf_id = excluded.leaf_id, ruleset_version = excluded.ruleset_version, updated_at = CURRENT_TIMESTAMP');
+			$write->execute([$productId, $leafId, GrocyAiTaxonomyMigration::VERSION]);
+			$this->Db->commit();
+		}
+		catch (\Throwable $ex)
+		{
+			if ($this->Db->inTransaction())
+			{
+				$this->Db->rollBack();
+			}
+			throw $ex;
+		}
+
+		return $this->ReadProductTaxonomy($productId);
+	}
+
 	private function CurrentLeaf(int $productId): ?array
 	{
 		$statement = $this->Db->prepare('SELECT node.id, node.slug, node.label FROM grocy_ai_taxonomy_classifications AS classification INNER JOIN grocy_ai_taxonomy_nodes AS node ON node.id = classification.leaf_id WHERE classification.product_id = ? AND classification.ruleset_version = ?');

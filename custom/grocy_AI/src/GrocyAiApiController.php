@@ -135,6 +135,30 @@ class GrocyAiApiController extends BaseApiController
 		}
 	}
 
+	public function AssignProductTaxonomy(Request $request, Response $response, array $args): Response
+	{
+		User::CheckPermission($request, User::PERMISSION_MASTER_DATA_EDIT);
+		$productId = $args['productId'] ?? null;
+		$assignment = $request->getParsedBody();
+		if (!is_string($productId) || preg_match('/^[1-9][0-9]{0,9}$/D', $productId) !== 1 || !is_array($assignment))
+		{
+			return $this->GenericErrorResponse($response, 'Invalid taxonomy assignment', 400);
+		}
+
+		try
+		{
+			return $this->ApiResponse($response, (new GrocyAiTaxonomyService())->AssignProductTaxonomy((int)$productId, $assignment));
+		}
+		catch (\InvalidArgumentException)
+		{
+			return $this->GenericErrorResponse($response, 'Invalid taxonomy assignment', 400);
+		}
+		catch (\RuntimeException)
+		{
+			return $this->GenericErrorResponse($response, 'Product unavailable', 404);
+		}
+	}
+
 	public function FetchImage(Request $request, Response $response, array $args): Response
 	{
 		User::CheckPermission($request, User::PERMISSION_MASTER_DATA_EDIT);
