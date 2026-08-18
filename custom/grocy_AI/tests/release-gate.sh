@@ -118,6 +118,46 @@ run_quiet()
 	fi
 }
 
+taxonomy_release_gate()
+{
+	temporary_root=$(mktemp -d "${TMPDIR:-/tmp}/grocy-ai-release-gate.XXXXXX")
+	trap 'rm -rf "$temporary_root"' EXIT HUP INT TERM
+	required_portable_paths=$(printf '%s\n' \
+		'custom/grocy_AI/src/GrocyAiTaxonomyMigration.php' \
+		'custom/grocy_AI/src/GrocyAiTaxonomyService.php' \
+		'custom/grocy_AI/tests/taxonomy.php' \
+		'public/custom/grocy_AI/product-taxonomy.js')
+	while IFS= read -r path; do
+		grep -Fqx -- "$path" "$main_repo/custom/grocy_AI/portable-files.txt" || fail taxonomy_portable_manifest
+		[ -f "$main_repo/$path" ] || fail taxonomy_portable_source
+	done <<EOF
+$required_portable_paths
+EOF
+	pass taxonomy_portable_manifest
+
+	if grep -Eiq '(INSERT|UPDATE|DELETE)[[:space:]].*(product_groups|should_not_be_frozen)' \
+		"$main_repo/custom/grocy_AI/src/GrocyAiTaxonomyMigration.php" \
+		"$main_repo/custom/grocy_AI/src/GrocyAiTaxonomyService.php"; then
+		fail taxonomy_storage_boundary
+	fi
+	pass taxonomy_storage_boundary
+
+	dockerfile=$(git -C "$stable_repo" show HEAD:Dockerfile.atech 2>/dev/null) || fail taxonomy_stable_dockerfile
+	printf '%s\n' "$dockerfile" | grep -Fqx 'COPY custom/grocy_AI /app/www/custom/grocy_AI' || fail taxonomy_stable_module_overlay
+	printf '%s\n' "$dockerfile" | grep -Fqx 'COPY public/custom/grocy_AI /app/www/public/custom/grocy_AI' || fail taxonomy_stable_asset_overlay
+	pass taxonomy_stable_overlay
+
+	run_quiet taxonomy_validation php "$main_repo/custom/grocy_AI/tests/run.php" taxonomy-validation
+	run_quiet taxonomy_service_lint php -l "$main_repo/custom/grocy_AI/src/GrocyAiTaxonomyService.php"
+
+	echo "RELEASE_GATE: PASS (taxonomy)"
+}
+
+if [ "$#" -eq 1 ] && [ "$1" = taxonomy ]; then
+	taxonomy_release_gate
+	exit 0
+fi
+
 [ "$#" -eq 2 ] || usage
 mode=$1
 manifest_input=$2
