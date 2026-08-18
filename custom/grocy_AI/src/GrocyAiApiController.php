@@ -22,10 +22,11 @@ class GrocyAiApiController extends BaseApiController
 	public function EnrichByUpc(Request $request, Response $response, array $args): Response
 	{
 		$traceContext = GrocyAiDiagnostic::CreateTraceContext($request->getHeaderLine('traceparent'));
+		$currentProductId = self::CurrentProductId($request);
 
 		try
 		{
-			$barcodeService = new GrocyAiBarcodeService(null, self::CurrentProductId($request));
+			$barcodeService = new GrocyAiBarcodeService(null, $currentProductId);
 			$guarded = $barcodeService->ResolveBeforeProvider(
 				$args['upc'],
 				static function () use ($request): void
@@ -51,6 +52,9 @@ class GrocyAiApiController extends BaseApiController
 			{
 				$result = $guarded['provider_result'];
 				$result['barcode'] = $ownership;
+				// The companion response has passed the closed Phase 2 contract. Only this
+				// server-owned response may update the module evidence snapshot.
+				(new GrocyAiTaxonomyService())->ReconcileEnrichmentEvidence($currentProductId, $result);
 			}
 			return $this->DiagnosticResponse($response, $result);
 		}
