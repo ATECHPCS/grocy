@@ -24,6 +24,9 @@ decisions:
   - "The maintainer report requires GROCY_DATAPATH and disables taxonomy bootstrap so it is read-only against the configured Grocy database."
 commits:
   - b85abae5
+  - cdc2472102cb54185b197fbcb0cc2cc4c69faa14
+  - 5ead707d6556b33fe23ae66e7e4199e2640864ec
+  - 07295a85362f39b299e4cbb0de7490b6a725522f
 ---
 
 # Phase 3 Gap Closure Summary
@@ -42,16 +45,13 @@ commits:
 - `bash custom/grocy_AI/tests/release-gate.sh taxonomy` — passed.
 - `npm --prefix custom/grocy_AI/tests/browser run test:release` — passed (148 tests).
 
-## Stable Mirror Required
+## Stable Mirror and Parity
 
-The stable worktree was intentionally untouched. Its later mirror/adaptation must include these exact main-repository paths:
-
-- `custom/grocy_AI/bin/validate-inventory-taxonomy.php`
-- `custom/grocy_AI/src/GrocyAiApiController.php`
-- `custom/grocy_AI/src/GrocyAiTaxonomyService.php`
-- `custom/grocy_AI/tests/run.php`
-- `custom/grocy_AI/tests/taxonomy.php`
-- `custom/grocy_AI/README.md`
+- Portable stable mirror: `5ead707d6556b33fe23ae66e7e4199e2640864ec`.
+- Narrow stable controller adapter: `07295a85362f39b299e4cbb0de7490b6a725522f`. It retains the stable-only base controller and quantity-conversion action while adding only evidence reconciliation.
+- Main portable-manifest/release-gate update: `cdc2472102cb54185b197fbcb0cc2cc4c69faa14`.
+- `bash custom/grocy_AI/tests/check-portable-parity.sh --stable-sha 07295a85362f39b299e4cbb0de7490b6a725522f` passed: 20 identical, 0 mismatched, 0 missing.
+- Stable focused taxonomy lint, `taxonomy-production-paths`, and `taxonomy-validation` passed. Its broad module suite could not run the Blade-render checks because that checkout lacks `packages/autoload.php`; this is an existing test-environment prerequisite, not a taxonomy regression.
 
 ## Deviations from Plan
 
