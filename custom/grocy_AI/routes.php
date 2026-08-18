@@ -10,6 +10,8 @@ require_once __DIR__ . '/src/GrocyAiContract.php';
 require_once __DIR__ . '/src/GrocyAiGtin.php';
 require_once __DIR__ . '/src/GrocyAiBarcodeService.php';
 require_once __DIR__ . '/src/GrocyAiService.php';
+require_once __DIR__ . '/src/GrocyAiTaxonomyMigration.php';
+require_once __DIR__ . '/src/GrocyAiTaxonomyService.php';
 require_once __DIR__ . '/src/GrocyAiApiController.php';
 
 $app->group('/api/grocy-ai', function (RouteCollectorProxy $group)
@@ -17,5 +19,6 @@ $app->group('/api/grocy-ai', function (RouteCollectorProxy $group)
 	$group->get('/status', [GrocyAiApiController::class, 'Status']);
 	$group->get('/barcodes/resolve/{barcode}', [GrocyAiApiController::class, 'ResolveBarcode']);
 	$group->get('/products/enrich/upc/{upc}', [GrocyAiApiController::class, 'EnrichByUpc']);
+	$group->get('/products/{productId}/taxonomy', [GrocyAiApiController::class, 'ProductTaxonomy']);
 	$group->get('/images/{variant}/{token}', [GrocyAiApiController::class, 'FetchImage']);
 })->add(new CorsMiddleware($container, $app->getResponseFactory()))->add(new JsonMiddleware($container, $app->getResponseFactory()));

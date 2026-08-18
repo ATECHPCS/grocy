@@ -8,6 +8,7 @@ use GrocyAI\Services\GrocyAiBarcodeService;
 use GrocyAI\Services\GrocyAiDiagnostic;
 use GrocyAI\Services\GrocyAiService;
 use GrocyAI\Services\GrocyAiServiceException;
+use GrocyAI\Services\GrocyAiTaxonomyService;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 
@@ -108,6 +109,29 @@ class GrocyAiApiController extends BaseApiController
 		catch (\RuntimeException)
 		{
 			return $this->GenericErrorResponse($response, 'Barcode ownership unavailable', 409);
+		}
+	}
+
+	public function ProductTaxonomy(Request $request, Response $response, array $args): Response
+	{
+		User::CheckPermission($request, User::PERMISSION_MASTER_DATA_EDIT);
+		$productId = $args['productId'] ?? null;
+		if (!is_string($productId) || preg_match('/^[1-9][0-9]{0,9}$/D', $productId) !== 1)
+		{
+			return $this->GenericErrorResponse($response, 'Invalid product', 400);
+		}
+
+		try
+		{
+			return $this->ApiResponse($response, (new GrocyAiTaxonomyService())->ReadProductTaxonomy((int)$productId));
+		}
+		catch (\InvalidArgumentException)
+		{
+			return $this->GenericErrorResponse($response, 'Invalid product', 400);
+		}
+		catch (\RuntimeException)
+		{
+			return $this->GenericErrorResponse($response, 'Product unavailable', 404);
 		}
 	}
 
