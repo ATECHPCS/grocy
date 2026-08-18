@@ -8,10 +8,68 @@ class GrocyAiTaxonomyService
 {
 	private PDO $Db;
 
-	public function __construct(?PDO $pdo = null)
+	public function __construct(?PDO $pdo = null, bool $bootstrap = true)
 	{
 		$this->Db = $pdo ?? \Grocy\Services\DatabaseService::GetInstance()->GetDbConnectionRaw();
-		GrocyAiTaxonomyMigration::Bootstrap($this->Db);
+		if ($bootstrap)
+		{
+			GrocyAiTaxonomyMigration::Bootstrap($this->Db);
+		}
+	}
+
+	/**
+	 * Store only the server-validated Phase 2 food-type suggestion for the current
+	 * local product. Browser payloads never supply this evidence or its metadata.
+	 */
+	public function ReconcileEnrichmentEvidence(?int $productId, array $enrichment): bool
+	{
+		if ($productId === null || $productId < 1)
+		{
+			return false;
+		}
+
+		$product = $this->Db->prepare('SELECT id FROM products WHERE id = ?');
+		$product->execute([$productId]);
+		if ($product->fetchColumn() === false)
+		{
+			return false;
+		}
+
+		$foodType = null;
+		$suggestions = $enrichment['suggestions'] ?? null;
+		if (!is_array($suggestions) || !array_is_list($suggestions))
+		{
+			throw new \InvalidArgumentException('Invalid enrichment taxonomy evidence');
+		}
+		foreach ($suggestions as $suggestion)
+		{
+			if (is_array($suggestion) && ($suggestion['field'] ?? null) === 'food_type')
+			{
+				$foodType = $suggestion;
+				break;
+			}
+		}
+
+		if ($foodType === null)
+		{
+			$delete = $this->Db->prepare('DELETE FROM grocy_ai_taxonomy_evidence WHERE product_id = ?');
+			$delete->execute([$productId]);
+			return true;
+		}
+
+		$providerCategory = $foodType['value'] ?? null;
+		$confidenceBand = $foodType['confidence_band'] ?? null;
+		$reasonCode = $foodType['reason_code'] ?? null;
+		if (!is_string($providerCategory) || trim($providerCategory) === '' || strlen($providerCategory) > 500
+			|| !is_string($confidenceBand) || !in_array($confidenceBand, ['high', 'medium', 'low', 'unverified'], true)
+			|| !is_string($reasonCode) || trim($reasonCode) === '' || strlen($reasonCode) > 500)
+		{
+			throw new \InvalidArgumentException('Invalid enrichment taxonomy evidence');
+		}
+
+		$write = $this->Db->prepare('INSERT INTO grocy_ai_taxonomy_evidence (product_id, provider_category, mapping_version, confidence_band, reason_code, recorded_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(product_id) DO UPDATE SET provider_category = excluded.provider_category, mapping_version = excluded.mapping_version, confidence_band = excluded.confidence_band, reason_code = excluded.reason_code, recorded_at = CURRENT_TIMESTAMP');
+		$write->execute([$productId, $providerCategory, GrocyAiTaxonomyMigration::VERSION, $confidenceBand, $reasonCode]);
+		return true;
 	}
 
 	public function LeafBySlug(string $slug): array

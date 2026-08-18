@@ -145,13 +145,21 @@ php custom/grocy_AI/tests/run.php
 
 ## Taxonomy v1 validation
 
-Run the maintainer-only taxonomy report with:
+Run the fixture-only contract test with:
 
 ```sh
 php custom/grocy_AI/tests/run.php taxonomy-validation
 ```
 
-The report evaluates local products and local module evidence only. It makes no provider request and does not create assignments or taxonomy leaves, edit products, or change stock, history, recipes, locations, prices, or handling data. Its output is intentionally limited to taxonomy version and aggregate mapped, Unclassified, excluded, conflicting, and low-confidence counts; it never includes household product names, barcodes, provider URLs, or raw evidence.
+Run the actual configured Grocy database report from the deployment checkout/container with its configured absolute data path:
+
+```sh
+GROCY_DATAPATH=/path/to/grocy-data php custom/grocy_AI/bin/validate-inventory-taxonomy.php
+```
+
+The production command refuses a missing or relative data path and does not bootstrap, migrate, assign, or otherwise write the database. It emits one JSON object containing only redacted aggregate counts and the frozen/preserved boundary; retain that output as the maintainer validation record.
+
+The report evaluates local products and local module evidence only. It makes no provider request and does not create assignments or taxonomy leaves, edit products, or change stock, history, recipes, locations, prices, or handling data. Its output is intentionally limited to taxonomy version and aggregate mapped, Unclassified, excluded, conflicting, and low-confidence counts; it never includes household product names, barcodes, provider URLs, or raw evidence. On an authenticated product-edit enrichment request, the module reconciles only the server-validated Phase 2 `food_type` suggestion into its own evidence snapshot; the browser never supplies the provider category, confidence, or reason, and no taxonomy leaf is assigned automatically.
 
 Frozen and preserved are handling/location concerns, not taxonomy identities. This report records that boundary but does not decide or apply classifications. Phase 6 owns any later bulk preview, approval, apply, recovery, or inventory cleanup workflow.
 

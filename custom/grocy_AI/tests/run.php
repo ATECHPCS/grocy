@@ -617,6 +617,11 @@ if (($argv[1] ?? null) === 'taxonomy-validation')
 	runTaxonomyValidation();
 }
 
+if (($argv[1] ?? null) === 'taxonomy-production-paths')
+{
+	runTaxonomyProductionPaths();
+}
+
 if (($argv[1] ?? null) === '--list')
 {
 	foreach ([

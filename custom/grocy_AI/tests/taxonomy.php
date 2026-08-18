@@ -231,6 +231,97 @@ function runTaxonomyValidation(): never
 	exit(0);
 }
 
+function runTaxonomyProductionPaths(): never
+{
+	$pdo = taxonomyPdo();
+	$service = new GrocyAiTaxonomyService($pdo);
+	$beforeProducts = $pdo->query('SELECT * FROM products ORDER BY id')->fetchAll(PDO::FETCH_ASSOC);
+	$enrichment = [
+		'suggestions' => [[
+			'field' => 'food_type',
+			'value' => 'produce',
+			'confidence_band' => 'high',
+			'reason_code' => 'inferred_provider_data'
+		]]
+	];
+	if (!$service->ReconcileEnrichmentEvidence(1, $enrichment))
+	{
+		expectedRed('EXPECTED_RED: taxonomy-production-paths', 'Server-validated food-type evidence must record for an existing local product');
+	}
+	$evidence = $pdo->query('SELECT provider_category, mapping_version, confidence_band, reason_code FROM grocy_ai_taxonomy_evidence WHERE product_id = 1')->fetch(PDO::FETCH_ASSOC);
+	if ($evidence !== ['provider_category' => 'produce', 'mapping_version' => 'v1', 'confidence_band' => 'high', 'reason_code' => 'inferred_provider_data']
+		|| ($service->ReadProductTaxonomy(1)['suggested_leaf']['slug'] ?? null) !== 'produce'
+		|| $beforeProducts !== $pdo->query('SELECT * FROM products ORDER BY id')->fetchAll(PDO::FETCH_ASSOC))
+	{
+		expectedRed('EXPECTED_RED: taxonomy-production-paths', 'Evidence reconciliation must create a local suggestion without changing the Grocy product');
+	}
+	$service->ReconcileEnrichmentEvidence(1, ['suggestions' => []]);
+	if ((int)$pdo->query('SELECT COUNT(*) FROM grocy_ai_taxonomy_evidence WHERE product_id = 1')->fetchColumn() !== 0)
+	{
+		expectedRed('EXPECTED_RED: taxonomy-production-paths', 'A validated enrichment without food-type evidence must clear the stale module snapshot');
+	}
+	if ($service->ReconcileEnrichmentEvidence(99, $enrichment) !== false)
+	{
+		expectedRed('EXPECTED_RED: taxonomy-production-paths', 'Browser-selected unavailable products must not receive evidence');
+	}
+	$controllerSource = file_get_contents(__DIR__ . '/../src/GrocyAiApiController.php');
+	if (!str_contains($controllerSource, 'ReconcileEnrichmentEvidence($currentProductId, $result)')
+		|| !str_contains($controllerSource, "provider_result'] === null"))
+	{
+		expectedRed('EXPECTED_RED: taxonomy-production-paths', 'Only a server-returned provider result may reconcile taxonomy evidence');
+	}
+
+	$tempDirectory = sys_get_temp_dir() . '/grocy-ai-taxonomy-' . bin2hex(random_bytes(8));
+	if (!mkdir($tempDirectory, 0700))
+	{
+		throw new RuntimeException('Could not create taxonomy CLI fixture');
+	}
+	$databasePath = $tempDirectory . '/grocy.db';
+	try
+	{
+		$database = new PDO('sqlite:' . $databasePath);
+		$database->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+		$database->exec('CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT NOT NULL)');
+		$database->exec("INSERT INTO products (id, name) VALUES (1, 'Private fixture product')");
+		$databaseService = new GrocyAiTaxonomyService($database);
+		$databaseService->ReconcileEnrichmentEvidence(1, $enrichment);
+		$tables = $database->query("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")->fetchAll(PDO::FETCH_COLUMN);
+		$before = taxonomySnapshots($database, $tables);
+		$database = null;
+
+		$pipes = [];
+		$process = proc_open([PHP_BINARY, dirname(__DIR__) . '/bin/validate-inventory-taxonomy.php'], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, null, ['GROCY_DATAPATH' => $tempDirectory]);
+		if (!is_resource($process))
+		{
+			throw new RuntimeException('Could not execute taxonomy maintainer command');
+		}
+		$output = stream_get_contents($pipes[1]);
+		$error = stream_get_contents($pipes[2]);
+		fclose($pipes[1]);
+		fclose($pipes[2]);
+		$status = proc_close($process);
+		$afterPdo = new PDO('sqlite:' . $databasePath);
+		$after = taxonomySnapshots($afterPdo, $tables);
+		$report = json_decode($output, true, 512, JSON_THROW_ON_ERROR);
+		if ($status !== 0 || $error !== '' || !is_array($report) || $report['mapped'] !== 1
+			|| str_contains($output, 'Private fixture product') || $before !== $after)
+		{
+			expectedRed('EXPECTED_RED: taxonomy-production-paths', 'The configured-database maintainer command must emit only redacted aggregates without writes');
+		}
+	}
+	finally
+	{
+		if (is_file($databasePath))
+		{
+			unlink($databasePath);
+		}
+		rmdir($tempDirectory);
+	}
+
+	fwrite(STDOUT, "Taxonomy production-path tests passed\n");
+	exit(0);
+}
+
 function taxonomySnapshots(PDO $pdo, array $tables): array
 {
 	$snapshots = [];
