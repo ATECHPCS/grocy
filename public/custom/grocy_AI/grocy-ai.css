@@ -414,6 +414,41 @@ details.grocy-ai-diagnostics:not([open]) > .grocy-ai-diagnostic-body {
 	background: rgba(108, 117, 125, .2);
 }
 
+.grocy-ai-taxonomy-card {
+	border-left: 4px solid var(--primary);
+}
+
+.grocy-ai-taxonomy-current,
+.grocy-ai-taxonomy-evidence,
+.grocy-ai-taxonomy-choice {
+	margin-bottom: 16px;
+}
+
+.grocy-ai-taxonomy-evidence {
+	background: #f8f9fa;
+	border: 1px solid #dee2e6;
+	padding: 16px;
+}
+
+.grocy-ai-taxonomy-evidence > h5:focus,
+.grocy-ai-taxonomy-choice .custom-control-input:focus + .custom-control-label,
+#grocy-ai-taxonomy-heading:focus {
+	outline: 2px solid var(--primary);
+	outline-offset: 2px;
+}
+
+#grocy-ai-taxonomy-assign,
+#grocy-ai-taxonomy-unclassified,
+#grocy-ai-taxonomy-group,
+.grocy-ai-taxonomy-choice .custom-control-label {
+	min-height: 44px;
+}
+
+.night-mode .grocy-ai-taxonomy-evidence {
+	background: inherit;
+	border-color: #6c757d;
+}
+
 @media (max-width: 575.98px) {
 	.grocy-ai-actions .btn {
 		flex: 1 1 100%;
@@ -450,6 +485,11 @@ details.grocy-ai-diagnostics:not([open]) > .grocy-ai-diagnostic-body {
 	#grocy-ai-stage-selected-button,
 	#grocy-ai-open-existing-product,
 	#grocy-ai-remove-staged-barcode {
+		width: 100%;
+	}
+
+	#grocy-ai-taxonomy-assign,
+	#grocy-ai-taxonomy-unclassified {
 		width: 100%;
 	}
 }

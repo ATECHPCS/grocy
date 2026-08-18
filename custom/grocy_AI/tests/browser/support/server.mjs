@@ -30,6 +30,10 @@ const allowlistedFiles = new Map([
 		path: resolve(repositoryRoot, 'public/custom/grocy_AI/product-enrichment.js'),
 		contentType: 'text/javascript; charset=utf-8'
 	}],
+	['/assets/product-taxonomy.js', {
+		path: resolve(repositoryRoot, 'public/custom/grocy_AI/product-taxonomy.js'),
+		contentType: 'text/javascript; charset=utf-8'
+	}],
 	['/assets/grocy-ai.css', {
 		path: resolve(repositoryRoot, 'public/custom/grocy_AI/grocy-ai.css'),
 		contentType: 'text/css; charset=utf-8'

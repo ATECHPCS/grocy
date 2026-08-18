@@ -217,7 +217,7 @@ function runBladeGroup(): never
 	$assetMatch = [];
 	if (preg_match('/\$grocyAiAssetVersion = \'([^\']+)\'/', $template, $assetMatch) !== 1
 		|| ($assetMatch[1] ?? '') !== $moduleVersion
-		|| substr_count($template, '{{ $grocyAiAssetVersion }}') !== 2)
+		|| substr_count($template, '{{ $grocyAiAssetVersion }}') !== 3)
 	{
 		expectedRed('EXPECTED_RED: blade.integrated_acceptance', 'The CSS and JavaScript asset token is not synchronized with module-version.json');
 	}

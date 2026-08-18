@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-core-version="4.6.0" data-grocy-ai-module-version="2.4.0">
+	<html lang="en" data-core-version="4.6.0" data-grocy-ai-module-version="2.4.2">
 <head>
 	<meta charset="utf-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1">
@@ -40,7 +40,7 @@
 		.save-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 		@media (min-width: 992px) { .product-form-grid { grid-template-columns: 1fr 1fr; } }
 	</style>
-	<link rel="stylesheet" href="/assets/grocy-ai.css?v=2.4.0">
+	<link rel="stylesheet" href="/assets/grocy-ai.css?v=2.4.2">
 </head>
 <body>
 	<main class="product-form-grid">
@@ -208,6 +208,29 @@
 					</div>
 				</div>
 			</div>
+			<section class="card grocy-ai-card grocy-ai-taxonomy-card mt-3" id="grocy-ai-product-taxonomy"
+				data-product-id="91"
+				data-empty-title="No food type suggested"
+				data-empty-body="No accepted evidence is available. You can leave this product Unclassified or choose a household food type."
+				data-save-error="This food type could not be saved. Check the product is still available, then try again. Your product details and stock were not changed."
+				data-save-success="Food type updated. Product details, stock, recipes, prices, history, and location were not changed.">
+				<div class="card-body">
+					<h4 id="grocy-ai-taxonomy-heading" tabindex="-1">Food classification</h4>
+					<div id="grocy-ai-taxonomy-status" role="status" aria-live="polite"></div>
+					<div id="grocy-ai-taxonomy-current"></div>
+					<section class="grocy-ai-taxonomy-evidence" aria-labelledby="grocy-ai-taxonomy-evidence-heading">
+						<h5 id="grocy-ai-taxonomy-evidence-heading">Why this type is suggested</h5>
+						<div id="grocy-ai-taxonomy-evidence-body"></div>
+					</section>
+					<label for="grocy-ai-taxonomy-group">Household food group</label>
+					<select id="grocy-ai-taxonomy-group" class="form-control"></select>
+					<fieldset id="grocy-ai-taxonomy-leaves"><legend>Food type</legend></fieldset>
+					<div class="grocy-ai-actions">
+						<button class="btn btn-primary" type="button" id="grocy-ai-taxonomy-assign">Assign food type</button>
+						<button class="btn btn-outline-primary" type="button" id="grocy-ai-taxonomy-unclassified">Leave Unclassified</button>
+					</div>
+				</div>
+			</section>
 
 			<div class="form-group mt-3">
 				<label for="product-picture">Picture</label>
@@ -228,6 +251,7 @@
 			fieldEvents: {},
 			cameraDelegations: 0,
 			enrichment: 0,
+			taxonomy: 0,
 			product: 0,
 			barcode: 0,
 			category: 0,
@@ -364,6 +388,11 @@
 			if (parsed.pathname.indexOf('/api/grocy-ai/products/enrich/upc/') === 0)
 			{
 				counters.enrichment++;
+				return;
+			}
+			if (/^\/api\/grocy-ai\/products\/[1-9][0-9]*\/taxonomy$/.test(parsed.pathname))
+			{
+				counters.taxonomy++;
 				return;
 			}
 			if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return;
@@ -574,6 +603,7 @@
 		});
 	})();
 	</script>
-	<script src="/assets/product-enrichment.js?v=2.4.0"></script>
+	<script src="/assets/product-enrichment.js?v=2.4.2"></script>
+	<script src="/assets/product-taxonomy.js?v=2.4.2"></script>
 </body>
 </html>
