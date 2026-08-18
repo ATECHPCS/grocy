@@ -607,6 +607,11 @@ if (($argv[1] ?? null) === 'taxonomy-api')
 	runTaxonomyApi();
 }
 
+if (($argv[1] ?? null) === 'taxonomy-assignment')
+{
+	runTaxonomyAssignment();
+}
+
 if (($argv[1] ?? null) === '--list')
 {
 	foreach ([

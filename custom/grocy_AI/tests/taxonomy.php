@@ -124,3 +124,69 @@ function runTaxonomyApi(): never
 	fwrite(STDOUT, "Taxonomy API tests passed\n");
 	exit(0);
 }
+
+function runTaxonomyAssignment(): never
+{
+	$pdo = taxonomyPdo();
+	foreach (['stock', 'recipes', 'prices', 'history', 'locations', 'units', 'conversions'] as $table)
+	{
+		$pdo->exec("CREATE TABLE {$table} (id INTEGER PRIMARY KEY, value TEXT NOT NULL)");
+		$pdo->exec("INSERT INTO {$table} (id, value) VALUES (1, 'unchanged')");
+	}
+
+	$service = new GrocyAiTaxonomyService($pdo);
+	$before = [];
+	foreach (['products', 'stock', 'recipes', 'prices', 'history', 'locations', 'units', 'conversions'] as $table)
+	{
+		$before[$table] = $pdo->query("SELECT * FROM {$table} ORDER BY id")->fetchAll(PDO::FETCH_ASSOC);
+	}
+
+	$first = $service->AssignProductTaxonomy(1, ['leaf_slug' => 'produce', 'ruleset_version' => 'v1']);
+	if (($first['current_leaf']['slug'] ?? null) !== 'produce')
+	{
+		expectedRed('EXPECTED_RED: taxonomy-assignment', 'A permitted explicit leaf assignment must become current');
+	}
+	$second = $service->AssignProductTaxonomy(1, ['leaf_slug' => 'dairy-eggs', 'ruleset_version' => 'v1']);
+	if (($second['current_leaf']['slug'] ?? null) !== 'dairy-eggs'
+		|| (int)$pdo->query('SELECT COUNT(*) FROM grocy_ai_taxonomy_classifications WHERE product_id = 1')->fetchColumn() !== 1)
+	{
+		expectedRed('EXPECTED_RED: taxonomy-assignment', 'Replacement must leave exactly one current leaf');
+	}
+	$unclassified = $service->AssignProductTaxonomy(1, ['unclassified' => true, 'ruleset_version' => 'v1']);
+	if (($unclassified['current_leaf'] ?? 'missing') !== null)
+	{
+		expectedRed('EXPECTED_RED: taxonomy-assignment', 'Explicit Unclassified must clear the current leaf without deleting the module record');
+	}
+
+	foreach ([
+		['leaf_slug' => 'baby-food', 'ruleset_version' => 'v1'],
+		['leaf_slug' => 'produce', 'ruleset_version' => 'stale'],
+		['leaf_slug' => 'produce', 'unclassified' => true, 'ruleset_version' => 'v1']
+	] as $invalid)
+	{
+		$classificationBefore = $pdo->query('SELECT product_id, leaf_id, ruleset_version FROM grocy_ai_taxonomy_classifications ORDER BY product_id')->fetchAll(PDO::FETCH_ASSOC);
+		try
+		{
+			$service->AssignProductTaxonomy(1, $invalid);
+			expectedRed('EXPECTED_RED: taxonomy-assignment', 'Stale, excluded, or ambiguous input must be rejected');
+		}
+		catch (InvalidArgumentException)
+		{
+			if ($classificationBefore !== $pdo->query('SELECT product_id, leaf_id, ruleset_version FROM grocy_ai_taxonomy_classifications ORDER BY product_id')->fetchAll(PDO::FETCH_ASSOC))
+			{
+				expectedRed('EXPECTED_RED: taxonomy-assignment', 'Invalid input must not mutate classification data');
+			}
+		}
+	}
+
+	foreach ($before as $table => $snapshot)
+	{
+		if ($snapshot !== $pdo->query("SELECT * FROM {$table} ORDER BY id")->fetchAll(PDO::FETCH_ASSOC))
+		{
+			expectedRed('EXPECTED_RED: taxonomy-assignment', "Assignment changed unrelated {$table} data");
+		}
+	}
+
+	fwrite(STDOUT, "Taxonomy assignment tests passed\n");
+	exit(0);
+}
