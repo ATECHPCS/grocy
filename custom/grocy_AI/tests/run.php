@@ -32,6 +32,24 @@ if (is_file($barcodeServiceFile))
 	require_once $barcodeServiceFile;
 }
 
+$taxonomyMigrationFile = __DIR__ . '/../src/GrocyAiTaxonomyMigration.php';
+if (is_file($taxonomyMigrationFile))
+{
+	require_once $taxonomyMigrationFile;
+}
+
+$taxonomyServiceFile = __DIR__ . '/../src/GrocyAiTaxonomyService.php';
+if (is_file($taxonomyServiceFile))
+{
+	require_once $taxonomyServiceFile;
+}
+
+$taxonomyTestFile = __DIR__ . '/taxonomy.php';
+if (is_file($taxonomyTestFile))
+{
+	require_once $taxonomyTestFile;
+}
+
 use GrocyAI\Services\GrocyAiDiagnostic;
 use GrocyAI\Services\GrocyAiContract;
 use GrocyAI\Services\GrocyAiService;
@@ -577,6 +595,16 @@ if (($argv[1] ?? null) === '--case')
 
 	fwrite(STDERR, "Unknown test case: {$selectedCase}\n");
 	exit(2);
+}
+
+if (($argv[1] ?? null) === 'taxonomy-schema')
+{
+	runTaxonomySchema();
+}
+
+if (($argv[1] ?? null) === 'taxonomy-api')
+{
+	runTaxonomyApi();
 }
 
 if (($argv[1] ?? null) === '--list')
