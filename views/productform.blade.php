@@ -4,7 +4,7 @@
 
 @if(GROCY_FEATURE_FLAG_GROCY_AI)
 @php
-$grocyAiAssetVersion = '2.4.1';
+$grocyAiAssetVersion = '2.4.2';
 @endphp
 @push('pageStyles')
 <link rel="stylesheet"
@@ -12,6 +12,7 @@ $grocyAiAssetVersion = '2.4.1';
 @endpush
 @push('pageScripts')
 <script src="{{ $U('/custom/grocy_AI/product-enrichment.js?v=', true) }}{{ $grocyAiAssetVersion }}"></script>
+<script src="{{ $U('/custom/grocy_AI/product-taxonomy.js?v=', true) }}{{ $grocyAiAssetVersion }}"></script>
 @endpush
 @endif
 
@@ -1157,6 +1158,40 @@ $grocyAiAssetVersion = '2.4.1';
 						</div>
 					</div>
 				</div>
+			</div>
+		</div>
+		@endif
+
+		@if($mode === 'edit')
+		<div class="row mt-5 permission-MASTER_DATA_EDIT" id="grocy-ai-product-taxonomy"
+			data-product-id="{{ $product->id }}"
+			data-empty-title="{{ $__t('No food type suggested') }}"
+			data-empty-body="{{ $__t('No accepted evidence is available. You can leave this product Unclassified or choose a household food type.') }}"
+			data-save-error="{{ $__t('This food type could not be saved. Check the product is still available, then try again. Your product details and stock were not changed.') }}"
+			data-save-success="{{ $__t('Food type updated. Product details, stock, recipes, prices, history, and location were not changed.') }}">
+			<div class="col">
+				<section class="card grocy-ai-card grocy-ai-taxonomy-card" aria-labelledby="grocy-ai-taxonomy-heading">
+					<div class="card-body">
+						<h4 class="card-title" id="grocy-ai-taxonomy-heading" tabindex="-1">{{ $__t('Food classification') }}</h4>
+						<div id="grocy-ai-taxonomy-status" role="status" aria-live="polite"></div>
+						<div id="grocy-ai-taxonomy-current"></div>
+						<section class="grocy-ai-taxonomy-evidence" aria-labelledby="grocy-ai-taxonomy-evidence-heading">
+							<h5 id="grocy-ai-taxonomy-evidence-heading">{{ $__t('Why this type is suggested') }}</h5>
+							<div id="grocy-ai-taxonomy-evidence-body"></div>
+						</section>
+						<div class="form-group">
+							<label for="grocy-ai-taxonomy-group">{{ $__t('Household food group') }}</label>
+							<select class="custom-select" id="grocy-ai-taxonomy-group"></select>
+						</div>
+						<fieldset id="grocy-ai-taxonomy-leaves">
+							<legend>{{ $__t('Food type') }}</legend>
+						</fieldset>
+						<div class="grocy-ai-actions">
+							<button class="btn btn-primary" type="button" id="grocy-ai-taxonomy-assign">{{ $__t('Assign food type') }}</button>
+							<button class="btn btn-outline-secondary" type="button" id="grocy-ai-taxonomy-unclassified">{{ $__t('Leave Unclassified') }}</button>
+						</div>
+					</div>
+				</section>
 			</div>
 		</div>
 		@endif

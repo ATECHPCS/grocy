@@ -8,6 +8,7 @@ use GrocyAI\Services\GrocyAiBarcodeService;
 use GrocyAI\Services\GrocyAiDiagnostic;
 use GrocyAI\Services\GrocyAiService;
 use GrocyAI\Services\GrocyAiServiceException;
+use GrocyAI\Services\GrocyAiTaxonomyService;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 
@@ -123,6 +124,53 @@ class GrocyAiApiController extends BaseApiController
 			$response,
 			$this->getDatabase()->cache__quantity_unit_conversions_resolved()->where('product_id', $productId)->fetchAll()
 		);
+	}
+
+	public function ProductTaxonomy(Request $request, Response $response, array $args): Response
+	{
+		User::CheckPermission($request, User::PERMISSION_MASTER_DATA_EDIT);
+		$productId = $args['productId'] ?? null;
+		if (!is_string($productId) || preg_match('/^[1-9][0-9]{0,9}$/D', $productId) !== 1)
+		{
+			return $this->GenericErrorResponse($response, 'Invalid product', 400);
+		}
+
+		try
+		{
+			return $this->ApiResponse($response, (new GrocyAiTaxonomyService())->ReadProductTaxonomy((int)$productId));
+		}
+		catch (\InvalidArgumentException)
+		{
+			return $this->GenericErrorResponse($response, 'Invalid product', 400);
+		}
+		catch (\RuntimeException)
+		{
+			return $this->GenericErrorResponse($response, 'Product unavailable', 404);
+		}
+	}
+
+	public function AssignProductTaxonomy(Request $request, Response $response, array $args): Response
+	{
+		User::CheckPermission($request, User::PERMISSION_MASTER_DATA_EDIT);
+		$productId = $args['productId'] ?? null;
+		$assignment = $request->getParsedBody();
+		if (!is_string($productId) || preg_match('/^[1-9][0-9]{0,9}$/D', $productId) !== 1 || !is_array($assignment))
+		{
+			return $this->GenericErrorResponse($response, 'Invalid taxonomy assignment', 400);
+		}
+
+		try
+		{
+			return $this->ApiResponse($response, (new GrocyAiTaxonomyService())->AssignProductTaxonomy((int)$productId, $assignment));
+		}
+		catch (\InvalidArgumentException)
+		{
+			return $this->GenericErrorResponse($response, 'Invalid taxonomy assignment', 400);
+		}
+		catch (\RuntimeException)
+		{
+			return $this->GenericErrorResponse($response, 'Product unavailable', 404);
+		}
 	}
 
 	public function FetchImage(Request $request, Response $response, array $args): Response

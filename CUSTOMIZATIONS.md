@@ -48,6 +48,12 @@ The production container is built with `Dockerfile.atech`. It pins the matching 
 - Migration `0256.php` uses the same generated checksum-valid canonical GTIN predicate as owner lookup. It runs transactionally, blocks on any collision group, and never deletes, rewrites, or reassigns barcode rows.
 - `Dockerfile.atech` copies the stable Save continuation and migration to `/app/www/public/viewjs/productform.js` and `/app/www/migrations/0256.php`; the deployed image therefore contains every source adapter represented by this commit.
 
+### Phase 3 taxonomy portable and stable adapter boundary
+
+- The Phase 3 portable commit mirrors the taxonomy schema bootstrap, read-only validation service, isolated tests, and taxonomy panel assets byte-for-byte from `atech-main`.
+- The stable adapter changes only this record, `custom/grocy_AI/routes.php`, `custom/grocy_AI/src/GrocyAiApiController.php`, `custom/grocy_AI/version.json`, and `views/productform.blade.php`. It keeps the stable controller namespace and class-based JSON middleware while adding the narrow taxonomy read/assignment endpoints and edit-only panel hook.
+- `Customization` is `ATECHPCS-grocy_AI-10`; `Dockerfile.atech` already copies the complete module and custom-asset trees, so it includes the namespaced taxonomy migration bootstrap and panel bytes without a broader image change.
+
 ## Unused Grocy features
 
 Chores and batteries remain in upstream source code, but their fork defaults are off. Keep these settings in the deployment configuration so the intent is explicit:

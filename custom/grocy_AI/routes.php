@@ -9,6 +9,8 @@ require_once __DIR__ . '/src/GrocyAiContract.php';
 require_once __DIR__ . '/src/GrocyAiGtin.php';
 require_once __DIR__ . '/src/GrocyAiBarcodeService.php';
 require_once __DIR__ . '/src/GrocyAiService.php';
+require_once __DIR__ . '/src/GrocyAiTaxonomyMigration.php';
+require_once __DIR__ . '/src/GrocyAiTaxonomyService.php';
 require_once __DIR__ . '/src/GrocyAiApiController.php';
 
 $app->group('/api/grocy-ai', function (RouteCollectorProxy $group)
@@ -17,5 +19,7 @@ $app->group('/api/grocy-ai', function (RouteCollectorProxy $group)
 	$group->get('/barcodes/resolve/{barcode}', [GrocyAiApiController::class, 'ResolveBarcode']);
 	$group->get('/products/{productId}/quantity-unit-conversions', [GrocyAiApiController::class, 'QuantityUnitConversions']);
 	$group->get('/products/enrich/upc/{upc}', [GrocyAiApiController::class, 'EnrichByUpc']);
+	$group->get('/products/{productId}/taxonomy', [GrocyAiApiController::class, 'ProductTaxonomy']);
+	$group->put('/products/{productId}/taxonomy', [GrocyAiApiController::class, 'AssignProductTaxonomy']);
 	$group->get('/images/{variant}/{token}', [GrocyAiApiController::class, 'FetchImage']);
 })->add(JsonMiddleware::class);
