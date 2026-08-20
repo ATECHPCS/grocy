@@ -20,13 +20,14 @@ Adding and maintaining real household food inventory must be fast, accurate, and
 - ✓ Selected images travel through authenticated, short-lived opaque handles and are validated as bounded PNG, JPEG, or WebP files — deployed Phase 1.
 - ✓ The production fork can track upstream on `atech-main` while deploying a stable Grocy 4.6 image from `atech-release` without replacing persistent inventory data — deployed Phase 1.
 - ✓ Chores and batteries can remain disabled without deleting their upstream implementation — deployed Phase 1.
+- ✓ A user can inspect explainable food-taxonomy evidence and explicitly assign one household food classification or leave it Unclassified, without altering unrelated Grocy product data — deployed Phase 3.
 
 ### Active
 
 - [ ] Verify the complete product-enrichment workflow on mobile, including search, review, selection, save, reload, failure handling, and acceptable LAN latency.
 - [ ] Hand a searched UPC into Grocy's product-barcode workflow without duplicate or hidden writes.
 - [ ] Suggest structured product fields such as brand, package size, product group, quantity unit, and food type while requiring human review before persistence.
-- [ ] Introduce a useful food-type taxonomy and categorize existing household food, excluding baby food and pet food.
+- [ ] Categorize existing household food through reviewed bulk work, excluding baby food and pet food.
 - [ ] Replace the unwanted product-specific conversion sprawl with reusable universal and food-type conversion rules, including common additional conversions.
 - [ ] Provide preview, confidence, conflict reporting, and rollback-safe execution for bulk categorization and conversion cleanup.
 - [ ] Capture enough latency and failure telemetry to distinguish Grocy, companion-service, provider, image-host, and LAN/mobile connection problems.
@@ -75,6 +76,7 @@ Adding and maintaining real household food inventory must be fast, accurate, and
 | Disable rather than remove chores and batteries | Avoids unnecessary fork divergence while removing unused UI surface | ✓ Good |
 | Build reusable universal/food-type conversions | Product-specific conversions created excessive duplication and maintenance burden | — Pending |
 | Exclude baby food and pet food | Those categories will never be used in this household | ✓ Good |
+| Keep Grocy product groups as high-confidence taxonomy evidence, not taxonomy storage | Existing groups such as Seafood improve suggestions, while module-owned assignment keeps classification explicit and reversible | ✓ Good |
 
 ## Evolution
 
@@ -94,4 +96,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-08-12 after project initialization*
+*Last updated: 2026-08-20 after Phase 3*

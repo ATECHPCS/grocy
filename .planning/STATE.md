@@ -2,35 +2,35 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: completed
-stopped_at: Phase 03 planned
-last_updated: "2026-08-18T02:53:58.232Z"
-last_activity: 2026-08-17
+status: ready_to_plan
+stopped_at: Phase 3 complete (3 planned plans plus gap closure) — ready to discuss Phase 4
+last_updated: 2026-08-20T22:48:11.917Z
+last_activity: 2026-08-20
 progress:
   total_phases: 7
-  completed_phases: 1
+  completed_phases: 3
   total_plans: 34
-  completed_plans: 30
-  percent: 14
+  completed_plans: 34
+  percent: 43
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-08-12)
+See: .planning/PROJECT.md (updated 2026-08-20)
 
 **Core value:** Adding and maintaining real household food inventory must be fast, accurate, and dependable from a phone without surrendering control of the data to automatic guesses.
-**Current focus:** Phase 03 — food-taxonomy-categorization-pilot
+**Current focus:** Phase 4 — reusable conversion model
 
 ## Current Position
 
-Phase: 03 (food-taxonomy-categorization-pilot) — READY FOR DISCUSSION
-Plan: 0 of TBD
-Status: Phase 02 complete; begin Phase 03 discovery
-Last activity: 2026-08-17
+Phase: 4
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-08-20 — Phase 3 completed and deployed taxonomy behavior confirmed by user
 
-Progress: [██████████] 97%
+Progress: [████░░░░░░] 43%
 
 ## Performance Metrics
 
@@ -134,7 +134,6 @@ None yet.
 
 - [Phase 1]: Actual supported phone/browser versions and acceptable LAN latency thresholds require recorded physical-device measurement.
 - [Phase 2]: Companion provider concurrency, timeout, cache, authentication, and secure-media behavior require direct inspection during planning.
-- [Phase 3]: Taxonomy v1 and the frozen/preserved boundary require validation against the full in-scope inventory.
 - [Phase 4]: Final conversion projection is intentionally unresolved until the mandatory dual-branch characterization spike.
 - [Phase 6]: Cleanup planning requires a scrubbed production-shaped snapshot to confirm conversion and inventory edge cases.
 - [Phase 2]: Goal verification found three blocking contract gaps: reject duplicate suggestion fields, bind media provenance to evidence class, and bound/depth-limit companion JSON before recursive parsing. — Plan 02 gap closure before phase completion.
@@ -167,6 +166,6 @@ Items acknowledged for v2 after the preview/audit model is proven:
 
 ## Session Continuity
 
-Last session: 2026-08-18T02:53:58.227Z
-Stopped at: Phase 03 planned
-Resume file: .planning/phases/03-food-taxonomy-categorization-pilot/03-01-PLAN.md
+Last session: 2026-08-20
+Stopped at: Phase 3 completed; proceed to Phase 4 discovery and planning.
+Resume file: .planning/ROADMAP.md

@@ -16,7 +16,7 @@ This milestone turns the deployed product-enrichment baseline into a dependable,
 
 - [ ] **Phase 1: Safety Baseline & Mobile Diagnostics** - Make the deployed enrichment path measurable, failure-tolerant, and verifiable on a real phone.
 - [ ] **Phase 2: Enrichment Contract, Barcode Handoff & Secure Media** - Deliver duplicate-safe, review-before-save structured enrichment and hardened package imagery.
-- [ ] **Phase 3: Food Taxonomy & Categorization Pilot** - Establish and validate stable household food identities before any bulk classification.
+- [x] **Phase 3: Food Taxonomy & Categorization Pilot** - Establish and validate stable household food identities before any bulk classification. (completed 2026-08-20)
 - [ ] **Phase 4: Reusable Conversion Model** - Provide deterministic universal and food-type conversions without breaking existing Grocy quantity behavior.
 - [ ] **Phase 5: Bulk Maintenance & Recovery Engine** - Give users one immutable, auditable, conflict-safe workflow for reviewed bulk changes and rollback.
 - [ ] **Phase 6: Inventory Categorization & Conversion Cleanup** - Apply the proven models safely to existing household inventory and redundant conversions.
@@ -280,7 +280,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7. Dual-bra
 |-------|----------------|--------|-----------|
 | 1. Safety Baseline & Mobile Diagnostics | 9/10 | In Progress|  |
 | 2. Enrichment Contract, Barcode Handoff & Secure Media | 17/20 | In Progress|  |
-| 3. Food Taxonomy & Categorization Pilot | 0/TBD | Not started | - |
+| 3. Food Taxonomy & Categorization Pilot | 3/3 plans + gap closure | Complete | 2026-08-20 |
 | 4. Reusable Conversion Model | 0/TBD | Not started | - |
 | 5. Bulk Maintenance & Recovery Engine | 0/TBD | Not started | - |
 | 6. Inventory Categorization & Conversion Cleanup | 0/TBD | Not started | - |

@@ -30,13 +30,13 @@
 
 ### Food Taxonomy and Single-Product Classification
 
-- [ ] **TAX-01**: Maintainer can define a small versioned two-level household food taxonomy with stable IDs/slugs independent of provider display labels.
-- [ ] **TAX-02**: Taxonomy omits baby-food and pet-food types and prevents provider mappings from silently reintroducing them.
-- [ ] **TAX-03**: User can leave a product explicitly `Unclassified` when evidence is absent, conflicting, or below the accepted confidence threshold.
-- [ ] **TAX-04**: User can review and assign exactly one current taxonomy leaf to a product without changing stock amount, stock unit, recipes, prices, history, or location.
-- [ ] **TAX-05**: User can see the provider category evidence, local mapping/ruleset version, confidence, and reason behind a suggested food type.
-- [ ] **TAX-06**: Maintainer can validate taxonomy v1 against all in-scope existing products and explicitly decide whether frozen/preserved state is a food identity or a separate handling/location concern.
-- [ ] **TAX-07**: Maintainer can migrate and version module-owned taxonomy data through namespaced schema objects without colliding with upstream Grocy migrations.
+- [x] **TAX-01**: Maintainer can define a small versioned two-level household food taxonomy with stable IDs/slugs independent of provider display labels.
+- [x] **TAX-02**: Taxonomy omits baby-food and pet-food types and prevents provider mappings from silently reintroducing them.
+- [x] **TAX-03**: User can leave a product explicitly `Unclassified` when evidence is absent, conflicting, or below the accepted confidence threshold.
+- [x] **TAX-04**: User can review and assign exactly one current taxonomy leaf to a product without changing stock amount, stock unit, recipes, prices, history, or location.
+- [x] **TAX-05**: User can see the provider category evidence, local mapping/ruleset version, confidence, and reason behind a suggested food type.
+- [x] **TAX-06**: Maintainer can validate taxonomy v1 against all in-scope existing products and explicitly decide whether frozen/preserved state is a food identity or a separate handling/location concern.
+- [x] **TAX-07**: Maintainer can migrate and version module-owned taxonomy data through namespaced schema objects without colliding with upstream Grocy migrations.
 
 ### Reusable Conversion Model
 
@@ -128,13 +128,13 @@
 | ENR-07 | Phase 2 | Complete |
 | ENR-08 | Phase 2 | Complete |
 | ENR-09 | Phase 2 | Complete |
-| TAX-01 | Phase 3 | Pending |
-| TAX-02 | Phase 3 | Pending |
-| TAX-03 | Phase 3 | Pending |
-| TAX-04 | Phase 3 | Pending |
-| TAX-05 | Phase 3 | Pending |
-| TAX-06 | Phase 3 | Pending |
-| TAX-07 | Phase 3 | Pending |
+| TAX-01 | Phase 3 | Complete |
+| TAX-02 | Phase 3 | Complete |
+| TAX-03 | Phase 3 | Complete |
+| TAX-04 | Phase 3 | Complete |
+| TAX-05 | Phase 3 | Complete |
+| TAX-06 | Phase 3 | Complete |
+| TAX-07 | Phase 3 | Complete |
 | CONV-01 | Phase 4 | Pending |
 | CONV-02 | Phase 4 | Pending |
 | CONV-03 | Phase 4 | Pending |
