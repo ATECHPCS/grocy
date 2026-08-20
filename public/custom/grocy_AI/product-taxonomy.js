@@ -77,7 +77,8 @@
 		if (data.suggested_leaf)
 		{
 			evidence.appendChild(element('p', data.suggested_leaf.label + ' · ' + data.confidence_band + ' confidence'));
-			evidence.appendChild(element('p', 'Provider category: ' + data.provider_category + ' · Ruleset: ' + data.ruleset_version));
+			var sourceLabel = data.evidence_source === 'grocy_product_group' ? 'Grocy product group' : 'Provider food type';
+			evidence.appendChild(element('p', 'Evidence source: ' + sourceLabel + ' · Value: ' + data.provider_category + ' · Ruleset: ' + data.ruleset_version));
 			evidence.appendChild(element('p', 'Reason: ' + data.reason_code));
 		}
 		else

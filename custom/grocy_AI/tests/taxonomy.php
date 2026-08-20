@@ -9,7 +9,8 @@ function taxonomyPdo(): PDO
 {
 	$pdo = new PDO('sqlite::memory:');
 	$pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-	$pdo->exec('CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT NOT NULL)');
+	$pdo->exec('CREATE TABLE product_groups (id INTEGER PRIMARY KEY, name TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1)');
+	$pdo->exec('CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT NOT NULL, product_group_id INTEGER NULL)');
 	$pdo->exec("INSERT INTO products (id, name) VALUES (1, 'Fixture product')");
 	return $pdo;
 }
@@ -85,7 +86,7 @@ function runTaxonomyApi(): never
 	$pdo = taxonomyPdo();
 	$service = new GrocyAiTaxonomyService($pdo);
 	$result = $service->ReadProductTaxonomy(1);
-	$allowed = ['product_id', 'current_leaf', 'suggested_leaf', 'ruleset_version', 'provider_category', 'confidence_band', 'reason_code'];
+	$allowed = ['product_id', 'current_leaf', 'suggested_leaf', 'evidence_source', 'ruleset_version', 'provider_category', 'confidence_band', 'reason_code'];
 	if (array_keys($result) !== $allowed || $result['suggested_leaf'] !== null || $result['reason_code'] !== 'no_accepted_evidence')
 	{
 		expectedRed('EXPECTED_RED: taxonomy-api', 'Unknown evidence must return the closed Unclassified DTO');
@@ -97,6 +98,20 @@ function runTaxonomyApi(): never
 	if ($result['suggested_leaf'] !== null || $result['reason_code'] !== 'excluded_mapping')
 	{
 		expectedRed('EXPECTED_RED: taxonomy-api', 'Excluded provider evidence must fail closed');
+	}
+
+	$pdo->prepare('INSERT INTO product_groups (id, name, active) VALUES (?, ?, ?)')->execute([1, 'Seafood', 1]);
+	$pdo->prepare('UPDATE products SET product_group_id = ? WHERE id = ?')->execute([1, 1]);
+	$pdo->prepare('UPDATE grocy_ai_taxonomy_evidence SET provider_category = ?, confidence_band = ?, reason_code = ? WHERE product_id = ?')
+		->execute(['produce', 'high', 'provider_category', 1]);
+	$result = $service->ReadProductTaxonomy(1);
+	if (($result['suggested_leaf']['slug'] ?? null) !== 'meat-seafood'
+		|| $result['evidence_source'] !== 'grocy_product_group'
+		|| $result['provider_category'] !== 'Seafood'
+		|| $result['reason_code'] !== 'mapped_grocy_product_group'
+		|| (int)$pdo->query('SELECT product_group_id FROM products WHERE id = 1')->fetchColumn() !== 1)
+	{
+		expectedRed('EXPECTED_RED: taxonomy-api', 'An active Grocy product group must provide read-only local taxonomy evidence ahead of provider evidence');
 	}
 
 	foreach ([0, -1, 2] as $productId)
