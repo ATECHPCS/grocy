@@ -109,6 +109,7 @@ class GrocyAiTaxonomyService
 			'product_id' => $productId,
 			'current_leaf' => $currentLeaf,
 			'suggested_leaf' => $evidence['suggested_leaf'],
+			'evidence_source' => $evidence['evidence_source'],
 			'ruleset_version' => GrocyAiTaxonomyMigration::VERSION,
 			'provider_category' => $evidence['provider_category'],
 			'confidence_band' => $evidence['confidence_band'],
@@ -199,6 +200,12 @@ class GrocyAiTaxonomyService
 
 	private function Evidence(int $productId): array
 	{
+		$productGroup = $this->ProductGroupEvidence($productId);
+		if ($productGroup !== null)
+		{
+			return $productGroup;
+		}
+
 		$statement = $this->Db->prepare('SELECT provider_category, mapping_version, confidence_band, reason_code FROM grocy_ai_taxonomy_evidence WHERE product_id = ?');
 		$statement->execute([$productId]);
 		$evidence = $statement->fetch(PDO::FETCH_ASSOC);
@@ -226,9 +233,38 @@ class GrocyAiTaxonomyService
 
 		return [
 			'suggested_leaf' => $this->LeafBySlug($mapping['target_slug']),
+			'evidence_source' => 'provider_food_type',
 			'provider_category' => $providerCategory,
 			'confidence_band' => $evidence['confidence_band'],
 			'reason_code' => 'mapped_provider_category'
+		];
+	}
+
+	private function ProductGroupEvidence(int $productId): ?array
+	{
+		$statement = $this->Db->prepare('SELECT product_group.name FROM products INNER JOIN product_groups AS product_group ON product_group.id = products.product_group_id WHERE products.id = ? AND product_group.active = 1');
+		$statement->execute([$productId]);
+		$productGroup = $statement->fetchColumn();
+		if (!is_string($productGroup) || trim($productGroup) === '')
+		{
+			return null;
+		}
+
+		$key = self::ProviderCategoryKey($productGroup);
+		$rule = $this->Db->prepare('SELECT target_slug, disposition FROM grocy_ai_taxonomy_mapping_rules WHERE provider_category = ? AND version = ?');
+		$rule->execute([$key, GrocyAiTaxonomyMigration::VERSION]);
+		$mapping = $rule->fetch(PDO::FETCH_ASSOC);
+		if (!is_array($mapping) || $mapping['disposition'] !== 'mapped' || !is_string($mapping['target_slug']))
+		{
+			return null;
+		}
+
+		return [
+			'suggested_leaf' => $this->LeafBySlug($mapping['target_slug']),
+			'evidence_source' => 'grocy_product_group',
+			'provider_category' => $productGroup,
+			'confidence_band' => 'high',
+			'reason_code' => 'mapped_grocy_product_group'
 		];
 	}
 
@@ -269,6 +305,7 @@ class GrocyAiTaxonomyService
 	{
 		return [
 			'suggested_leaf' => null,
+			'evidence_source' => null,
 			'provider_category' => null,
 			'confidence_band' => null,
 			'reason_code' => $reasonCode

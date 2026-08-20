@@ -4,6 +4,7 @@ const evidence = {
 	product_id: 91,
 	current_leaf: null,
 	suggested_leaf: { id: 'leaf-produce', slug: 'produce', label: 'Produce' },
+	evidence_source: 'provider_food_type',
 	ruleset_version: 'v1',
 	provider_category: 'produce',
 	confidence_band: 'high',
@@ -28,6 +29,7 @@ test('@tax03 product taxonomy review is explicit, accessible, and isolated', asy
 	await expect(page.getByRole('heading', { name: 'Food classification' })).toBeVisible();
 	await expect(page.getByText('Why this type is suggested')).toBeVisible();
 	await expect(page.getByText('Produce · high confidence')).toBeVisible();
+	await expect(page.getByText('Evidence source: Provider food type · Value: produce · Ruleset: v1')).toBeVisible();
 	await expect(page.getByRole('radio', { name: 'Produce' })).toBeVisible();
 	await expect(page.getByRole('button', { name: 'Leave Unclassified' })).toBeVisible();
 	await expect(page.locator('.save-product-button').first()).toBeEnabled();

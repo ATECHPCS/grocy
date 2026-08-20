@@ -27,6 +27,11 @@ class GrocyAiTaxonomyMigration
 				self::Seed($pdo);
 				$pdo->prepare('INSERT INTO grocy_ai_taxonomy_migrations (version) VALUES (?)')->execute([self::VERSION]);
 			}
+			else
+			{
+				// Mapping additions are idempotent source-controlled rules, not a new taxonomy version.
+				self::SeedMappings($pdo);
+			}
 
 			if ($startedTransaction)
 			{
@@ -75,15 +80,25 @@ class GrocyAiTaxonomyMigration
 			$nodeStatement->execute([$id, self::VERSION, $parentId, $slug, $label, $depth]);
 		}
 
+		self::SeedMappings($pdo);
+	}
+
+	private static function SeedMappings(PDO $pdo): void
+	{
 		$rules = [
 			['dairy', 'dairy-eggs', 'mapped'],
 			['eggs', 'dairy-eggs', 'mapped'],
 			['produce', 'produce', 'mapped'],
 			['pasta', 'grains-pasta', 'mapped'],
+			['seafood', 'meat-seafood', 'mapped'],
+			['fish', 'meat-seafood', 'mapped'],
+			['meat', 'meat-seafood', 'mapped'],
+			['bakery', 'baking', 'mapped'],
+			['beverages', 'beverages', 'mapped'],
 			['baby_food', null, 'excluded'],
 			['pet_food', null, 'excluded']
 		];
-		$ruleStatement = $pdo->prepare('INSERT INTO grocy_ai_taxonomy_mapping_rules (provider_category, version, target_slug, disposition) VALUES (?, ?, ?, ?)');
+		$ruleStatement = $pdo->prepare('INSERT OR IGNORE INTO grocy_ai_taxonomy_mapping_rules (provider_category, version, target_slug, disposition) VALUES (?, ?, ?, ?)');
 		foreach ($rules as [$category, $targetSlug, $disposition])
 		{
 			$ruleStatement->execute([$category, self::VERSION, $targetSlug, $disposition]);
