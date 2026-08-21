@@ -200,7 +200,7 @@ Plans:
   4. User can review and assign exactly one current taxonomy leaf without changing stock, units, recipes, prices, history, or location.
   5. User can inspect provider evidence, mapping/ruleset version, confidence, and reason, while the maintainer can validate taxonomy v1 against all in-scope products and record the frozen/preserved identity decision.
 
-**Plans**: 6 plans
+**Plans**: 8 plans
 
 Plans:
 - [ ] 04-01-PLAN.md — Characterize dual-branch cache, triggers, and protected consumer behavior before selecting a projection.
@@ -229,11 +229,13 @@ Plans:
 
 Plans:
 - [ ] 04-01-PLAN.md — Characterize dual-branch cache and protected-consumer behavior.
-- [ ] 04-02-PLAN.md — Build inactive reusable catalog and native pre-save validation hook.
-- [ ] 04-03-PLAN.md — Add inactive sourced profiles and deterministic resolution.
-- [ ] 04-04-PLAN.md — Explain product-level conversion status without writes.
-- [ ] 04-05-PLAN.md — Explain resolved-conversion provenance in the native table.
-- [ ] 04-06-PLAN.md — Gate activation on immutable dual-branch proof and expose read-only coverage.
+- [ ] 04-02-PLAN.md — Build inactive reusable catalog and enforce scope-aware AddObject/EditObject pre-save validation.
+- [ ] 04-03-PLAN.md — Add inactive sourced profiles and deterministic conflict-free inspection resolution.
+- [ ] 04-04-PLAN.md — Add revision-safe native form status while retaining normal product-scoped Save.
+- [ ] 04-05-PLAN.md — Explain product-level conversion status without writes.
+- [ ] 04-06-PLAN.md — Explain resolved-conversion provenance in the native table.
+- [ ] 04-07-PLAN.md — Add strictly read-only coverage diagnostics.
+- [ ] 04-08-PLAN.md — Gate the sole reusable activation/projection transaction on immutable dual-branch proof.
 **UI hint:** yes
 
 ### Phase 5: Bulk Maintenance & Recovery Engine
