@@ -33,15 +33,18 @@ created: 2026-08-21
 | Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
 | 04-01-01 | 01 | 1 | CONV-08, CONV-09 | T-04-01 | Disposable main/stable fixture characterization records cache, triggers, and protected consumer outputs without household-data writes | integration | `php custom/grocy_AI/tests/run.php conversion-characterization` | ❌ W0 | ⬜ pending |
-| 04-02-01 | 02 | 2 | CONV-01, CONV-02, CONV-04 | T-04-02 | Dimensions reject invalid universal edges; NIST-backed same-dimension factors remain exact; count/package units remain product-bound | unit | `php custom/grocy_AI/tests/run.php conversion-rules` | ❌ W0 | ⬜ pending |
+| 04-02-01 | 02 | 2 | CONV-01, CONV-02, CONV-04, CONV-06 | T-04-02 | Scope-aware validation rejects invalid reusable edges but permits valid product-scoped package/count/measured-density saves; real native POST/PUT pre-save hook revalidates before row/cache mutation | unit/integration/browser | `php custom/grocy_AI/tests/run.php conversion-rules && php custom/grocy_AI/tests/run.php conversion-native-save-hook && npm --prefix custom/grocy_AI/tests/browser test -- --grep @conv04` | ❌ W0 | ⬜ pending |
 | 04-03-01 | 03 | 3 | CONV-03, CONV-05, CONV-06 | T-04-03 | Explicit taxonomy-only profiles resolve deterministic approximate factors; conflicts, cycles, reciprocal drift, and tolerance violations block projection | integration | `php custom/grocy_AI/tests/run.php conversion-resolution` | ❌ W0 | ⬜ pending |
-| 04-04-01 | 04 | 4 | CONV-05, CONV-07, CONV-09 | T-04-04 | Native product/resolved views show provenance and unavailable states while stock, recipe, purchase, consume, price, transfer, and meal-plan outputs remain equivalent | browser/integration | `npm --prefix custom/grocy_AI/tests/browser test -- --grep @conv04` | ❌ W0 | ⬜ pending |
+| 04-04-01 | 04 | 4 | CONV-05, CONV-07, CONV-09 | T-04-04 | Native product/resolved views show provenance and unavailable states while stock, recipe, purchase, consume, price, transfer, and meal-plan outputs remain equivalent | DOM/unit/browser/integration | `node --test public/custom/grocy_AI/conversion-explanations.test.js && npm --prefix custom/grocy_AI/tests/browser test -- --grep @conv04` | ❌ W0 | ⬜ pending |
 
 ## Wave 0 Requirements
 
 - [ ] `custom/grocy_AI/tests/conversions.php` — deterministic rule graph, source/provenance, and protected-output fixtures.
 - [ ] `custom/grocy_AI/tests/run.php` — focused conversion dispatch cases.
 - [ ] `custom/grocy_AI/tests/browser/specs/conversions.spec.js` — native conversion-screen provenance and unavailable-state assertions if view integration is selected by characterization.
+- [ ] `custom/grocy_AI/tests/browser/fixtures/quantityunitconversionform.html` plus fixture routes — native quantity-unit form Save disablement, exact copy, and stale-response assertions.
+- [ ] `public/custom/grocy_AI/conversion-explanations.test.js` — fast DOM/fixture checks for plans 04-04 through 04-06; Playwright remains E2E coverage.
+- [ ] `public/custom/grocy_AI/conversion-coverage.test.js` — fast DOM/fixture checks for plan 04-06 report sequencing and exact state copy; Playwright remains E2E coverage.
 - [ ] `custom/grocy_AI/tests/conversion-characterization.sh` or equivalent PHP fixture harness — branch-specific cache/trigger/protected-consumer report, never using `GROCY_DATAPATH`.
 
 ## Manual-Only Verifications

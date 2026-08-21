@@ -225,7 +225,15 @@ Plans:
   4. Maintainer can inspect coverage, missing paths, sources, redundancy, cycles, and conflicts, and is blocked by competing paths, reciprocal inconsistency, dimension mismatch, or out-of-tolerance factors.
   5. Maintainer can use a dual-branch characterization result to select the smallest safe resolved/cache projection and verify unchanged stock, recipe, purchase, consumption, price, and quantity-display behavior.
 
-**Plans**: TBD
+**Plans**: 6 plans
+
+Plans:
+- [ ] 04-01-PLAN.md — Characterize dual-branch cache and protected-consumer behavior.
+- [ ] 04-02-PLAN.md — Build inactive reusable catalog and native pre-save validation hook.
+- [ ] 04-03-PLAN.md — Add inactive sourced profiles and deterministic resolution.
+- [ ] 04-04-PLAN.md — Explain product-level conversion status without writes.
+- [ ] 04-05-PLAN.md — Explain resolved-conversion provenance in the native table.
+- [ ] 04-06-PLAN.md — Gate activation on immutable dual-branch proof and expose read-only coverage.
 **UI hint:** yes
 
 ### Phase 5: Bulk Maintenance & Recovery Engine

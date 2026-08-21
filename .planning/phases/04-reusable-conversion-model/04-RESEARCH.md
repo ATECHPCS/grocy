@@ -246,15 +246,14 @@ The current implementation uses cache lookups throughout stock and recipe flows,
 
 ## Open Questions
 
-1. **Which projection mechanism preserves both branches?**
-   - What we know: both checkouts have the same core cache/view files, but controller/service conventions differ. [VERIFIED: codebase grep]
-   - What's unclear: whether a module-triggered cache refresh, an adapter view, or an additive companion cache has identical trigger/update behavior on both production-shaped schemas. [ASSUMED]
-   - Recommendation: do not select it until the dual-branch fixture reports exact schema, `sqlite_master` trigger text, cache deltas, and protected-output comparisons. [ASSUMED]
+1. **Projection mechanism — resolved planning input.**
+   - The initial catalog, candidate validation, and profile resolution are inactive by default. No catalog/profile row may project or activate merely because it is valid.
+   - The only candidate native persistence boundary is `POST /api/objects/quantity_unit_conversions` and `PUT /api/objects/quantity_unit_conversions/{objectId}`, implemented by `GenericEntityApiController::AddObject` and `::EditObject`. Plan 04-02 adds the documented minimal, entity-specific upstream pre-save hook immediately after filtered request parsing and before `createRow()->save()`/`row->update()`; it delegates to the feature-gated module guard and leaves all other entities untouched. The guard repeats candidate validation before native rows or their cache triggers can change. [VERIFIED: codebase grep]
+   - The exact active projection adapter remains deliberately deferred to the Plan 04-01 disposable dual-branch characterization. It may be selected only when immutable main/stable commit IDs, schema/trigger/cache-key manifests, and every protected-consumer comparison are all current and equal. Otherwise the hook may permit valid native product-scoped saves but must leave reusable catalog/profile projection inactive and report the gate blocker. [RESOLVED DEFERRED INPUT]
 
-2. **Which initial profile leaves and FDC records?**
-   - What we know: Phase 3's explicit leaves include `beverages`, `dairy-eggs`, `oils-vinegars`, and `baking`; FDC publishes dated data releases. [VERIFIED: codebase grep] [CITED: https://fdc.nal.usda.gov/download-datasets/]
-   - What's unclear: the exact stable food record/portion pair and whether one profile per broad leaf is defensible for the household. [ASSUMED]
-   - Recommendation: seed no more than three profiles after an implementation-time source calculation and human-readable citation check; begin with water-like beverage, milk, and a single oil only if each aligns with an explicit leaf and source record. [ASSUMED]
+2. **Initial profile/source selection — resolved planning input.**
+   - Select at most three starter profiles only from explicit current Phase 3 taxonomy leaves. Each needs a fixed USDA FDC release identifier, FDC item ID, documented portion-to-factor calculation, named source/version, and a source review fixture before it may be cataloged.
+   - No broad leaf is assumed representative: absent a defensible fixed record/portion pair, the leaf stays unprofiled and returns `Unavailable` with no factor. Water-like beverage, milk, and a single oil are candidates for research verification only, not pre-approved profiles. [RESOLVED DEFERRED INPUT]
 
 ## Environment Availability
 
