@@ -200,7 +200,15 @@ Plans:
   4. User can review and assign exactly one current taxonomy leaf without changing stock, units, recipes, prices, history, or location.
   5. User can inspect provider evidence, mapping/ruleset version, confidence, and reason, while the maintainer can validate taxonomy v1 against all in-scope products and record the frozen/preserved identity decision.
 
-**Plans**: TBD
+**Plans**: 6 plans
+
+Plans:
+- [ ] 04-01-PLAN.md — Characterize dual-branch cache, triggers, and protected consumer behavior before selecting a projection.
+- [ ] 04-02-PLAN.md — Deliver validated exact universal mass/volume rules through native Grocy Save.
+- [ ] 04-03-PLAN.md — Add explicit-taxonomy approximate profiles and deterministic conflict-free resolution.
+- [ ] 04-04-PLAN.md — Explain effective conversion source in the native product conversion area.
+- [ ] 04-05-PLAN.md — Explain source and outcome in the native resolved-conversions view.
+- [ ] 04-06-PLAN.md — Add read-only coverage diagnostics and portable/stable release proof.
 **UI hint:** yes
 
 ### Phase 4: Reusable Conversion Model
