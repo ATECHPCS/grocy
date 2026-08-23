@@ -1,0 +1,34 @@
+{
+  "version": "1.0",
+  "timestamp": "2026-08-23T22:24:15.832Z",
+  "phase": "04",
+  "phase_name": "reusable-conversion-model",
+  "phase_dir": ".planning/phases/04-reusable-conversion-model",
+  "plan": "04-01",
+  "task": 1,
+  "total_tasks": 20,
+  "status": "paused",
+  "completed_tasks": [],
+  "remaining_tasks": [
+    {"id": 1, "name": "04-01 disposable dual-branch cache/consumer characterization", "status": "not_started"},
+    {"id": 2, "name": "04-02 inactive catalog and native save enforcement", "status": "not_started"},
+    {"id": 3, "name": "04-03 inactive sourced profiles and deterministic resolver", "status": "not_started"},
+    {"id": 4, "name": "04-04 native conversion-form validation/status", "status": "not_started"},
+    {"id": 5, "name": "04-05 product status API", "status": "not_started"},
+    {"id": 6, "name": "04-09 product provenance UI/browser proof", "status": "not_started"},
+    {"id": 7, "name": "04-06 resolved-conversion provenance", "status": "not_started"},
+    {"id": 8, "name": "04-07 read-only coverage diagnostics", "status": "not_started"},
+    {"id": 9, "name": "04-08 evidence-gated activation and release parity", "status": "not_started"},
+    {"id": 10, "name": "04-10 maintainer-only evidence-gated promotion command", "status": "not_started"}
+  ],
+  "blockers": [],
+  "human_actions_pending": [],
+  "decisions": [
+    {"decision": "Generic native universal conversion POST/PUT must fail closed or create only an inactive revision, including after activation.", "rationale": "Native writes can rebuild Grocy's resolved cache and bypass the immutable dual-branch safety gate.", "phase": "04"},
+    {"decision": "Only ActivateVerifiedRuleset, invoked by the documented maintainer CLI after named current main/stable proof artifacts pass, may promote a universal revision.", "rationale": "Keeps cache projection deterministic and evidence-gated while preserving product-scoped native saves.", "phase": "04"},
+    {"decision": "Product-scoped package/count and measured-density conversions remain normal Grocy Save operations; existing product-specific conversions are not cleaned up until Phase 6.", "rationale": "Preserves existing household conversion behavior and Phase 6 review boundary.", "phase": "04"}
+  ],
+  "uncommitted_files": [],
+  "next_action": "Run $gsd-resume-work, then $gsd-execute-phase 4; begin with Plan 04-01's disposable dual-branch characterization only.",
+  "context_notes": "Phase 4 planning is complete and independently verified. Ten sequential plans cover CONV-01 through CONV-09, decision coverage is 15/15, and no implementation work has begun. Do not deploy or touch household data during characterization."
+}
