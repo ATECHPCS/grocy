@@ -203,12 +203,14 @@ Plans:
 **Plans**: 8 plans
 
 Plans:
+
 - [ ] 04-01-PLAN.md — Characterize dual-branch cache, triggers, and protected consumer behavior before selecting a projection.
 - [ ] 04-02-PLAN.md — Deliver validated exact universal mass/volume rules through native Grocy Save.
 - [ ] 04-03-PLAN.md — Add explicit-taxonomy approximate profiles and deterministic conflict-free resolution.
 - [ ] 04-04-PLAN.md — Explain effective conversion source in the native product conversion area.
 - [ ] 04-05-PLAN.md — Explain source and outcome in the native resolved-conversions view.
 - [ ] 04-06-PLAN.md — Add read-only coverage diagnostics and portable/stable release proof.
+
 **UI hint:** yes
 
 ### Phase 4: Reusable Conversion Model
@@ -228,16 +230,51 @@ Plans:
 **Plans**: 10 plans
 
 Plans:
+**Wave 1**
+
 - [ ] 04-01-PLAN.md — Characterize dual-branch cache and protected-consumer behavior.
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 04-02-PLAN.md — Build inactive reusable catalog and enforce scope-aware AddObject/EditObject pre-save validation.
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
 - [ ] 04-03-PLAN.md — Add inactive sourced profiles and deterministic conflict-free inspection resolution.
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
 - [ ] 04-04-PLAN.md — Add revision-safe native form status while retaining normal product-scoped Save.
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
 - [ ] 04-05-PLAN.md — Explain product-level conversion status without writes.
+
+**Wave 6** *(blocked on Wave 5 completion)*
+
 - [ ] 04-09-PLAN.md — Render product conversion provenance without a mutation or activation path.
+
+**Wave 7** *(blocked on Wave 6 completion)*
+
 - [ ] 04-06-PLAN.md — Explain resolved-conversion provenance in the native table.
+
+**Wave 8** *(blocked on Wave 7 completion)*
+
 - [ ] 04-07-PLAN.md — Add strictly read-only coverage diagnostics.
+
+**Wave 9** *(blocked on Wave 8 completion)*
+
 - [ ] 04-08-PLAN.md — Gate the sole reusable activation/projection transaction on immutable dual-branch proof.
+
+**Wave 10** *(blocked on Wave 9 completion)*
+
 - [ ] 04-10-PLAN.md — Add the maintainer-only, evidence-gated command as the sole operational promotion path.
+
+**Cross-cutting constraints:**
+
+- A product editor can distinguish product override, approximate profile, universal default, unavailable, and blocked states beside native conversions.
+- Package-derived facts can be reviewed but only the existing native Save action persists a product conversion.
+
 **UI hint:** yes
 
 ### Phase 5: Bulk Maintenance & Recovery Engine
