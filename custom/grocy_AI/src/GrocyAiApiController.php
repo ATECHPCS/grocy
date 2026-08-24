@@ -213,6 +213,17 @@ class GrocyAiApiController extends BaseApiController
 			{
 				throw new \RuntimeException('conversion_validation_state_unavailable');
 			}
+			$catalog = $database->query('SELECT unit_key, dimension, metric_factor, source_version FROM grocy_ai_conversion_catalog_units ORDER BY unit_key')->fetchAll(\PDO::FETCH_ASSOC);
+			if ($catalog !== self::ExpectedConversionCatalogSeed())
+			{
+				throw new \RuntimeException('conversion_validation_catalog_invalid');
+			}
+			$rules = $database->prepare('SELECT from_unit_key, to_unit_key, factor, source_version FROM grocy_ai_conversion_rules WHERE revision_id = ? ORDER BY from_unit_key, to_unit_key');
+			$rules->execute([GrocyAiConversionMigration::INACTIVE_REVISION_ID]);
+			if ($rules->fetchAll(\PDO::FETCH_ASSOC) !== self::ExpectedConversionRuleSeed())
+			{
+				throw new \RuntimeException('conversion_validation_rules_invalid');
+			}
 			return $this->ApiResponse($response, (new GrocyAiConversionService($database, false))->ValidateNativeConversionBeforeWrite($candidate, $objectId));
 		}
 		catch (\Throwable)
@@ -252,6 +263,46 @@ class GrocyAiApiController extends BaseApiController
 		{
 			return $this->GenericErrorResponse($response, 'Selected product image unavailable', 502);
 		}
+	}
+
+	private static function ExpectedConversionCatalogSeed(): array
+	{
+		$sourceVersion = GrocyAiConversionMigration::SOURCE_VERSION;
+		return [
+			['unit_key' => 'cup', 'dimension' => 'volume', 'metric_factor' => '0.2365882365', 'source_version' => $sourceVersion],
+			['unit_key' => 'fl_oz', 'dimension' => 'volume', 'metric_factor' => '0.0295735295625', 'source_version' => $sourceVersion],
+			['unit_key' => 'g', 'dimension' => 'mass', 'metric_factor' => '1', 'source_version' => $sourceVersion],
+			['unit_key' => 'gallon', 'dimension' => 'volume', 'metric_factor' => '3.785411784', 'source_version' => $sourceVersion],
+			['unit_key' => 'kg', 'dimension' => 'mass', 'metric_factor' => '1000', 'source_version' => $sourceVersion],
+			['unit_key' => 'l', 'dimension' => 'volume', 'metric_factor' => '1', 'source_version' => $sourceVersion],
+			['unit_key' => 'lb', 'dimension' => 'mass', 'metric_factor' => '453.59237', 'source_version' => $sourceVersion],
+			['unit_key' => 'mg', 'dimension' => 'mass', 'metric_factor' => '0.001', 'source_version' => $sourceVersion],
+			['unit_key' => 'ml', 'dimension' => 'volume', 'metric_factor' => '0.001', 'source_version' => $sourceVersion],
+			['unit_key' => 'oz', 'dimension' => 'mass', 'metric_factor' => '28.349523125', 'source_version' => $sourceVersion],
+			['unit_key' => 'pint', 'dimension' => 'volume', 'metric_factor' => '0.473176473', 'source_version' => $sourceVersion],
+			['unit_key' => 'quart', 'dimension' => 'volume', 'metric_factor' => '0.946352946', 'source_version' => $sourceVersion],
+			['unit_key' => 'tbsp', 'dimension' => 'volume', 'metric_factor' => '0.01478676478125', 'source_version' => $sourceVersion],
+			['unit_key' => 'tsp', 'dimension' => 'volume', 'metric_factor' => '0.00492892159375', 'source_version' => $sourceVersion]
+		];
+	}
+
+	private static function ExpectedConversionRuleSeed(): array
+	{
+		$sourceVersion = GrocyAiConversionMigration::SOURCE_VERSION;
+		return [
+			['from_unit_key' => 'cup', 'to_unit_key' => 'l', 'factor' => '0.2365882365', 'source_version' => $sourceVersion],
+			['from_unit_key' => 'fl_oz', 'to_unit_key' => 'l', 'factor' => '0.0295735295625', 'source_version' => $sourceVersion],
+			['from_unit_key' => 'gallon', 'to_unit_key' => 'l', 'factor' => '3.785411784', 'source_version' => $sourceVersion],
+			['from_unit_key' => 'kg', 'to_unit_key' => 'g', 'factor' => '1000', 'source_version' => $sourceVersion],
+			['from_unit_key' => 'lb', 'to_unit_key' => 'g', 'factor' => '453.59237', 'source_version' => $sourceVersion],
+			['from_unit_key' => 'mg', 'to_unit_key' => 'g', 'factor' => '0.001', 'source_version' => $sourceVersion],
+			['from_unit_key' => 'ml', 'to_unit_key' => 'l', 'factor' => '0.001', 'source_version' => $sourceVersion],
+			['from_unit_key' => 'oz', 'to_unit_key' => 'g', 'factor' => '28.349523125', 'source_version' => $sourceVersion],
+			['from_unit_key' => 'pint', 'to_unit_key' => 'l', 'factor' => '0.473176473', 'source_version' => $sourceVersion],
+			['from_unit_key' => 'quart', 'to_unit_key' => 'l', 'factor' => '0.946352946', 'source_version' => $sourceVersion],
+			['from_unit_key' => 'tbsp', 'to_unit_key' => 'l', 'factor' => '0.01478676478125', 'source_version' => $sourceVersion],
+			['from_unit_key' => 'tsp', 'to_unit_key' => 'l', 'factor' => '0.00492892159375', 'source_version' => $sourceVersion]
+		];
 	}
 
 	private function DiagnosticResponse(Response $response, array $data, int $status = 200): Response

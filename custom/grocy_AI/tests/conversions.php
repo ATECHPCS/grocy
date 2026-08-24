@@ -297,6 +297,24 @@ function conversionNativeSaveHookAssertRejectedEditWithoutWrite(PDO $pdo, Grocy\
 	conversionAssertSame($before, conversionNativeSaveHookSnapshot($pdo), 'rejected conversion edit must mutate neither native rows, cache, nor native audit');
 }
 
+function conversionValidationAssertTamperBlocked(PDO $pdo, GrocyAI\Controllers\Api\GrocyAiApiController $controller, Psr\Http\Message\ServerRequestInterface $request, string $tamperSql, string $restoreSql, string $caseName): void
+{
+	$pdo->exec($tamperSql);
+	try
+	{
+		$before = conversionValidationReadSnapshot($pdo);
+		$response = $controller->ValidateConversion($request, conversionNativeSaveHookResponse(), []);
+		conversionAssertSame($before, conversionValidationReadSnapshot($pdo), $caseName . ' validation GET must remain comprehensively non-persisting');
+		conversionAssertSame(503, $response->getStatusCode(), $caseName . ' must fail closed despite preserved counts and source version');
+		$body = json_decode((string)$response->getBody(), true, 512, JSON_THROW_ON_ERROR);
+		conversionAssertSame('Conversion validation unavailable', $body['error_message'] ?? null, $caseName . ' must return the bounded unavailable response');
+	}
+	finally
+	{
+		$pdo->exec($restoreSql);
+	}
+}
+
 function runConversionNativeSaveHook(): never
 {
 	if (!defined('GROCY_MODE'))
@@ -366,6 +384,30 @@ function runConversionNativeSaveHook(): never
 	conversionNativeSaveHookAssertRejectedWithoutWrite($pdo, $controller, reusablePackageCandidate(), 'reusable_count_scope');
 	conversionNativeSaveHookAssertRejectedWithoutWrite($pdo, $controller, crossDimensionCandidate(), 'dimension_mismatch');
 	conversionNativeSaveHookAssertRejectedEditWithoutWrite($pdo, $controller, 91, ['product_id' => null, 'from_qu_id' => 1, 'to_qu_id' => 2, 'factor' => '2.2046226218487757'], 'reusable_scope_inactive');
+	conversionValidationAssertTamperBlocked(
+		$pdo, $apiController, $readRequest,
+		"UPDATE grocy_ai_conversion_catalog_units SET metric_factor = '454' WHERE unit_key = 'lb'",
+		"UPDATE grocy_ai_conversion_catalog_units SET metric_factor = '453.59237' WHERE unit_key = 'lb'",
+		'catalog factor tamper'
+	);
+	conversionValidationAssertTamperBlocked(
+		$pdo, $apiController, $readRequest,
+		"UPDATE grocy_ai_conversion_catalog_units SET dimension = 'volume' WHERE unit_key = 'lb'",
+		"UPDATE grocy_ai_conversion_catalog_units SET dimension = 'mass' WHERE unit_key = 'lb'",
+		'catalog dimension tamper'
+	);
+	conversionValidationAssertTamperBlocked(
+		$pdo, $apiController, $readRequest,
+		"UPDATE grocy_ai_conversion_rules SET factor = '1001' WHERE revision_id = 'conversion-catalog-v1' AND from_unit_key = 'kg' AND to_unit_key = 'g'",
+		"UPDATE grocy_ai_conversion_rules SET factor = '1000' WHERE revision_id = 'conversion-catalog-v1' AND from_unit_key = 'kg' AND to_unit_key = 'g'",
+		'rule factor tamper'
+	);
+	conversionValidationAssertTamperBlocked(
+		$pdo, $apiController, $readRequest,
+		"UPDATE grocy_ai_conversion_rules SET to_unit_key = 'lb' WHERE revision_id = 'conversion-catalog-v1' AND from_unit_key = 'kg' AND to_unit_key = 'g'",
+		"UPDATE grocy_ai_conversion_rules SET to_unit_key = 'g' WHERE revision_id = 'conversion-catalog-v1' AND from_unit_key = 'kg' AND to_unit_key = 'lb'",
+		'rule endpoint tamper'
+	);
 
 	$initializedReadSnapshot = conversionValidationReadSnapshot($pdo);
 	$readResponse = $apiController->ValidateConversion($readRequest, conversionNativeSaveHookResponse(), []);
