@@ -231,6 +231,14 @@ function conversionResolutionMissingTaxonomyPdo(): PDO
 	return $pdo;
 }
 
+function conversionResolutionMalformedTaxonomyPdo(): PDO
+{
+	$pdo = conversionResolutionMissingTaxonomyPdo();
+	$pdo->exec("CREATE TABLE grocy_ai_taxonomy_nodes (id TEXT NOT NULL PRIMARY KEY, version TEXT NOT NULL, parent_id TEXT NULL, slug TEXT NOT NULL, depth INTEGER NOT NULL)");
+	$pdo->exec("CREATE TABLE grocy_ai_taxonomy_classifications (product_id INTEGER NOT NULL PRIMARY KEY, leaf_id TEXT NULL)");
+	return $pdo;
+}
+
 function conversionResolutionAssertUnavailable(GrocyAiConversionService $service, int $productId, string $fromUnit, string $toUnit, string $blocker): void
 {
 	$result = $service->InspectSourcedProfile($productId, $fromUnit, $toUnit);
@@ -268,6 +276,23 @@ function runConversionResolution(): never
 	conversionAssertSame(['taxonomy_unavailable'], $taxonomyUnavailable['blockers'] ?? null, 'missing taxonomy module schema must identify taxonomy availability without exposing database errors');
 	conversionAssertSame(null, $taxonomyUnavailable['factor'] ?? null, 'missing taxonomy module schema must not expose a profile factor');
 	conversionAssertSame($missingTaxonomyBefore, conversionResolutionMissingTaxonomySnapshot($missingTaxonomy), 'missing-taxonomy inspection must not bootstrap or mutate module, native conversion, product, or cache state');
+
+	$malformedTaxonomy = conversionResolutionMalformedTaxonomyPdo();
+	GrocyAiConversionMigration::Bootstrap($malformedTaxonomy);
+	$malformedTaxonomyBefore = conversionResolutionMissingTaxonomySnapshot($malformedTaxonomy);
+	try
+	{
+		(new GrocyAiConversionService($malformedTaxonomy, false))->InspectSourcedProfile(1, 'cup', 'g');
+		throw new RuntimeException('malformed taxonomy schema error was converted to an unavailable DTO');
+	}
+	catch (PDOException $ex)
+	{
+		if (!str_contains($ex->getMessage(), 'ruleset_version'))
+		{
+			throw new RuntimeException('unexpected malformed taxonomy schema error');
+		}
+	}
+	conversionAssertSame($malformedTaxonomyBefore, conversionResolutionMissingTaxonomySnapshot($malformedTaxonomy), 'malformed taxonomy inspection must propagate without mutating module, native conversion, product, or cache state');
 
 	$protectedBeforeInspection = conversionResolutionProtectedSnapshot($pdo);
 	$water = (new GrocyAiConversionService($pdo, false))->InspectSourcedProfile(1, 'cup', 'g');

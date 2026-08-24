@@ -119,16 +119,13 @@ class GrocyAiConversionService
 			return $this->ProfileUnavailable('profile_request_invalid');
 		}
 
-		try
-		{
-			$classification = $this->Db->prepare('SELECT node.id, node.slug FROM grocy_ai_taxonomy_classifications AS classification INNER JOIN grocy_ai_taxonomy_nodes AS node ON node.id = classification.leaf_id WHERE classification.product_id = ? AND classification.ruleset_version = ? AND classification.leaf_id IS NOT NULL AND node.version = ? AND node.parent_id IS NOT NULL AND node.depth = 2');
-			$classification->execute([$productId, GrocyAiTaxonomyMigration::VERSION, GrocyAiTaxonomyMigration::VERSION]);
-			$leaf = $classification->fetch(PDO::FETCH_ASSOC);
-		}
-		catch (\PDOException)
+		if (!$this->TaxonomyClassificationsAvailable())
 		{
 			return $this->ProfileUnavailable('taxonomy_unavailable');
 		}
+		$classification = $this->Db->prepare('SELECT node.id, node.slug FROM grocy_ai_taxonomy_classifications AS classification INNER JOIN grocy_ai_taxonomy_nodes AS node ON node.id = classification.leaf_id WHERE classification.product_id = ? AND classification.ruleset_version = ? AND classification.leaf_id IS NOT NULL AND node.version = ? AND node.parent_id IS NOT NULL AND node.depth = 2');
+		$classification->execute([$productId, GrocyAiTaxonomyMigration::VERSION, GrocyAiTaxonomyMigration::VERSION]);
+		$leaf = $classification->fetch(PDO::FETCH_ASSOC);
 		if (!is_array($leaf))
 		{
 			return $this->ProfileUnavailable('explicit_taxonomy_required');
@@ -327,6 +324,13 @@ class GrocyAiConversionService
 	private function ProfileUnavailable(string $blocker): array
 	{
 		return $this->ProfileDto('unavailable', [$blocker], null, null, null, null, null, null, null, null);
+	}
+
+	private function TaxonomyClassificationsAvailable(): bool
+	{
+		$statement = $this->Db->prepare("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?");
+		$statement->execute(['grocy_ai_taxonomy_classifications']);
+		return (int)$statement->fetchColumn() === 1;
 	}
 
 	private function ProfileDto(string $status, array $blockers, ?string $factor, ?string $dimension, ?string $profileKey, ?string $taxonomyLeaf, ?string $sourceName, ?string $sourceItemId, ?string $sourceVersion, ?string $sourceBasis): array
