@@ -78,11 +78,22 @@ function runConversionRules(): never
 	$service = new GrocyAiConversionService($pdo);
 
 	$catalog = $pdo->query('SELECT unit_key, dimension, metric_factor, source_version FROM grocy_ai_conversion_catalog_units ORDER BY unit_key')->fetchAll(PDO::FETCH_ASSOC);
-	$catalogKeys = array_column($catalog, 'unit_key');
-	conversionAssertSame(['cup', 'fl_oz', 'g', 'gallon', 'kg', 'l', 'lb', 'mg', 'ml', 'oz', 'pint', 'quart', 'tbsp', 'tsp'], $catalogKeys, 'catalog must contain exactly the closed mass and volume identities');
-	$lb = array_values(array_filter($catalog, static fn(array $unit): bool => $unit['unit_key'] === 'lb'))[0] ?? null;
-	conversionAssertSame('453.59237', $lb['metric_factor'] ?? null, 'NIST mass factor must retain stored decimal precision');
-	conversionAssertSame('NIST-SP-811-2008-Appendix-B.9', $lb['source_version'] ?? null, 'catalog factor must retain source version');
+	conversionAssertSame([
+		['unit_key' => 'cup', 'dimension' => 'volume', 'metric_factor' => '0.2365882365', 'source_version' => 'NIST-SP-811-2008-Appendix-B.9'],
+		['unit_key' => 'fl_oz', 'dimension' => 'volume', 'metric_factor' => '0.0295735295625', 'source_version' => 'NIST-SP-811-2008-Appendix-B.9'],
+		['unit_key' => 'g', 'dimension' => 'mass', 'metric_factor' => '1', 'source_version' => 'NIST-SP-811-2008-Appendix-B.9'],
+		['unit_key' => 'gallon', 'dimension' => 'volume', 'metric_factor' => '3.785411784', 'source_version' => 'NIST-SP-811-2008-Appendix-B.9'],
+		['unit_key' => 'kg', 'dimension' => 'mass', 'metric_factor' => '1000', 'source_version' => 'NIST-SP-811-2008-Appendix-B.9'],
+		['unit_key' => 'l', 'dimension' => 'volume', 'metric_factor' => '1', 'source_version' => 'NIST-SP-811-2008-Appendix-B.9'],
+		['unit_key' => 'lb', 'dimension' => 'mass', 'metric_factor' => '453.59237', 'source_version' => 'NIST-SP-811-2008-Appendix-B.9'],
+		['unit_key' => 'mg', 'dimension' => 'mass', 'metric_factor' => '0.001', 'source_version' => 'NIST-SP-811-2008-Appendix-B.9'],
+		['unit_key' => 'ml', 'dimension' => 'volume', 'metric_factor' => '0.001', 'source_version' => 'NIST-SP-811-2008-Appendix-B.9'],
+		['unit_key' => 'oz', 'dimension' => 'mass', 'metric_factor' => '28.349523125', 'source_version' => 'NIST-SP-811-2008-Appendix-B.9'],
+		['unit_key' => 'pint', 'dimension' => 'volume', 'metric_factor' => '0.473176473', 'source_version' => 'NIST-SP-811-2008-Appendix-B.9'],
+		['unit_key' => 'quart', 'dimension' => 'volume', 'metric_factor' => '0.946352946', 'source_version' => 'NIST-SP-811-2008-Appendix-B.9'],
+		['unit_key' => 'tbsp', 'dimension' => 'volume', 'metric_factor' => '0.01478676478125', 'source_version' => 'NIST-SP-811-2008-Appendix-B.9'],
+		['unit_key' => 'tsp', 'dimension' => 'volume', 'metric_factor' => '0.00492892159375', 'source_version' => 'NIST-SP-811-2008-Appendix-B.9']
+	], $catalog, 'catalog must contain exactly the source-versioned D-01 identities and factors');
 	conversionAssertSame([], $pdo->query("SELECT name FROM sqlite_master WHERE name LIKE 'cache__quantity_unit_conversions_resolved%'")->fetchAll(PDO::FETCH_COLUMN), 'inactive bootstrap must not project cache objects');
 
 	$result = $service->ValidateNativeConversionBeforeWrite([
@@ -102,9 +113,32 @@ function runConversionRules(): never
 	conversionAssertAllowed($service, productScopedDensityCandidate(), 'product_native');
 	conversionAssertBlocked($service, ['product_id' => null, 'from_qu_id' => 1, 'to_qu_id' => 2, 'factor' => '2.1'], 'factor_tolerance');
 	conversionAssertBlocked($service, ['product_id' => null, 'from_qu_id' => 1, 'to_qu_id' => 2, 'factor' => '2.2046226218487757', 'inactive_revision_id' => 'stale'], 'stale_revision_identity');
+	$pdo->exec("UPDATE grocy_ai_conversion_catalog_units SET source_version = 'tampered-catalog-source' WHERE unit_key = 'lb'");
+	conversionAssertBlocked($service, ['product_id' => null, 'from_qu_id' => 1, 'to_qu_id' => 2, 'factor' => '2.2046226218487757'], 'catalog_source_version_invalid');
+	$pdo->exec("UPDATE grocy_ai_conversion_catalog_units SET source_version = 'NIST-SP-811-2008-Appendix-B.9' WHERE unit_key = 'lb'");
+	$pdo->exec("UPDATE grocy_ai_conversion_catalog_units SET metric_factor = 'NAN', source_version = 'tampered-unrelated-source' WHERE unit_key = 'gallon'");
+	conversionAssertBlocked($service, ['product_id' => null, 'from_qu_id' => 1, 'to_qu_id' => 2, 'factor' => '2.2046226218487757'], 'catalog_source_version_invalid');
+	$pdo->exec("UPDATE grocy_ai_conversion_catalog_units SET metric_factor = '3.785411784', source_version = 'NIST-SP-811-2008-Appendix-B.9' WHERE unit_key = 'gallon'");
+	$pdo->exec("UPDATE grocy_ai_conversion_revisions SET source_version = 'tampered-revision-source' WHERE id = 'conversion-catalog-v1'");
+	$revisionSource = $service->ValidateNativeConversionBeforeWrite(['product_id' => null, 'from_qu_id' => 1, 'to_qu_id' => 2, 'factor' => '2.2046226218487757'], null);
+	conversionAssertSame('blocked', $revisionSource['status'], 'tampered revision provenance must block reusable validation');
+	conversionAssertSame(['revision_source_version_invalid'], $revisionSource['blockers'], 'tampered revision provenance must return a bounded blocker');
+	conversionAssertSame('tampered-revision-source', $revisionSource['source_version'], 'validation DTO must disclose stored, not hard-coded, revision provenance');
+	$pdo->exec("UPDATE grocy_ai_conversion_revisions SET source_version = 'NIST-SP-811-2008-Appendix-B.9' WHERE id = 'conversion-catalog-v1'");
+	$pdo->exec("UPDATE grocy_ai_conversion_rules SET source_version = 'tampered-rule-source' WHERE revision_id = 'conversion-catalog-v1' AND from_unit_key = 'kg' AND to_unit_key = 'g'");
+	conversionAssertBlocked($service, ['product_id' => null, 'from_qu_id' => 1, 'to_qu_id' => 2, 'factor' => '2.2046226218487757'], 'catalog_rule_source_version_invalid');
+	$pdo->exec("UPDATE grocy_ai_conversion_rules SET source_version = 'NIST-SP-811-2008-Appendix-B.9' WHERE revision_id = 'conversion-catalog-v1' AND from_unit_key = 'kg' AND to_unit_key = 'g'");
 	$pdo->exec("UPDATE grocy_ai_conversion_rules SET factor = '1001' WHERE revision_id = 'conversion-catalog-v1' AND from_unit_key = 'kg' AND to_unit_key = 'g'");
 	conversionAssertBlocked($service, ['product_id' => null, 'from_qu_id' => 1, 'to_qu_id' => 2, 'factor' => '2.2046226218487757'], 'catalog_rule_invalid');
 	$pdo->exec("UPDATE grocy_ai_conversion_rules SET factor = '1000' WHERE revision_id = 'conversion-catalog-v1' AND from_unit_key = 'kg' AND to_unit_key = 'g'");
+	$pdo->prepare('INSERT INTO grocy_ai_conversion_rules (revision_id, from_unit_key, to_unit_key, factor, source_version) VALUES (?, ?, ?, ?, ?)')
+		->execute(['conversion-catalog-v1', 'g', 'kg', '0.0011', 'NIST-SP-811-2008-Appendix-B.9']);
+	conversionAssertBlocked($service, ['product_id' => null, 'from_qu_id' => 1, 'to_qu_id' => 2, 'factor' => '2.2046226218487757'], 'reciprocal_mismatch');
+	$pdo->exec("DELETE FROM grocy_ai_conversion_rules WHERE revision_id = 'conversion-catalog-v1' AND from_unit_key = 'g' AND to_unit_key = 'kg'");
+	$pdo->prepare('INSERT INTO grocy_ai_conversion_rules (revision_id, from_unit_key, to_unit_key, factor, source_version) VALUES (?, ?, ?, ?, ?)')
+		->execute(['conversion-catalog-v1', 'kg', 'g', '1001', 'NIST-SP-811-2008-Appendix-B.9']);
+	conversionAssertBlocked($service, ['product_id' => null, 'from_qu_id' => 1, 'to_qu_id' => 2, 'factor' => '2.2046226218487757'], 'competing_path');
+	$pdo->exec("DELETE FROM grocy_ai_conversion_rules WHERE revision_id = 'conversion-catalog-v1' AND from_unit_key = 'kg' AND to_unit_key = 'g' AND factor = '1001'");
 
 	$pdo->prepare('INSERT INTO grocy_ai_conversion_rules (revision_id, from_unit_key, to_unit_key, factor, source_version) VALUES (?, ?, ?, ?, ?)')
 		->execute(['conversion-catalog-v1', 'kg', 'lb', '2.2046226218487757', 'NIST-SP-811-2008-Appendix-B.9']);

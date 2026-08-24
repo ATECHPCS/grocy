@@ -51,12 +51,34 @@ class GrocyAiConversionService
 			return $this->Blocked('reusable', 'unit_not_cataloged');
 		}
 
+		$revision = $this->InactiveRevision();
+		if ($revision === null)
+		{
+			return $this->Blocked('reusable', 'inactive_revision_unavailable', null);
+		}
+		$sourceVersion = (string)$revision['source_version'];
+		if ($sourceVersion !== GrocyAiConversionMigration::SOURCE_VERSION)
+		{
+			return $this->Blocked('reusable', 'revision_source_version_invalid', $sourceVersion);
+		}
+
 		$catalog = $this->Catalog();
+		foreach ($catalog as $unit)
+		{
+			if ($unit['source_version'] !== $sourceVersion)
+			{
+				return $this->Blocked('reusable', 'catalog_source_version_invalid', $sourceVersion);
+			}
+		}
 		$from = $catalog[$units['from_key']] ?? null;
 		$to = $catalog[$units['to_key']] ?? null;
 		if ($from === null || $to === null)
 		{
 			return $this->Blocked('reusable', 'unit_not_cataloged');
+		}
+		if ($from['metric_factor'] === null || $from['metric_factor'] <= 0 || $to['metric_factor'] === null || $to['metric_factor'] <= 0)
+		{
+			return $this->Blocked('reusable', 'catalog_unit_invalid', $sourceVersion);
 		}
 		if ($from['dimension'] !== $to['dimension'])
 		{
@@ -66,23 +88,23 @@ class GrocyAiConversionService
 		{
 			return $this->Blocked('reusable', 'stale_revision_identity');
 		}
-		if (($candidate['source_version'] ?? GrocyAiConversionMigration::SOURCE_VERSION) !== GrocyAiConversionMigration::SOURCE_VERSION)
+		if (($candidate['source_version'] ?? $sourceVersion) !== $sourceVersion)
 		{
-			return $this->Blocked('reusable', 'stale_source_version');
+			return $this->Blocked('reusable', 'stale_source_version', $sourceVersion);
 		}
 
-		$graphBlocker = $this->ValidateCatalogGraph($catalog);
+		$graphBlocker = $this->ValidateCatalogGraph($catalog, $sourceVersion);
 		if ($graphBlocker !== null)
 		{
-			return $this->Blocked('reusable', $graphBlocker);
+			return $this->Blocked('reusable', $graphBlocker, $sourceVersion);
 		}
 		$expected = $from['metric_factor'] / $to['metric_factor'];
 		if ($this->RelativeDifference($factor, $expected) > self::RELATIVE_TOLERANCE)
 		{
-			return $this->Blocked('reusable', 'factor_tolerance');
+			return $this->Blocked('reusable', 'factor_tolerance', $sourceVersion);
 		}
 
-		return $this->Dto('inactive', 'reusable', [], $this->CandidateFactor($candidate), $from['dimension']);
+		return $this->Dto('inactive', 'reusable', [], $this->CandidateFactor($candidate), $from['dimension'], $sourceVersion);
 	}
 
 	private function CandidateUnits(array $candidate): ?array
@@ -119,33 +141,49 @@ class GrocyAiConversionService
 
 	private function Catalog(): array
 	{
-		$rows = $this->Db->query('SELECT unit_key, dimension, metric_factor FROM grocy_ai_conversion_catalog_units')->fetchAll(PDO::FETCH_ASSOC);
+		$rows = $this->Db->query('SELECT unit_key, dimension, metric_factor, source_version FROM grocy_ai_conversion_catalog_units')->fetchAll(PDO::FETCH_ASSOC);
 		$catalog = [];
 		foreach ($rows as $row)
 		{
-			$factor = $this->Factor($row['metric_factor']);
-			if ($factor === null || $factor <= 0)
-			{
-				continue;
-			}
-			$catalog[(string)$row['unit_key']] = ['dimension' => (string)$row['dimension'], 'metric_factor' => $factor];
+			$catalog[(string)$row['unit_key']] = [
+				'dimension' => (string)$row['dimension'],
+				'metric_factor' => $this->Factor($row['metric_factor']),
+				'source_version' => (string)$row['source_version']
+			];
 		}
 		return $catalog;
 	}
 
-	private function ValidateCatalogGraph(array $catalog): ?string
+	private function InactiveRevision(): ?array
 	{
-		$statement = $this->Db->prepare('SELECT from_unit_key, to_unit_key, factor FROM grocy_ai_conversion_rules WHERE revision_id = ?');
+		$statement = $this->Db->prepare('SELECT id, status, source_version FROM grocy_ai_conversion_revisions WHERE id = ?');
+		$statement->execute([GrocyAiConversionMigration::INACTIVE_REVISION_ID]);
+		$revision = $statement->fetch(PDO::FETCH_ASSOC);
+		if (!is_array($revision) || $revision['status'] !== 'inactive')
+		{
+			return null;
+		}
+		return $revision;
+	}
+
+	private function ValidateCatalogGraph(array $catalog, string $sourceVersion): ?string
+	{
+		$statement = $this->Db->prepare('SELECT from_unit_key, to_unit_key, factor, source_version FROM grocy_ai_conversion_rules WHERE revision_id = ?');
 		$statement->execute([GrocyAiConversionMigration::INACTIVE_REVISION_ID]);
 		$edges = [];
 		$direct = [];
+		$rules = [];
 		foreach ($statement->fetchAll(PDO::FETCH_ASSOC) as $rule)
 		{
 			$from = (string)$rule['from_unit_key'];
 			$to = (string)$rule['to_unit_key'];
 			$factor = $this->Factor($rule['factor']);
+			if ((string)$rule['source_version'] !== $sourceVersion)
+			{
+				return 'catalog_rule_source_version_invalid';
+			}
 			if ($factor === null || $factor <= 0 || !isset($catalog[$from], $catalog[$to]) || $catalog[$from]['dimension'] !== $catalog[$to]['dimension']
-				|| $this->RelativeDifference($factor, $catalog[$from]['metric_factor'] / $catalog[$to]['metric_factor']) > self::RELATIVE_TOLERANCE)
+				|| $catalog[$from]['metric_factor'] === null || $catalog[$from]['metric_factor'] <= 0 || $catalog[$to]['metric_factor'] === null || $catalog[$to]['metric_factor'] <= 0)
 			{
 				return 'catalog_rule_invalid';
 			}
@@ -160,6 +198,18 @@ class GrocyAiConversionService
 				return 'reciprocal_mismatch';
 			}
 			$direct[$key] = $factor;
+			$rules[] = ['from' => $from, 'to' => $to, 'factor' => $factor];
+		}
+
+		foreach ($rules as $rule)
+		{
+			$from = $rule['from'];
+			$to = $rule['to'];
+			$factor = $rule['factor'];
+			if ($this->RelativeDifference($factor, $catalog[$from]['metric_factor'] / $catalog[$to]['metric_factor']) > self::RELATIVE_TOLERANCE)
+			{
+				return 'catalog_rule_invalid';
+			}
 			$edges[$from][] = $to;
 			$edges[$to][] = $from;
 		}
@@ -196,7 +246,7 @@ class GrocyAiConversionService
 		return false;
 	}
 
-	private function Dto(string $status, string $scope, array $blockers, ?string $factor, ?string $dimension): array
+	private function Dto(string $status, string $scope, array $blockers, ?string $factor, ?string $dimension, ?string $sourceVersion = null): array
 	{
 		return [
 			'status' => $status,
@@ -204,14 +254,14 @@ class GrocyAiConversionService
 			'blockers' => $blockers,
 			'factor' => $factor,
 			'dimension' => $dimension,
-			'source_version' => GrocyAiConversionMigration::SOURCE_VERSION,
+			'source_version' => $sourceVersion ?? GrocyAiConversionMigration::SOURCE_VERSION,
 			'inactive_revision_id' => GrocyAiConversionMigration::INACTIVE_REVISION_ID
 		];
 	}
 
-	private function Blocked(string $scope, string $blocker): array
+	private function Blocked(string $scope, string $blocker, ?string $sourceVersion = null): array
 	{
-		return $this->Dto('blocked', $scope, [$blocker], null, null);
+		return $this->Dto('blocked', $scope, [$blocker], null, null, $sourceVersion);
 	}
 
 	private function Factor(mixed $value): ?float
