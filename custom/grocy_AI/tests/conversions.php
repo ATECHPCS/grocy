@@ -2,6 +2,127 @@
 
 declare(strict_types=1);
 
+use GrocyAI\Services\GrocyAiConversionMigration;
+use GrocyAI\Services\GrocyAiConversionService;
+
+function conversionRulesPdo(): PDO
+{
+	$pdo = new PDO('sqlite::memory:');
+	$pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+	$pdo->exec('CREATE TABLE quantity_units (id INTEGER NOT NULL PRIMARY KEY, name TEXT NOT NULL UNIQUE)');
+	$pdo->exec('CREATE TABLE quantity_unit_conversions (id INTEGER NOT NULL PRIMARY KEY, product_id INTEGER NULL, from_qu_id INTEGER NOT NULL, to_qu_id INTEGER NOT NULL, factor REAL NOT NULL)');
+	$units = [
+		[1, 'kg'], [2, 'lb'], [3, 'mL'], [4, 'L'], [5, 'pack'], [6, 'count'], [7, 'g'], [8, 'tsp'], [9, 'fl oz'], [10, 'piece']
+	];
+	$insert = $pdo->prepare('INSERT INTO quantity_units (id, name) VALUES (?, ?)');
+	foreach ($units as [$id, $name])
+	{
+		$insert->execute([$id, $name]);
+	}
+	$pdo->exec('INSERT INTO quantity_unit_conversions (id, product_id, from_qu_id, to_qu_id, factor) VALUES (91, 11, 5, 7, 12)');
+	return $pdo;
+}
+
+function conversionAssertSame(mixed $expected, mixed $actual, string $message = ''): void
+{
+	if ($expected !== $actual)
+	{
+		throw new RuntimeException($message === '' ? 'conversion_assert_same_failed' : $message);
+	}
+}
+
+function conversionAssertBlocked(GrocyAiConversionService $service, array $candidate, string $blocker): void
+{
+	$result = $service->ValidateNativeConversionBeforeWrite($candidate, null);
+	conversionAssertSame('blocked', $result['status'], 'invalid conversion must be blocked');
+	conversionAssertSame([$blocker], $result['blockers'], 'conversion blocker must be bounded and deterministic');
+}
+
+function conversionAssertAllowed(GrocyAiConversionService $service, array $candidate, string $status): void
+{
+	$result = $service->ValidateNativeConversionBeforeWrite($candidate, null);
+	conversionAssertSame($status, $result['status'], 'eligible conversion must retain its scope status');
+	conversionAssertSame([], $result['blockers'], 'eligible conversion must have no blockers');
+}
+
+function crossDimensionCandidate(): array
+{
+	return ['product_id' => null, 'from_qu_id' => 7, 'to_qu_id' => 3, 'factor' => '1'];
+}
+
+function reusablePackageCandidate(): array
+{
+	return ['product_id' => null, 'from_qu_id' => 5, 'to_qu_id' => 7, 'factor' => '12'];
+}
+
+function productScopedPackageCandidate(): array
+{
+	return ['product_id' => 11, 'from_qu_id' => 5, 'to_qu_id' => 7, 'factor' => '12'];
+}
+
+function productScopedDensityCandidate(): array
+{
+	return ['product_id' => 11, 'from_qu_id' => 7, 'to_qu_id' => 3, 'factor' => '0.9'];
+}
+
+function runConversionRules(): never
+{
+	if (!class_exists(GrocyAiConversionMigration::class) || !class_exists(GrocyAiConversionService::class))
+	{
+		expectedRed('EXPECTED_RED: conversion-rules', 'The inactive conversion migration and service are not implemented');
+	}
+
+	$pdo = conversionRulesPdo();
+	$nativeBefore = $pdo->query('SELECT * FROM quantity_unit_conversions ORDER BY id')->fetchAll(PDO::FETCH_ASSOC);
+	GrocyAiConversionMigration::Bootstrap($pdo);
+	$service = new GrocyAiConversionService($pdo);
+
+	$catalog = $pdo->query('SELECT unit_key, dimension, metric_factor, source_version FROM grocy_ai_conversion_catalog_units ORDER BY unit_key')->fetchAll(PDO::FETCH_ASSOC);
+	$catalogKeys = array_column($catalog, 'unit_key');
+	conversionAssertSame(['cup', 'fl_oz', 'g', 'gallon', 'kg', 'l', 'lb', 'mg', 'ml', 'oz', 'pint', 'quart', 'tbsp', 'tsp'], $catalogKeys, 'catalog must contain exactly the closed mass and volume identities');
+	$lb = array_values(array_filter($catalog, static fn(array $unit): bool => $unit['unit_key'] === 'lb'))[0] ?? null;
+	conversionAssertSame('453.59237', $lb['metric_factor'] ?? null, 'NIST mass factor must retain stored decimal precision');
+	conversionAssertSame('NIST-SP-811-2008-Appendix-B.9', $lb['source_version'] ?? null, 'catalog factor must retain source version');
+	conversionAssertSame([], $pdo->query("SELECT name FROM sqlite_master WHERE name LIKE 'cache__quantity_unit_conversions_resolved%'")->fetchAll(PDO::FETCH_COLUMN), 'inactive bootstrap must not project cache objects');
+
+	$result = $service->ValidateNativeConversionBeforeWrite([
+		'product_id' => null, 'from_qu_id' => 1, 'to_qu_id' => 2, 'factor' => '2.2046226218487757'
+	], null);
+	conversionAssertSame('inactive', $result['status'], 'valid reusable mass candidate must remain inactive');
+	conversionAssertSame(['status', 'scope', 'blockers', 'factor', 'dimension', 'source_version', 'inactive_revision_id'], array_keys($result), 'conversion validation DTO keys must stay fixed');
+	conversionAssertSame('mass', $result['dimension'], 'same-dimension catalog candidate must disclose its dimension');
+	conversionAssertSame('2.2046226218487757', $result['factor'], 'candidate factor must retain precision without display rounding');
+	conversionAssertSame('conversion-catalog-v1', $result['inactive_revision_id'], 'valid reusable candidate must identify its inactive revision');
+
+	conversionAssertBlocked($service, ['product_id' => null, 'from_qu_id' => 1, 'to_qu_id' => 2, 'factor' => '0'], 'factor_non_positive');
+	conversionAssertBlocked($service, ['product_id' => null, 'from_qu_id' => 1, 'to_qu_id' => 2, 'factor' => 'NAN'], 'factor_not_finite');
+	conversionAssertBlocked($service, crossDimensionCandidate(), 'dimension_mismatch');
+	conversionAssertBlocked($service, reusablePackageCandidate(), 'reusable_count_scope');
+	conversionAssertAllowed($service, productScopedPackageCandidate(), 'product_native');
+	conversionAssertAllowed($service, productScopedDensityCandidate(), 'product_native');
+	conversionAssertBlocked($service, ['product_id' => null, 'from_qu_id' => 1, 'to_qu_id' => 2, 'factor' => '2.1'], 'factor_tolerance');
+	conversionAssertBlocked($service, ['product_id' => null, 'from_qu_id' => 1, 'to_qu_id' => 2, 'factor' => '2.2046226218487757', 'inactive_revision_id' => 'stale'], 'stale_revision_identity');
+	$pdo->exec("UPDATE grocy_ai_conversion_rules SET factor = '1001' WHERE revision_id = 'conversion-catalog-v1' AND from_unit_key = 'kg' AND to_unit_key = 'g'");
+	conversionAssertBlocked($service, ['product_id' => null, 'from_qu_id' => 1, 'to_qu_id' => 2, 'factor' => '2.2046226218487757'], 'catalog_rule_invalid');
+	$pdo->exec("UPDATE grocy_ai_conversion_rules SET factor = '1000' WHERE revision_id = 'conversion-catalog-v1' AND from_unit_key = 'kg' AND to_unit_key = 'g'");
+
+	$pdo->prepare('INSERT INTO grocy_ai_conversion_rules (revision_id, from_unit_key, to_unit_key, factor, source_version) VALUES (?, ?, ?, ?, ?)')
+		->execute(['conversion-catalog-v1', 'kg', 'lb', '2.2046226218487757', 'NIST-SP-811-2008-Appendix-B.9']);
+	conversionAssertBlocked($service, ['product_id' => null, 'from_qu_id' => 1, 'to_qu_id' => 2, 'factor' => '2.2046226218487757'], 'cycle_detected');
+
+	if ($nativeBefore !== $pdo->query('SELECT * FROM quantity_unit_conversions ORDER BY id')->fetchAll(PDO::FETCH_ASSOC))
+	{
+		throw new RuntimeException('inactive_catalog_mutated_native_conversions');
+	}
+	if ((int)$pdo->query('SELECT COUNT(*) FROM grocy_ai_conversion_revisions WHERE status = \'inactive\'')->fetchColumn() !== 1)
+	{
+		throw new RuntimeException('inactive_revision_missing');
+	}
+
+	fwrite(STDOUT, "Conversion rule tests passed\n");
+	exit(0);
+}
+
 function runConversionCharacterization(string $mainRoot, string $stableRoot, string $fixtureRoot, string $blockedDataPath): array
 {
 	$openedPaths = [];

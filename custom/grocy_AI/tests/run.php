@@ -50,9 +50,26 @@ if (is_file($taxonomyTestFile))
 	require_once $taxonomyTestFile;
 }
 
+$conversionMigrationFile = __DIR__ . '/../src/GrocyAiConversionMigration.php';
+if (is_file($conversionMigrationFile))
+{
+	require_once $conversionMigrationFile;
+}
+
+$conversionServiceFile = __DIR__ . '/../src/GrocyAiConversionService.php';
+if (is_file($conversionServiceFile))
+{
+	require_once $conversionServiceFile;
+}
+
+$conversionRulesTestFile = __DIR__ . '/conversions.php';
+if (is_file($conversionRulesTestFile))
+{
+	require_once $conversionRulesTestFile;
+}
+
 if (($argv[1] ?? '') === 'conversion-characterization')
 {
-	require_once __DIR__ . '/conversions.php';
 	require_once __DIR__ . '/conversion-characterization.php';
 	runConversionCharacterizationContract();
 	exit(0);
@@ -628,6 +645,11 @@ if (($argv[1] ?? null) === 'taxonomy-validation')
 if (($argv[1] ?? null) === 'taxonomy-production-paths')
 {
 	runTaxonomyProductionPaths();
+}
+
+if (($argv[1] ?? null) === 'conversion-rules')
+{
+	runConversionRules();
 }
 
 if (($argv[1] ?? null) === '--list')
