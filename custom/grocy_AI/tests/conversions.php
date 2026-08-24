@@ -17,24 +17,18 @@ function runConversionCharacterization(string $mainRoot, string $stableRoot, str
 	$main = CharacterizeBranch('main', $mainRoot, $mainManifest, $blockedDataPath);
 	$stable = CharacterizeBranch('stable', $stableRoot, $stableManifest, $blockedDataPath);
 
-	$schemaEqual = $main['schema']['migration_hashes'] === $stable['schema']['migration_hashes']
-		&& $main['schema']['cache_objects'] === $stable['schema']['cache_objects']
-		&& $main['schema']['fixture_sqlite_master'] === $stable['schema']['fixture_sqlite_master'];
-	$protectedEqual = $main['protected_outputs']['baseline'] === $stable['protected_outputs']['baseline']
-		&& $main['protected_outputs']['probe'] === $stable['protected_outputs']['probe'];
-	if (!$schemaEqual || !$protectedEqual)
-	{
-		throw new RuntimeException('branch_characterization_mismatch');
-	}
+	$parity = conversionCharacterizationAssertBranchParity($main, $stable);
 
 	return [
 		'main' => $main,
 		'stable' => $stable,
 		'opened_paths' => array_values(array_unique(array_merge($openedPaths, $main['opened_paths'], $stable['opened_paths']))),
 		'protected_outputs' => [
-			'equal' => $protectedEqual,
+			'equal' => $parity['protected_outputs_equal'],
 			'categories' => $main['protected_outputs']['categories'],
-			'schema_equal' => $schemaEqual
+			'schema_equal' => $parity['schema_equal'],
+			'cache_equal' => $parity['cache_equal'],
+			'query_plan_equal' => $parity['query_plan_equal']
 		]
 	];
 }
@@ -49,7 +43,8 @@ function CharacterizeBranch(string $branchName, string $root, array $manifest, s
 	try
 	{
 		$database = new PDO('sqlite:' . $temporaryDatabase, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
-		conversionCharacterizationBuildFixtureSchema($database);
+		conversionCharacterizationBuildFixtureSchema($database, $root, $openedPaths);
+		conversionCharacterizationAssertNativeTriggers($database);
 		conversionCharacterizationSeedFixture($database, $manifest);
 		$baseline = conversionCharacterizationProtectedOutputs($database, $manifest['protected_categories']);
 		$baselineRows = conversionCharacterizationCacheRows($database);
@@ -96,6 +91,42 @@ function conversionCharacterizationNormalizePath(string $value): string
 {
 	$resolved = realpath($value);
 	return rtrim(str_replace('\\', '/', $resolved === false ? $value : $resolved), '/');
+}
+
+function conversionCharacterizationConfiguredDataPath(string $checkoutRoot): string
+{
+	$configured = getenv('GROCY_DATAPATH');
+	if (!is_string($configured) || $configured === '')
+	{
+		$configured = $checkoutRoot . '/data';
+	}
+	if ($configured[0] !== '/')
+	{
+		$configured = $checkoutRoot . '/' . $configured;
+	}
+	return conversionCharacterizationNormalizePath($configured);
+}
+
+function conversionCharacterizationAssertBranchParity(array $main, array $stable): array
+{
+	$schemaEqual = $main['schema']['migration_hashes'] === $stable['schema']['migration_hashes']
+		&& $main['schema']['cache_objects'] === $stable['schema']['cache_objects']
+		&& $main['schema']['fixture_sqlite_master'] === $stable['schema']['fixture_sqlite_master'];
+	$cacheEqual = $main['cache']['baseline'] === $stable['cache']['baseline']
+		&& $main['cache']['probe'] === $stable['cache']['probe'];
+	$queryPlanEqual = $main['query_plan'] === $stable['query_plan'];
+	$protectedOutputsEqual = $main['protected_outputs']['baseline'] === $stable['protected_outputs']['baseline']
+		&& $main['protected_outputs']['probe'] === $stable['protected_outputs']['probe'];
+	if (!$schemaEqual || !$cacheEqual || !$queryPlanEqual || !$protectedOutputsEqual)
+	{
+		throw new RuntimeException('branch_characterization_mismatch');
+	}
+	return [
+		'schema_equal' => $schemaEqual,
+		'cache_equal' => $cacheEqual,
+		'query_plan_equal' => $queryPlanEqual,
+		'protected_outputs_equal' => $protectedOutputsEqual
+	];
 }
 
 function conversionCharacterizationIsAtOrBelow(string $candidate, string $parent): bool
@@ -174,62 +205,57 @@ function conversionCharacterizationCreateTemporaryDatabase(string $blockedDataPa
 	return $temporaryDatabase;
 }
 
-function conversionCharacterizationBuildFixtureSchema(PDO $database): void
+function conversionCharacterizationBuildFixtureSchema(PDO $database, string $root, array &$openedPaths): void
 {
 	$database->exec(<<<'SQL'
-CREATE TABLE quantity_units (id INTEGER PRIMARY KEY, name TEXT NOT NULL);
+CREATE TABLE quantity_units (id INTEGER PRIMARY KEY, name TEXT NOT NULL, name_plural TEXT NOT NULL);
 CREATE TABLE products (id INTEGER PRIMARY KEY, qu_id_stock INTEGER NOT NULL, qu_id_purchase INTEGER NOT NULL, qu_id_consume INTEGER NOT NULL, qu_id_price INTEGER NOT NULL);
-CREATE TABLE quantity_unit_conversions (product_id INTEGER, from_qu_id INTEGER NOT NULL, to_qu_id INTEGER NOT NULL, factor REAL NOT NULL, UNIQUE(product_id, from_qu_id, to_qu_id));
-CREATE TABLE cache__quantity_unit_conversions_resolved (product_id INTEGER NOT NULL, from_qu_id INTEGER NOT NULL, to_qu_id INTEGER NOT NULL, factor REAL NOT NULL, path TEXT NOT NULL, PRIMARY KEY(product_id, from_qu_id, to_qu_id));
-CREATE INDEX ix_cache__quantity_unit_conversions_resolved_performance1 ON cache__quantity_unit_conversions_resolved (product_id, from_qu_id, to_qu_id);
-CREATE TABLE conversion_characterization_audit (event TEXT NOT NULL);
-CREATE TRIGGER quantity_unit_conversions_INS AFTER INSERT ON quantity_unit_conversions
-BEGIN
-	INSERT OR IGNORE INTO quantity_unit_conversions (product_id, from_qu_id, to_qu_id, factor)
-	VALUES (NEW.product_id, NEW.to_qu_id, NEW.from_qu_id, 1.0 / NEW.factor);
-	DELETE FROM cache__quantity_unit_conversions_resolved;
-	INSERT OR REPLACE INTO cache__quantity_unit_conversions_resolved (product_id, from_qu_id, to_qu_id, factor, path)
-	SELECT p.id, c.from_qu_id, c.to_qu_id, c.factor, '/' || c.from_qu_id || '/' || c.to_qu_id || '/'
-	FROM products p
-	JOIN quantity_unit_conversions c ON c.product_id IS NULL OR c.product_id = p.id
-	WHERE c.product_id = p.id
-		OR NOT EXISTS (
-			SELECT 1 FROM quantity_unit_conversions o
-			WHERE o.product_id = p.id AND o.from_qu_id = c.from_qu_id AND o.to_qu_id = c.to_qu_id
-		);
-	INSERT INTO conversion_characterization_audit VALUES ('quantity_unit_conversions_INS');
-END;
-CREATE TRIGGER products_INS AFTER INSERT ON products
-BEGIN
-	DELETE FROM cache__quantity_unit_conversions_resolved WHERE product_id = NEW.id;
-	INSERT OR REPLACE INTO cache__quantity_unit_conversions_resolved (product_id, from_qu_id, to_qu_id, factor, path)
-	SELECT NEW.id, c.from_qu_id, c.to_qu_id, c.factor, '/' || c.from_qu_id || '/' || c.to_qu_id || '/'
-	FROM quantity_unit_conversions c
-	WHERE c.product_id = NEW.id
-		OR NOT EXISTS (
-			SELECT 1 FROM quantity_unit_conversions o
-			WHERE o.product_id = NEW.id AND o.from_qu_id = c.from_qu_id AND o.to_qu_id = c.to_qu_id
-		);
-END;
+CREATE TABLE quantity_unit_conversions (from_qu_id INTEGER NOT NULL, to_qu_id INTEGER NOT NULL, factor REAL NOT NULL, product_id INTEGER, UNIQUE(product_id, from_qu_id, to_qu_id));
+CREATE VIEW quantity_unit_conversions_resolved AS SELECT NULL AS id, NULL AS product_id, NULL AS from_qu_id, NULL AS from_qu_name, NULL AS from_qu_name_plural, NULL AS to_qu_id, NULL AS to_qu_name, NULL AS to_qu_name_plural, NULL AS factor, NULL AS path WHERE 0;
+CREATE TRIGGER qu_conversions_inverse_INS AFTER INSERT ON quantity_unit_conversions BEGIN SELECT 1; END;
+CREATE TRIGGER qu_conversions_inverse_UPD AFTER UPDATE ON quantity_unit_conversions BEGIN SELECT 1; END;
+CREATE TRIGGER qu_conversions_inverse_DEL AFTER DELETE ON quantity_unit_conversions BEGIN SELECT 1; END;
 SQL);
+
+	$resolverPath = $root . '/migrations/0208.sql';
+	$cachePath = $root . '/migrations/0225.sql';
+	$resolverSql = (string)file_get_contents($resolverPath);
+	$cacheSql = (string)file_get_contents($cachePath);
+	$openedPaths[] = $resolverPath;
+	$openedPaths[] = $cachePath;
+	$cachePrefix = strstr($cacheSql, 'DROP VIEW recipes_pos_resolved;', true);
+	if ($resolverSql === '' || $cachePrefix === false)
+	{
+		throw new RuntimeException('missing_cache_definitions');
+	}
+
+	$database->exec($resolverSql);
+	$database->exec($cachePrefix);
 }
 
 function conversionCharacterizationSeedFixture(PDO $database, array $manifest): void
 {
-	$database->exec("INSERT INTO quantity_units VALUES (1, 'stock'), (2, 'purchase'), (3, 'display')");
+	$database->exec("INSERT INTO quantity_units VALUES (1, 'stock', 'stocks'), (2, 'purchase', 'purchases'), (3, 'display', 'displays')");
 	$database->exec('INSERT INTO products VALUES (1, 1, 2, 3, 3)');
 	conversionCharacterizationInsertConversion($database, $manifest['native_default']);
 	conversionCharacterizationInsertConversion($database, $manifest['product_override']);
 }
 
+function conversionCharacterizationAssertNativeTriggers(PDO $database): void
+{
+	$triggers = $database->query("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN ('quantity_unit_conversions_INS', 'quantity_unit_conversions_UPD', 'quantity_unit_conversions_DEL') ORDER BY name")->fetchAll(PDO::FETCH_COLUMN);
+	if ($triggers !== ['quantity_unit_conversions_DEL', 'quantity_unit_conversions_INS', 'quantity_unit_conversions_UPD'])
+	{
+		throw new RuntimeException('missing_cache_definitions');
+	}
+}
+
 function conversionCharacterizationExerciseNativeWrites(PDO $database, array $manifest): void
 {
+	conversionCharacterizationUpdateConversion($database, $manifest['native_default']);
+	conversionCharacterizationUpdateConversion($database, $manifest['product_override']);
 	conversionCharacterizationReplaceConversion($database, $manifest['native_default']);
 	conversionCharacterizationReplaceConversion($database, $manifest['product_override']);
-	if ((int)$database->query('SELECT COUNT(*) FROM conversion_characterization_audit')->fetchColumn() < 4)
-	{
-		throw new RuntimeException('native_trigger_not_exercised');
-	}
 }
 
 function conversionCharacterizationInsertConversion(PDO $database, array $conversion): void
@@ -254,6 +280,21 @@ function conversionCharacterizationReplaceConversion(PDO $database, array $conve
 	conversionCharacterizationInsertConversion($database, $conversion);
 }
 
+function conversionCharacterizationUpdateConversion(PDO $database, array $conversion): void
+{
+	$update = $database->prepare('UPDATE quantity_unit_conversions SET factor = :factor WHERE product_id IS :product_id AND from_qu_id = :from_qu_id AND to_qu_id = :to_qu_id');
+	$update->execute([
+		':factor' => $conversion['factor'] ?? null,
+		':product_id' => $conversion['product_id'] ?? null,
+		':from_qu_id' => $conversion['from_qu_id'] ?? null,
+		':to_qu_id' => $conversion['to_qu_id'] ?? null
+	]);
+	if ($update->rowCount() !== 1)
+	{
+		throw new RuntimeException('native_trigger_not_exercised');
+	}
+}
+
 function conversionCharacterizationCacheRows(PDO $database): array
 {
 	return $database->query('SELECT product_id, from_qu_id, to_qu_id, factor, path FROM cache__quantity_unit_conversions_resolved ORDER BY product_id, from_qu_id, to_qu_id')->fetchAll(PDO::FETCH_ASSOC);
@@ -271,14 +312,14 @@ function conversionCharacterizationCacheDelta(array $baseline, array $probe): ar
 function conversionCharacterizationProtectedOutputs(PDO $database, array $categories): array
 {
 	$pairs = [
-		'stock' => [1, 3],
-		'recipe' => [3, 1],
-		'purchase' => [2, 1],
-		'consumption' => [3, 1],
-		'price' => [3, 1],
-		'transfer' => [1, 3],
-		'meal-plan' => [3, 1],
-		'quantity-display' => [2, 1]
+		'stock' => ['operation' => 'stock-adjustment', 'from' => 1, 'to' => 3, 'amount' => 4],
+		'recipe' => ['operation' => 'recipe-ingredient', 'from' => 3, 'to' => 1, 'amount' => 7],
+		'purchase' => ['operation' => 'purchase-entry', 'from' => 2, 'to' => 1, 'amount' => 1000],
+		'consumption' => ['operation' => 'consumption-entry', 'from' => 3, 'to' => 1, 'amount' => 9],
+		'price' => ['operation' => 'price-entry', 'from' => 3, 'to' => 1, 'amount' => 11],
+		'transfer' => ['operation' => 'transfer-entry', 'from' => 1, 'to' => 3, 'amount' => 3],
+		'meal-plan' => ['operation' => 'meal-plan-entry', 'from' => 3, 'to' => 1, 'amount' => 13],
+		'quantity-display' => ['operation' => 'quantity-display', 'from' => 2, 'to' => 1, 'amount' => 1500]
 	];
 	$statement = $database->prepare('SELECT factor, path FROM cache__quantity_unit_conversions_resolved WHERE product_id = 1 AND from_qu_id = :from_qu_id AND to_qu_id = :to_qu_id');
 	$outputs = [];
@@ -288,15 +329,19 @@ function conversionCharacterizationProtectedOutputs(PDO $database, array $catego
 		{
 			throw new RuntimeException('invalid_branch_manifest');
 		}
-		$statement->execute([':from_qu_id' => $pairs[$category][0], ':to_qu_id' => $pairs[$category][1]]);
+		$fixture = $pairs[$category];
+		$statement->execute([':from_qu_id' => $fixture['from'], ':to_qu_id' => $fixture['to']]);
 		$row = $statement->fetch(PDO::FETCH_ASSOC);
 		if ($row === false)
 		{
 			throw new RuntimeException('protected_output_missing');
 		}
 		$outputs[$category] = [
+			'operation' => $fixture['operation'],
+			'input_amount' => $fixture['amount'],
 			'factor' => (float)$row['factor'],
-			'path' => (string)$row['path']
+			'path' => (string)$row['path'],
+			'converted_amount' => $fixture['amount'] * (float)$row['factor']
 		];
 	}
 	return $outputs;

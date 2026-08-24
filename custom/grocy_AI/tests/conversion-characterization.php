@@ -43,19 +43,40 @@ function runConversionCharacterizationContract(): void
 	}
 
 	$fixtureRoot = __DIR__ . '/fixtures';
-	$blockedDataPath = __DIR__ . '/fixtures/blocked-grocy-datapath';
 	$worktreeRoot = dirname(__DIR__, 3);
 	$primaryCheckout = dirname(dirname($worktreeRoot));
 	$mainRoot = getenv('GROCY_CHARACTERIZATION_MAIN_ROOT') ?: ((is_dir($primaryCheckout . '/.git') || is_file($primaryCheckout . '/.git')) ? $primaryCheckout : $worktreeRoot);
 	$stableRoot = getenv('GROCY_CHARACTERIZATION_STABLE_ROOT') ?: dirname($mainRoot) . '/grocy-atech-release';
+	$previousDataPath = getenv('GROCY_DATAPATH');
+	$fixtureConfiguredDataPath = __DIR__ . '/fixtures/configured-grocy-datapath';
+	putenv('GROCY_DATAPATH=' . $fixtureConfiguredDataPath);
+	characterizationAssert(conversionCharacterizationConfiguredDataPath($mainRoot) === str_replace('\\', '/', $fixtureConfiguredDataPath), 'configured GROCY_DATAPATH is resolved without opening it');
+	if ($previousDataPath === false)
+	{
+		putenv('GROCY_DATAPATH');
+	}
+	else
+	{
+		putenv('GROCY_DATAPATH=' . $previousDataPath);
+	}
+	$blockedDataPath = conversionCharacterizationConfiguredDataPath($mainRoot);
 
 	$result = runConversionCharacterization($mainRoot, $stableRoot, $fixtureRoot, $blockedDataPath);
 	characterizationAssert($result['main']['fixture_deleted'] === true, 'main fixture is deleted');
 	characterizationAssert($result['stable']['fixture_deleted'] === true, 'stable fixture is deleted');
 	characterizationAssert($result['protected_outputs']['equal'] === true, 'protected categories are equivalent');
+	characterizationAssert(count(array_unique(array_column($result['main']['protected_outputs']['baseline'], 'converted_amount'))) === 8, 'protected categories have distinct fixture outputs');
 	characterizationAssertNoPathPrefix($result['opened_paths'], $blockedDataPath, 'configured data path is never opened');
 	characterizationExpectFailure('missing_branch_manifest', fn() => runConversionCharacterization($mainRoot, $stableRoot, $fixtureRoot . '/missing', $blockedDataPath));
 	characterizationExpectFailure('fixture_path_inside_grocy_datapath', fn() => runConversionCharacterization($mainRoot, $stableRoot, $blockedDataPath, $blockedDataPath));
+	characterizationExpectFailure('branch_characterization_mismatch', fn() => conversionCharacterizationAssertBranchParity(
+		['schema' => ['migration_hashes' => [], 'cache_objects' => [], 'fixture_sqlite_master' => []], 'cache' => ['baseline' => ['row_key_factor_path_sha256' => 'main'], 'probe' => ['row_key_factor_path_sha256' => 'main']], 'query_plan' => ['main-plan'], 'protected_outputs' => ['baseline' => [], 'probe' => []]],
+		['schema' => ['migration_hashes' => [], 'cache_objects' => [], 'fixture_sqlite_master' => []], 'cache' => ['baseline' => ['row_key_factor_path_sha256' => 'stable'], 'probe' => ['row_key_factor_path_sha256' => 'stable']], 'query_plan' => ['stable-plan'], 'protected_outputs' => ['baseline' => [], 'probe' => []]]
+	));
+	characterizationExpectFailure('branch_characterization_mismatch', fn() => conversionCharacterizationAssertBranchParity(
+		['schema' => ['migration_hashes' => [], 'cache_objects' => [], 'fixture_sqlite_master' => []], 'cache' => ['baseline' => ['row_key_factor_path_sha256' => 'same'], 'probe' => ['row_key_factor_path_sha256' => 'same']], 'query_plan' => ['main-plan'], 'protected_outputs' => ['baseline' => [], 'probe' => []]],
+		['schema' => ['migration_hashes' => [], 'cache_objects' => [], 'fixture_sqlite_master' => []], 'cache' => ['baseline' => ['row_key_factor_path_sha256' => 'same'], 'probe' => ['row_key_factor_path_sha256' => 'same']], 'query_plan' => ['stable-plan'], 'protected_outputs' => ['baseline' => [], 'probe' => []]]
+	));
 
 	fwrite(STDOUT, "Conversion characterization contract passed\n");
 }
