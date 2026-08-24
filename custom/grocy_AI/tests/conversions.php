@@ -14,14 +14,29 @@ function runConversionCharacterization(string $mainRoot, string $stableRoot, str
 
 	$mainManifest = conversionCharacterizationLoadManifest($fixtureRoot . '/conversion-characterization-main.json', 'main', $openedPaths);
 	$stableManifest = conversionCharacterizationLoadManifest($fixtureRoot . '/conversion-characterization-stable.json', 'stable', $openedPaths);
+	$mainRoot = conversionCharacterizationNormalizePath($mainRoot);
+	$stableRoot = conversionCharacterizationNormalizePath($stableRoot);
+	if ($mainRoot === $stableRoot)
+	{
+		throw new RuntimeException('identical_branch_roots');
+	}
+	conversionCharacterizationAssertBranchIdentity($mainRoot, $mainManifest);
+	conversionCharacterizationAssertBranchIdentity($stableRoot, $stableManifest);
 	$main = CharacterizeBranch('main', $mainRoot, $mainManifest, $blockedDataPath);
 	$stable = CharacterizeBranch('stable', $stableRoot, $stableManifest, $blockedDataPath);
+	if ($main['commit'] !== $mainManifest['expected_commit'] || $stable['commit'] !== $stableManifest['expected_commit'])
+	{
+		throw new RuntimeException('branch_commit_mismatch');
+	}
 
 	$parity = conversionCharacterizationAssertBranchParity($main, $stable);
+	$manifest = conversionCharacterizationRedactedManifest($main, $stable);
 
 	return [
 		'main' => $main,
 		'stable' => $stable,
+		'manifest' => $manifest,
+		'manifest_json' => conversionCharacterizationRedactedManifestJson($manifest),
 		'opened_paths' => array_values(array_unique(array_merge($openedPaths, $main['opened_paths'], $stable['opened_paths']))),
 		'protected_outputs' => [
 			'equal' => $parity['protected_outputs_equal'],
@@ -40,6 +55,7 @@ function CharacterizeBranch(string $branchName, string $root, array $manifest, s
 	conversionCharacterizationValidateBranchRoot($root, $blockedDataPath, $openedPaths);
 	$temporaryDatabase = conversionCharacterizationCreateTemporaryDatabase($blockedDataPath, $openedPaths);
 	$report = [];
+	$database = null;
 	try
 	{
 		$database = new PDO('sqlite:' . $temporaryDatabase, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
@@ -55,6 +71,8 @@ function CharacterizeBranch(string $branchName, string $root, array $manifest, s
 		{
 			throw new RuntimeException('protected_outputs_changed');
 		}
+		$cache = conversionCharacterizationCacheDelta($baselineRows, $probeRows);
+		conversionCharacterizationAssertProbeCacheParity($cache['baseline'], $cache['probe']);
 
 		$report = [
 			'branch' => $branchName,
@@ -62,7 +80,7 @@ function CharacterizeBranch(string $branchName, string $root, array $manifest, s
 			'schema' => array_merge(conversionCharacterizationSchemaManifest($root, $openedPaths), [
 				'fixture_sqlite_master' => RedactedSqliteMaster($database)
 			]),
-			'cache' => conversionCharacterizationCacheDelta($baselineRows, $probeRows),
+			'cache' => $cache,
 			'protected_outputs' => [
 				'categories' => $manifest['protected_categories'],
 				'baseline' => $baseline,
@@ -75,9 +93,19 @@ function CharacterizeBranch(string $branchName, string $root, array $manifest, s
 	}
 	finally
 	{
+		$database = null;
+		clearstatcache(true, $temporaryDatabase);
 		if (is_file($temporaryDatabase))
 		{
-			unlink($temporaryDatabase);
+			if (!unlink($temporaryDatabase))
+			{
+				throw new RuntimeException('fixture_cleanup_failed');
+			}
+		}
+		clearstatcache(true, $temporaryDatabase);
+		if (file_exists($temporaryDatabase))
+		{
+			throw new RuntimeException('fixture_cleanup_failed');
 		}
 		if ($report !== [])
 		{
@@ -129,6 +157,55 @@ function conversionCharacterizationAssertBranchParity(array $main, array $stable
 	];
 }
 
+function conversionCharacterizationRedactedManifest(array $main, array $stable): array
+{
+	$branchManifest = static fn(array $branch): array => [
+		'commit' => $branch['commit'],
+		'migration_hashes' => $branch['schema']['migration_hashes'],
+		'cache_aggregate' => $branch['cache'],
+		'query_plan' => $branch['query_plan'],
+		'query_plan_sha256' => hash('sha256', json_encode($branch['query_plan'], JSON_THROW_ON_ERROR))
+	];
+	return ['main' => $branchManifest($main), 'stable' => $branchManifest($stable)];
+}
+
+function conversionCharacterizationRedactedManifestJson(array $manifest): string
+{
+	if (isset($manifest['manifest']) && is_array($manifest['manifest']))
+	{
+		$manifest = $manifest['manifest'];
+	}
+	return json_encode($manifest, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
+}
+
+function conversionCharacterizationVerifyEvidenceDocument(string $evidencePath, array $manifest): void
+{
+	if (!is_file($evidencePath))
+	{
+		throw new RuntimeException('characterization_evidence_missing');
+	}
+	$evidence = (string)file_get_contents($evidencePath);
+	foreach (['main', 'stable'] as $branchName)
+	{
+		$branch = $manifest[$branchName];
+		$required = [
+			$branch['commit'],
+			$branch['migration_hashes']['migrations/0208.sql'],
+			$branch['migration_hashes']['migrations/0225.sql'],
+			(string)$branch['cache_aggregate']['baseline']['row_count'],
+			$branch['cache_aggregate']['baseline']['row_key_factor_path_sha256'],
+			$branch['query_plan_sha256']
+		];
+		foreach ($required as $value)
+		{
+			if (!str_contains($evidence, $value))
+			{
+				throw new RuntimeException('characterization_evidence_mismatch');
+			}
+		}
+	}
+}
+
 function conversionCharacterizationIsAtOrBelow(string $candidate, string $parent): bool
 {
 	return $candidate === $parent || str_starts_with($candidate . '/', $parent . '/');
@@ -151,6 +228,8 @@ function conversionCharacterizationLoadManifest(string $manifestPath, string $br
 	}
 	if (!is_array($manifest)
 		|| ($manifest['branch'] ?? null) !== $branchName
+		|| !is_string($manifest['expected_commit'] ?? null)
+		|| preg_match('/^[a-f0-9]{40}$/', $manifest['expected_commit']) !== 1
 		|| !is_array($manifest['native_default'] ?? null)
 		|| !is_array($manifest['product_override'] ?? null)
 		|| !is_array($manifest['protected_categories'] ?? null))
@@ -163,6 +242,20 @@ function conversionCharacterizationLoadManifest(string $manifestPath, string $br
 		throw new RuntimeException('invalid_branch_manifest');
 	}
 	return $manifest;
+}
+
+function conversionCharacterizationAssertBranchIdentity(string $root, array $manifest): void
+{
+	$commit = conversionCharacterizationImmutableCommit($root);
+	if ($commit !== $manifest['expected_commit'])
+	{
+		throw new RuntimeException('branch_commit_mismatch');
+	}
+	$status = conversionCharacterizationGitOutput($root, ['status', '--porcelain', '--', 'migrations/0208.sql', 'migrations/0225.sql']);
+	if (trim($status) !== '')
+	{
+		throw new RuntimeException('dirty_branch_source');
+	}
 }
 
 function conversionCharacterizationValidateBranchRoot(string $root, string $blockedDataPath, array &$openedPaths): void
@@ -217,12 +310,8 @@ CREATE TRIGGER qu_conversions_inverse_UPD AFTER UPDATE ON quantity_unit_conversi
 CREATE TRIGGER qu_conversions_inverse_DEL AFTER DELETE ON quantity_unit_conversions BEGIN SELECT 1; END;
 SQL);
 
-	$resolverPath = $root . '/migrations/0208.sql';
-	$cachePath = $root . '/migrations/0225.sql';
-	$resolverSql = (string)file_get_contents($resolverPath);
-	$cacheSql = (string)file_get_contents($cachePath);
-	$openedPaths[] = $resolverPath;
-	$openedPaths[] = $cachePath;
+	$resolverSql = conversionCharacterizationGitOutput($root, ['show', 'HEAD:migrations/0208.sql']);
+	$cacheSql = conversionCharacterizationGitOutput($root, ['show', 'HEAD:migrations/0225.sql']);
 	$cachePrefix = strstr($cacheSql, 'DROP VIEW recipes_pos_resolved;', true);
 	if ($resolverSql === '' || $cachePrefix === false)
 	{
@@ -231,6 +320,16 @@ SQL);
 
 	$database->exec($resolverSql);
 	$database->exec($cachePrefix);
+	$database->exec(<<<'SQL'
+CREATE TABLE fixture_stock_entries (product_id INTEGER NOT NULL, source_qu_id INTEGER NOT NULL, target_qu_id INTEGER NOT NULL, on_hand REAL NOT NULL, adjustment REAL NOT NULL);
+CREATE TABLE fixture_recipe_positions (product_id INTEGER NOT NULL, source_qu_id INTEGER NOT NULL, target_qu_id INTEGER NOT NULL, ingredient_amount REAL NOT NULL, servings REAL NOT NULL);
+CREATE TABLE fixture_purchase_entries (product_id INTEGER NOT NULL, source_qu_id INTEGER NOT NULL, target_qu_id INTEGER NOT NULL, package_count REAL NOT NULL, package_amount REAL NOT NULL);
+CREATE TABLE fixture_consumption_entries (product_id INTEGER NOT NULL, source_qu_id INTEGER NOT NULL, target_qu_id INTEGER NOT NULL, consumed_amount REAL NOT NULL);
+CREATE TABLE fixture_price_entries (product_id INTEGER NOT NULL, source_qu_id INTEGER NOT NULL, target_qu_id INTEGER NOT NULL, priced_amount REAL NOT NULL, unit_price REAL NOT NULL);
+CREATE TABLE fixture_transfer_entries (product_id INTEGER NOT NULL, source_qu_id INTEGER NOT NULL, target_qu_id INTEGER NOT NULL, sent_amount REAL NOT NULL, returned_amount REAL NOT NULL);
+CREATE TABLE fixture_meal_plan_entries (product_id INTEGER NOT NULL, source_qu_id INTEGER NOT NULL, target_qu_id INTEGER NOT NULL, portion_amount REAL NOT NULL, servings REAL NOT NULL);
+CREATE TABLE fixture_quantity_display_entries (product_id INTEGER NOT NULL, source_qu_id INTEGER NOT NULL, target_qu_id INTEGER NOT NULL, display_amount REAL NOT NULL);
+SQL);
 }
 
 function conversionCharacterizationSeedFixture(PDO $database, array $manifest): void
@@ -239,6 +338,16 @@ function conversionCharacterizationSeedFixture(PDO $database, array $manifest): 
 	$database->exec('INSERT INTO products VALUES (1, 1, 2, 3, 3)');
 	conversionCharacterizationInsertConversion($database, $manifest['native_default']);
 	conversionCharacterizationInsertConversion($database, $manifest['product_override']);
+	$database->exec(<<<'SQL'
+INSERT INTO fixture_stock_entries VALUES (1, 1, 3, 3, 1);
+INSERT INTO fixture_recipe_positions VALUES (1, 3, 1, 7, 1);
+INSERT INTO fixture_purchase_entries VALUES (1, 2, 1, 2, 500);
+INSERT INTO fixture_consumption_entries VALUES (1, 3, 1, 9);
+INSERT INTO fixture_price_entries VALUES (1, 3, 1, 11, 1);
+INSERT INTO fixture_transfer_entries VALUES (1, 1, 3, 5, 2);
+INSERT INTO fixture_meal_plan_entries VALUES (1, 3, 1, 13, 1);
+INSERT INTO fixture_quantity_display_entries VALUES (1, 2, 1, 1500);
+SQL);
 }
 
 function conversionCharacterizationAssertNativeTriggers(PDO $database): void
@@ -309,42 +418,52 @@ function conversionCharacterizationCacheDelta(array $baseline, array $probe): ar
 	return ['baseline' => $aggregate($baseline), 'probe' => $aggregate($probe), 'equal' => $baseline === $probe];
 }
 
+function conversionCharacterizationAssertProbeCacheParity(array $baseline, array $probe): void
+{
+	if ($baseline !== $probe)
+	{
+		throw new RuntimeException('cache_aggregate_changed');
+	}
+}
+
 function conversionCharacterizationProtectedOutputs(PDO $database, array $categories): array
 {
-	$pairs = [
-		'stock' => ['operation' => 'stock-adjustment', 'from' => 1, 'to' => 3, 'amount' => 4],
-		'recipe' => ['operation' => 'recipe-ingredient', 'from' => 3, 'to' => 1, 'amount' => 7],
-		'purchase' => ['operation' => 'purchase-entry', 'from' => 2, 'to' => 1, 'amount' => 1000],
-		'consumption' => ['operation' => 'consumption-entry', 'from' => 3, 'to' => 1, 'amount' => 9],
-		'price' => ['operation' => 'price-entry', 'from' => 3, 'to' => 1, 'amount' => 11],
-		'transfer' => ['operation' => 'transfer-entry', 'from' => 1, 'to' => 3, 'amount' => 3],
-		'meal-plan' => ['operation' => 'meal-plan-entry', 'from' => 3, 'to' => 1, 'amount' => 13],
-		'quantity-display' => ['operation' => 'quantity-display', 'from' => 2, 'to' => 1, 'amount' => 1500]
-	];
-	$statement = $database->prepare('SELECT factor, path FROM cache__quantity_unit_conversions_resolved WHERE product_id = 1 AND from_qu_id = :from_qu_id AND to_qu_id = :to_qu_id');
+	$queries = conversionCharacterizationProtectedOutputQueries();
 	$outputs = [];
 	foreach ($categories as $category)
 	{
-		if (!isset($pairs[$category]))
+		if (!isset($queries[$category]))
 		{
 			throw new RuntimeException('invalid_branch_manifest');
 		}
-		$fixture = $pairs[$category];
-		$statement->execute([':from_qu_id' => $fixture['from'], ':to_qu_id' => $fixture['to']]);
-		$row = $statement->fetch(PDO::FETCH_ASSOC);
+		$fixture = $queries[$category];
+		$row = $database->query($fixture['sql'])->fetch(PDO::FETCH_ASSOC);
 		if ($row === false)
 		{
 			throw new RuntimeException('protected_output_missing');
 		}
 		$outputs[$category] = [
 			'operation' => $fixture['operation'],
-			'input_amount' => $fixture['amount'],
 			'factor' => (float)$row['factor'],
 			'path' => (string)$row['path'],
-			'converted_amount' => $fixture['amount'] * (float)$row['factor']
+			'converted_amount' => (float)$row['converted_amount']
 		];
 	}
 	return $outputs;
+}
+
+function conversionCharacterizationProtectedOutputQueries(): array
+{
+	return [
+		'stock' => ['operation' => 'stock-adjustment', 'sql' => 'SELECT (e.on_hand + e.adjustment) * c.factor AS converted_amount, c.factor, c.path FROM fixture_stock_entries e JOIN cache__quantity_unit_conversions_resolved c ON c.product_id = e.product_id AND c.from_qu_id = e.source_qu_id AND c.to_qu_id = e.target_qu_id'],
+		'recipe' => ['operation' => 'recipe-ingredient', 'sql' => 'SELECT e.ingredient_amount * e.servings * c.factor AS converted_amount, c.factor, c.path FROM fixture_recipe_positions e JOIN cache__quantity_unit_conversions_resolved c ON c.product_id = e.product_id AND c.from_qu_id = e.source_qu_id AND c.to_qu_id = e.target_qu_id'],
+		'purchase' => ['operation' => 'purchase-entry', 'sql' => 'SELECT e.package_count * e.package_amount * c.factor AS converted_amount, c.factor, c.path FROM fixture_purchase_entries e JOIN cache__quantity_unit_conversions_resolved c ON c.product_id = e.product_id AND c.from_qu_id = e.source_qu_id AND c.to_qu_id = e.target_qu_id'],
+		'consumption' => ['operation' => 'consumption-entry', 'sql' => 'SELECT e.consumed_amount * c.factor AS converted_amount, c.factor, c.path FROM fixture_consumption_entries e JOIN cache__quantity_unit_conversions_resolved c ON c.product_id = e.product_id AND c.from_qu_id = e.source_qu_id AND c.to_qu_id = e.target_qu_id'],
+		'price' => ['operation' => 'price-entry', 'sql' => 'SELECT e.priced_amount * e.unit_price * c.factor AS converted_amount, c.factor, c.path FROM fixture_price_entries e JOIN cache__quantity_unit_conversions_resolved c ON c.product_id = e.product_id AND c.from_qu_id = e.source_qu_id AND c.to_qu_id = e.target_qu_id'],
+		'transfer' => ['operation' => 'transfer-entry', 'sql' => 'SELECT (e.sent_amount - e.returned_amount) * c.factor AS converted_amount, c.factor, c.path FROM fixture_transfer_entries e JOIN cache__quantity_unit_conversions_resolved c ON c.product_id = e.product_id AND c.from_qu_id = e.source_qu_id AND c.to_qu_id = e.target_qu_id'],
+		'meal-plan' => ['operation' => 'meal-plan-entry', 'sql' => 'SELECT e.portion_amount * e.servings * c.factor AS converted_amount, c.factor, c.path FROM fixture_meal_plan_entries e JOIN cache__quantity_unit_conversions_resolved c ON c.product_id = e.product_id AND c.from_qu_id = e.source_qu_id AND c.to_qu_id = e.target_qu_id'],
+		'quantity-display' => ['operation' => 'quantity-display', 'sql' => 'SELECT e.display_amount * c.factor AS converted_amount, c.factor, c.path FROM fixture_quantity_display_entries e JOIN cache__quantity_unit_conversions_resolved c ON c.product_id = e.product_id AND c.from_qu_id = e.source_qu_id AND c.to_qu_id = e.target_qu_id']
+	];
 }
 
 function conversionCharacterizationSchemaManifest(string $root, array &$openedPaths): array
@@ -353,9 +472,7 @@ function conversionCharacterizationSchemaManifest(string $root, array &$openedPa
 	$hashes = [];
 	foreach (['migrations/0208.sql', 'migrations/0225.sql'] as $relativePath)
 	{
-		$sourcePath = $root . '/' . $relativePath;
-		$source = (string)file_get_contents($sourcePath);
-		$openedPaths[] = $sourcePath;
+		$source = conversionCharacterizationGitOutput($root, ['show', 'HEAD:' . $relativePath]);
 		$containsResolver = str_contains($source, 'quantity_unit_conversions_resolved');
 		$containsCache = str_contains($source, 'cache__quantity_unit_conversions_resolved');
 		$containsTrigger = str_contains($source, 'quantity_unit_conversions_INS');
@@ -387,24 +504,39 @@ function RedactedSqliteMaster(PDO $database): array
 
 function conversionCharacterizationQueryPlan(PDO $database): array
 {
-	$statement = $database->query('EXPLAIN QUERY PLAN SELECT factor, path FROM cache__quantity_unit_conversions_resolved WHERE product_id = 1 AND from_qu_id = 3 AND to_qu_id = 1');
-	return array_map(static fn(array $row): string => (string)$row['detail'], $statement->fetchAll(PDO::FETCH_ASSOC));
+	$plans = [];
+	foreach (conversionCharacterizationProtectedOutputQueries() as $category => $fixture)
+	{
+		$statement = $database->query('EXPLAIN QUERY PLAN ' . $fixture['sql']);
+		$plans[$category] = array_map(static fn(array $row): string => (string)$row['detail'], $statement->fetchAll(PDO::FETCH_ASSOC));
+	}
+	return $plans;
 }
 
-function conversionCharacterizationImmutableCommit(string $root): string
+function conversionCharacterizationGitOutput(string $root, array $arguments): string
 {
-	$process = proc_open(['git', '-C', $root, 'rev-parse', 'HEAD'], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+	$process = proc_open(array_merge(['git', '-C', $root], $arguments), [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
 	if (!is_resource($process))
 	{
 		throw new RuntimeException('invalid_branch_root');
 	}
 	$stdout = stream_get_contents($pipes[1]);
-	$stderr = stream_get_contents($pipes[2]);
+	stream_get_contents($pipes[2]);
 	fclose($pipes[1]);
 	fclose($pipes[2]);
-	if (proc_close($process) !== 0 || preg_match('/^[a-f0-9]{40}$/', trim($stdout)) !== 1)
+	if (proc_close($process) !== 0)
 	{
 		throw new RuntimeException('invalid_branch_root');
 	}
-	return trim($stdout);
+	return $stdout;
+}
+
+function conversionCharacterizationImmutableCommit(string $root): string
+{
+	$commit = trim(conversionCharacterizationGitOutput($root, ['rev-parse', 'HEAD']));
+	if (preg_match('/^[a-f0-9]{40}$/', $commit) !== 1)
+	{
+		throw new RuntimeException('invalid_branch_root');
+	}
+	return $commit;
 }

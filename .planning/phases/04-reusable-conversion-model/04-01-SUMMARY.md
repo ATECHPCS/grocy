@@ -26,6 +26,7 @@ requirements-completed: [CONV-08, CONV-09]
 - Added a focused `conversion-characterization` test command without changing the existing Phase 1–3 default dispatch.
 - Validates both checkout roots and migrations, resolves the configured data path safely, uses fresh temporary SQLite files outside it, records only redacted schema/cache/query-plan metadata, and deletes each fixture.
 - Builds each fixture from the branch's real resolver/cache/trigger migration definitions, re-exercises INSERT, UPDATE, and DELETE with one native default plus one product override, and proves cache aggregate/query-plan plus stock, recipe, purchase, consumption, price, transfer, meal-plan, and quantity-display outputs are unchanged.
+- Binds main/stable manifests to distinct expected immutable commits and clean migration sources, emits a deterministic redacted manifest, and verifies the checked-in evidence against that manifest.
 - Fails closed for a missing branch manifest and a fixture root at/below `GROCY_DATAPATH`.
 - Captured current main/stable commit, migration hash, cache-object, trigger, and protected-output evidence in `04-CHARACTERIZATION.md`.
 

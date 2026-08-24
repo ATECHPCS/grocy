@@ -15,12 +15,14 @@ The fixture-only dual-branch gate passed for the immutable checkouts below. Reus
 - `migrations/0225.sql` SHA-256: `f937c33c46c8becc38ee26be0db09f8c8de99399e2e3a039a056ccd67e9eff0d` on both branches.
 - The matching cache objects are `cache__quantity_unit_conversions_resolved`, its performance index, and the `quantity_unit_conversions_INS`, `_UPD`, and `_DEL` cache-maintenance triggers.
 - Each disposable fixture defines its resolver and cache from the actual branch `0208.sql` and the cache/trigger prefix of `0225.sql`, including native INSERT, UPDATE, and DELETE conversion triggers.
+- The migration SQL is read from `HEAD` only after the two migration paths are clean, and each fixture manifest binds its expected immutable branch commit; identical checkout roots are rejected.
 - The disposable fixture exercised one native default and one product override. Baseline and probe cache aggregates both held seven row-key/factor/path records with SHA-256 `9944d97bc06a8c684f8a688f097ae0ea946db79926a606f07fbe91d941b69c5b`.
-- The fixture query plan uses `ix_cache__quantity_unit_conversions_resolved_performance1` for the cache key `(product_id, from_qu_id, to_qu_id)` on both branches; any cache aggregate or query-plan difference fails closed.
+- The eight behavior-specific fixture plans each use `ix_cache__quantity_unit_conversions_resolved_performance1` for the cache key `(product_id, from_qu_id, to_qu_id)` on both branches; any cache aggregate or query-plan difference fails closed.
+- The deterministic redacted manifest has query-plan SHA-256 `419f0d3a2a7e968c252ff3cb8f7463adb4177d8053da4f4efd81bfd4c1583709` on main and stable.
 
 ## Protected-output parity
 
-Both branches produced the same baseline and post-write values:
+Both branches produced the same baseline and post-write values through separate stock-adjustment, recipe-ingredient, purchase-package, consumption, price, transfer-balance, meal-plan, and quantity-display fixture tables/queries:
 
 | Protected category | Fixture output | Path |
 | --- | ---: | --- |
