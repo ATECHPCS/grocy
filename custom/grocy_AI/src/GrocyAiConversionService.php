@@ -119,9 +119,16 @@ class GrocyAiConversionService
 			return $this->ProfileUnavailable('profile_request_invalid');
 		}
 
-		$classification = $this->Db->prepare('SELECT node.id, node.slug FROM grocy_ai_taxonomy_classifications AS classification INNER JOIN grocy_ai_taxonomy_nodes AS node ON node.id = classification.leaf_id WHERE classification.product_id = ? AND classification.ruleset_version = ? AND classification.leaf_id IS NOT NULL AND node.version = ? AND node.parent_id IS NOT NULL AND node.depth = 2');
-		$classification->execute([$productId, GrocyAiTaxonomyMigration::VERSION, GrocyAiTaxonomyMigration::VERSION]);
-		$leaf = $classification->fetch(PDO::FETCH_ASSOC);
+		try
+		{
+			$classification = $this->Db->prepare('SELECT node.id, node.slug FROM grocy_ai_taxonomy_classifications AS classification INNER JOIN grocy_ai_taxonomy_nodes AS node ON node.id = classification.leaf_id WHERE classification.product_id = ? AND classification.ruleset_version = ? AND classification.leaf_id IS NOT NULL AND node.version = ? AND node.parent_id IS NOT NULL AND node.depth = 2');
+			$classification->execute([$productId, GrocyAiTaxonomyMigration::VERSION, GrocyAiTaxonomyMigration::VERSION]);
+			$leaf = $classification->fetch(PDO::FETCH_ASSOC);
+		}
+		catch (\PDOException)
+		{
+			return $this->ProfileUnavailable('taxonomy_unavailable');
+		}
 		if (!is_array($leaf))
 		{
 			return $this->ProfileUnavailable('explicit_taxonomy_required');

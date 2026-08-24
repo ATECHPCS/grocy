@@ -212,6 +212,25 @@ function conversionResolutionProtectedSnapshot(PDO $pdo): array
 	];
 }
 
+function conversionResolutionMissingTaxonomySnapshot(PDO $pdo): array
+{
+	return [
+		'module_schema' => $pdo->query("SELECT type, name, sql FROM sqlite_master WHERE name LIKE 'grocy_ai_conversion_%' OR name LIKE 'grocy_ai_taxonomy_%' ORDER BY type, name")->fetchAll(PDO::FETCH_ASSOC),
+		'products' => $pdo->query('SELECT * FROM products ORDER BY id')->fetchAll(PDO::FETCH_ASSOC),
+		'native_conversions' => $pdo->query('SELECT * FROM quantity_unit_conversions ORDER BY id')->fetchAll(PDO::FETCH_ASSOC),
+		'native_cache' => $pdo->query('SELECT * FROM cache__quantity_unit_conversions_resolved ORDER BY product_id, from_qu_id, to_qu_id')->fetchAll(PDO::FETCH_ASSOC),
+		'total_changes' => (int)$pdo->query('SELECT total_changes()')->fetchColumn()
+	];
+}
+
+function conversionResolutionMissingTaxonomyPdo(): PDO
+{
+	$pdo = conversionRulesPdo();
+	$pdo->exec("CREATE TABLE products (id INTEGER NOT NULL PRIMARY KEY, name TEXT NOT NULL); INSERT INTO products (id, name) VALUES (1, 'Fresh database product')");
+	$pdo->exec("CREATE TABLE cache__quantity_unit_conversions_resolved (product_id INTEGER NULL, from_qu_id INTEGER NOT NULL, to_qu_id INTEGER NOT NULL, factor REAL NOT NULL, path TEXT NOT NULL); INSERT INTO cache__quantity_unit_conversions_resolved (product_id, from_qu_id, to_qu_id, factor, path) VALUES (11, 5, 7, 12, '91')");
+	return $pdo;
+}
+
 function conversionResolutionAssertUnavailable(GrocyAiConversionService $service, int $productId, string $fromUnit, string $toUnit, string $blocker): void
 {
 	$result = $service->InspectSourcedProfile($productId, $fromUnit, $toUnit);
@@ -240,6 +259,15 @@ function runConversionResolution(): never
 		['profile_key' => 'whole-milk', 'taxonomy_leaf_id' => 'leaf-dairy-eggs', 'from_unit_key' => 'cup', 'to_unit_key' => 'g', 'factor' => '244', 'approximate' => 1, 'source_name' => 'USDA FoodData Central', 'source_item_id' => '171265', 'source_version' => 'SR Legacy 2018-04; published 2019-04-01', 'source_basis' => '1 cup = 244 g', 'status' => 'inactive']
 	], $profiles, 'starter profiles must be the closed reviewed USDA FDC records with exact portion calculations');
 	conversionAssertSame(1, (int)$pdo->query("SELECT COUNT(*) FROM grocy_ai_conversion_profile_revisions WHERE id = 'conversion-profiles-v1' AND status = 'inactive'")->fetchColumn(), 'profile lifecycle must remain module-owned and inactive');
+
+	$missingTaxonomy = conversionResolutionMissingTaxonomyPdo();
+	GrocyAiConversionMigration::Bootstrap($missingTaxonomy);
+	$missingTaxonomyBefore = conversionResolutionMissingTaxonomySnapshot($missingTaxonomy);
+	$taxonomyUnavailable = (new GrocyAiConversionService($missingTaxonomy, false))->InspectSourcedProfile(1, 'cup', 'g');
+	conversionAssertSame('unavailable', $taxonomyUnavailable['status'] ?? null, 'missing taxonomy module schema must return the bounded unavailable DTO');
+	conversionAssertSame(['taxonomy_unavailable'], $taxonomyUnavailable['blockers'] ?? null, 'missing taxonomy module schema must identify taxonomy availability without exposing database errors');
+	conversionAssertSame(null, $taxonomyUnavailable['factor'] ?? null, 'missing taxonomy module schema must not expose a profile factor');
+	conversionAssertSame($missingTaxonomyBefore, conversionResolutionMissingTaxonomySnapshot($missingTaxonomy), 'missing-taxonomy inspection must not bootstrap or mutate module, native conversion, product, or cache state');
 
 	$protectedBeforeInspection = conversionResolutionProtectedSnapshot($pdo);
 	$water = (new GrocyAiConversionService($pdo, false))->InspectSourcedProfile(1, 'cup', 'g');
