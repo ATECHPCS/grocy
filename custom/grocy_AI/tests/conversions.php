@@ -157,6 +157,123 @@ function runConversionRules(): never
 	exit(0);
 }
 
+function conversionResolutionPdo(): PDO
+{
+	$pdo = new PDO('sqlite::memory:');
+	$pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+	$pdo->exec(<<<'SQL'
+CREATE TABLE quantity_units (id INTEGER NOT NULL PRIMARY KEY, name TEXT NOT NULL UNIQUE);
+CREATE TABLE quantity_unit_conversions (id INTEGER NOT NULL PRIMARY KEY, product_id INTEGER NULL, from_qu_id INTEGER NOT NULL, to_qu_id INTEGER NOT NULL, factor REAL NOT NULL);
+CREATE TABLE product_groups (id INTEGER NOT NULL PRIMARY KEY, name TEXT NOT NULL, active INTEGER NOT NULL);
+CREATE TABLE products (id INTEGER NOT NULL PRIMARY KEY, product_group_id INTEGER NULL, name TEXT NOT NULL);
+CREATE TABLE cache__quantity_unit_conversions_resolved (product_id INTEGER NULL, from_qu_id INTEGER NOT NULL, to_qu_id INTEGER NOT NULL, factor REAL NOT NULL, path TEXT NOT NULL);
+INSERT INTO quantity_units (id, name) VALUES (1, 'cup'), (2, 'g'), (3, 'tbsp'), (4, 'ml');
+INSERT INTO product_groups (id, name, active) VALUES (1, 'Beverages', 1);
+INSERT INTO products (id, product_group_id, name) VALUES
+	(1, NULL, 'Explicit water'),
+	(2, NULL, 'Provider only'),
+	(3, 1, 'Group only'),
+	(4, NULL, 'Absent assignment'),
+	(5, NULL, 'Explicit unclassified'),
+	(6, NULL, 'Stale assignment'),
+	(7, NULL, 'Excluded assignment'),
+	(8, NULL, 'Unprofiled produce'),
+	(9, NULL, 'Explicit whole milk'),
+	(10, NULL, 'Explicit olive oil');
+INSERT INTO quantity_unit_conversions (id, product_id, from_qu_id, to_qu_id, factor) VALUES (91, 1, 4, 2, 1.01);
+INSERT INTO cache__quantity_unit_conversions_resolved (product_id, from_qu_id, to_qu_id, factor, path) VALUES (1, 4, 2, 1.01, '91');
+SQL);
+	GrocyAI\Services\GrocyAiTaxonomyMigration::Bootstrap($pdo);
+	$pdo->exec("INSERT INTO grocy_ai_taxonomy_nodes (id, version, parent_id, slug, label, depth) VALUES ('leaf-pet-food', 'v1', 'group-pantry', 'pet-food', 'Pet food', 2)");
+	$pdo->exec(<<<'SQL'
+INSERT INTO grocy_ai_taxonomy_evidence (product_id, provider_category, mapping_version, confidence_band, reason_code) VALUES (2, 'beverages', 'v1', 'high', 'provider_only');
+INSERT INTO grocy_ai_taxonomy_classifications (product_id, leaf_id, ruleset_version) VALUES
+	(1, 'leaf-beverages', 'v1'),
+	(5, NULL, 'v1'),
+	(6, 'leaf-beverages', 'stale'),
+	(7, 'leaf-pet-food', 'v1'),
+	(8, 'leaf-produce', 'v1'),
+	(9, 'leaf-dairy-eggs', 'v1'),
+	(10, 'leaf-oils-vinegars', 'v1');
+SQL);
+	return $pdo;
+}
+
+function conversionResolutionProtectedSnapshot(PDO $pdo): array
+{
+	return [
+		'products' => $pdo->query('SELECT * FROM products ORDER BY id')->fetchAll(PDO::FETCH_ASSOC),
+		'taxonomy_nodes' => $pdo->query('SELECT * FROM grocy_ai_taxonomy_nodes ORDER BY id')->fetchAll(PDO::FETCH_ASSOC),
+		'taxonomy_classifications' => $pdo->query('SELECT * FROM grocy_ai_taxonomy_classifications ORDER BY product_id')->fetchAll(PDO::FETCH_ASSOC),
+		'taxonomy_evidence' => $pdo->query('SELECT * FROM grocy_ai_taxonomy_evidence ORDER BY product_id')->fetchAll(PDO::FETCH_ASSOC),
+		'native_conversions' => $pdo->query('SELECT * FROM quantity_unit_conversions ORDER BY id')->fetchAll(PDO::FETCH_ASSOC),
+		'native_cache' => $pdo->query('SELECT * FROM cache__quantity_unit_conversions_resolved ORDER BY product_id, from_qu_id, to_qu_id')->fetchAll(PDO::FETCH_ASSOC),
+		'projection_objects' => $pdo->query("SELECT type, name, sql FROM sqlite_master WHERE name LIKE 'grocy_ai_conversion_projection%' ORDER BY type, name")->fetchAll(PDO::FETCH_ASSOC)
+	];
+}
+
+function conversionResolutionAssertUnavailable(GrocyAiConversionService $service, int $productId, string $fromUnit, string $toUnit, string $blocker): void
+{
+	$result = $service->InspectSourcedProfile($productId, $fromUnit, $toUnit);
+	conversionAssertSame('unavailable', $result['status'], 'ineligible profile inspection must be unavailable');
+	conversionAssertSame([$blocker], $result['blockers'], 'unavailable profile inspection must identify one bounded eligibility reason');
+	conversionAssertSame(null, $result['factor'], 'unavailable profile inspection must never expose a usable factor');
+	conversionAssertSame(true, $result['approximate'], 'profile inspection must remain visibly approximate even when unavailable');
+}
+
+function runConversionResolution(): never
+{
+	if (!class_exists(GrocyAiConversionMigration::class) || !method_exists(GrocyAiConversionService::class, 'InspectSourcedProfile'))
+	{
+		expectedRed('EXPECTED_RED: conversion-resolution', 'Inactive sourced profile inspection is not implemented');
+	}
+
+	$pdo = conversionResolutionPdo();
+	$protectedBeforeBootstrap = conversionResolutionProtectedSnapshot($pdo);
+	GrocyAiConversionMigration::Bootstrap($pdo);
+	conversionAssertSame($protectedBeforeBootstrap, conversionResolutionProtectedSnapshot($pdo), 'profile bootstrap must not mutate products, taxonomy, native conversions, native cache, or projection state');
+
+	$profiles = $pdo->query('SELECT profile_key, taxonomy_leaf_id, from_unit_key, to_unit_key, factor, approximate, source_name, source_item_id, source_version, source_basis, status FROM grocy_ai_conversion_profiles ORDER BY profile_key')->fetchAll(PDO::FETCH_ASSOC);
+	conversionAssertSame([
+		['profile_key' => 'olive-oil', 'taxonomy_leaf_id' => 'leaf-oils-vinegars', 'from_unit_key' => 'tbsp', 'to_unit_key' => 'g', 'factor' => '13.5', 'approximate' => 1, 'source_name' => 'USDA FoodData Central', 'source_item_id' => '171413', 'source_version' => 'SR Legacy 2018-04; published 2019-04-01', 'source_basis' => '1 tablespoon = 13.5 g', 'status' => 'inactive'],
+		['profile_key' => 'water-like-beverage', 'taxonomy_leaf_id' => 'leaf-beverages', 'from_unit_key' => 'cup', 'to_unit_key' => 'g', 'factor' => '237', 'approximate' => 1, 'source_name' => 'USDA FoodData Central', 'source_item_id' => '174158', 'source_version' => 'SR Legacy 2018-04; published 2019-04-01', 'source_basis' => '1 cup = 237 g', 'status' => 'inactive'],
+		['profile_key' => 'whole-milk', 'taxonomy_leaf_id' => 'leaf-dairy-eggs', 'from_unit_key' => 'cup', 'to_unit_key' => 'g', 'factor' => '244', 'approximate' => 1, 'source_name' => 'USDA FoodData Central', 'source_item_id' => '171265', 'source_version' => 'SR Legacy 2018-04; published 2019-04-01', 'source_basis' => '1 cup = 244 g', 'status' => 'inactive']
+	], $profiles, 'starter profiles must be the closed reviewed USDA FDC records with exact portion calculations');
+	conversionAssertSame(1, (int)$pdo->query("SELECT COUNT(*) FROM grocy_ai_conversion_profile_revisions WHERE id = 'conversion-profiles-v1' AND status = 'inactive'")->fetchColumn(), 'profile lifecycle must remain module-owned and inactive');
+
+	$protectedBeforeInspection = conversionResolutionProtectedSnapshot($pdo);
+	$water = (new GrocyAiConversionService($pdo, false))->InspectSourcedProfile(1, 'cup', 'g');
+	conversionAssertSame(['status', 'scope', 'blockers', 'factor', 'dimension', 'approximate', 'profile_key', 'taxonomy_leaf', 'source_name', 'source_item_id', 'source_version', 'source_basis', 'inactive_revision_id'], array_keys($water), 'profile inspection DTO keys must remain fixed and bounded');
+	conversionAssertSame('inactive', $water['status'], 'eligible sourced profile must remain inactive for inspection');
+	conversionAssertSame('food_profile', $water['scope'], 'sourced profile inspection must identify its scope');
+	conversionAssertSame([], $water['blockers'], 'eligible inactive profile must have no eligibility blocker');
+	conversionAssertSame('237', $water['factor'], 'eligible water profile must preserve the fixed USDA portion factor');
+	conversionAssertSame('mass_volume', $water['dimension'], 'sourced density profile must identify its cross-dimension role');
+	conversionAssertSame(true, $water['approximate'], 'eligible profile must be visibly approximate');
+	conversionAssertSame('174158', $water['source_item_id'], 'eligible profile must disclose its fixed USDA FDC item ID');
+
+	$service = new GrocyAiConversionService($pdo, false);
+	conversionResolutionAssertUnavailable($service, 2, 'cup', 'g', 'explicit_taxonomy_required');
+	conversionResolutionAssertUnavailable($service, 3, 'cup', 'g', 'explicit_taxonomy_required');
+	conversionResolutionAssertUnavailable($service, 4, 'cup', 'g', 'explicit_taxonomy_required');
+	conversionResolutionAssertUnavailable($service, 5, 'cup', 'g', 'explicit_taxonomy_required');
+	conversionResolutionAssertUnavailable($service, 6, 'cup', 'g', 'explicit_taxonomy_required');
+	conversionResolutionAssertUnavailable($service, 7, 'cup', 'g', 'taxonomy_leaf_excluded');
+	conversionResolutionAssertUnavailable($service, 8, 'cup', 'g', 'profile_unavailable');
+	conversionResolutionAssertUnavailable($service, 1, 'tbsp', 'g', 'profile_unavailable');
+	conversionAssertSame('244', $service->InspectSourcedProfile(9, 'cup', 'g')['factor'], 'whole-milk profile must retain its fixed reviewed USDA factor');
+	conversionAssertSame('13.5', $service->InspectSourcedProfile(10, 'tbsp', 'g')['factor'], 'olive-oil profile must retain its fixed reviewed USDA factor');
+	$pdo->exec("UPDATE grocy_ai_conversion_profiles SET factor = '238' WHERE profile_key = 'water-like-beverage'");
+	conversionResolutionAssertUnavailable($service, 1, 'cup', 'g', 'profile_invalid');
+	$pdo->exec("UPDATE grocy_ai_conversion_profiles SET factor = '237', source_item_id = '999999', source_basis = 'tampered but nonempty' WHERE profile_key = 'water-like-beverage'");
+	conversionResolutionAssertUnavailable($service, 1, 'cup', 'g', 'profile_invalid');
+	$pdo->exec("UPDATE grocy_ai_conversion_profiles SET source_item_id = '174158', source_basis = '1 cup = 237 g' WHERE profile_key = 'water-like-beverage'");
+	conversionAssertSame($protectedBeforeInspection, conversionResolutionProtectedSnapshot($pdo), 'all profile inspection outcomes must leave taxonomy, products, native conversions, cache, and projection state unchanged');
+
+	fwrite(STDOUT, "Conversion resolution tests passed\n");
+	exit(0);
+}
+
 function conversionNativeSaveHookPdo(): PDO
 {
 	$pdo = new PDO('sqlite::memory:');

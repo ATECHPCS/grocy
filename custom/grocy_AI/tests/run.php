@@ -652,6 +652,11 @@ if (($argv[1] ?? null) === 'conversion-rules')
 	runConversionRules();
 }
 
+if (($argv[1] ?? null) === 'conversion-resolution')
+{
+	runConversionResolution();
+}
+
 if (($argv[1] ?? null) === 'conversion-native-save-hook')
 {
 	runConversionNativeSaveHook();

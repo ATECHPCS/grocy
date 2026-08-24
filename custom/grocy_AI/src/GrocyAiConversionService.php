@@ -7,6 +7,11 @@ use PDO;
 class GrocyAiConversionService
 {
 	private const RELATIVE_TOLERANCE = 0.000000000001;
+	private const SOURCED_PROFILE_RECORDS = [
+		'water-like-beverage' => ['leaf-beverages', 'cup', 'g', '237', '174158', '1 cup = 237 g'],
+		'whole-milk' => ['leaf-dairy-eggs', 'cup', 'g', '244', '171265', '1 cup = 244 g'],
+		'olive-oil' => ['leaf-oils-vinegars', 'tbsp', 'g', '13.5', '171413', '1 tablespoon = 13.5 g']
+	];
 	private PDO $Db;
 
 	public function __construct(?PDO $pdo = null, bool $bootstrap = true)
@@ -105,6 +110,54 @@ class GrocyAiConversionService
 		}
 
 		return $this->Dto('inactive', 'reusable', [], $this->CandidateFactor($candidate), $from['dimension'], $sourceVersion);
+	}
+
+	public function InspectSourcedProfile(int $productId, string $fromUnitKey, string $toUnitKey): array
+	{
+		if ($productId < 1 || preg_match('/^[a-z][a-z0-9_]{0,31}$/D', $fromUnitKey) !== 1 || preg_match('/^[a-z][a-z0-9_]{0,31}$/D', $toUnitKey) !== 1)
+		{
+			return $this->ProfileUnavailable('profile_request_invalid');
+		}
+
+		$classification = $this->Db->prepare('SELECT node.id, node.slug FROM grocy_ai_taxonomy_classifications AS classification INNER JOIN grocy_ai_taxonomy_nodes AS node ON node.id = classification.leaf_id WHERE classification.product_id = ? AND classification.ruleset_version = ? AND classification.leaf_id IS NOT NULL AND node.version = ? AND node.parent_id IS NOT NULL AND node.depth = 2');
+		$classification->execute([$productId, GrocyAiTaxonomyMigration::VERSION, GrocyAiTaxonomyMigration::VERSION]);
+		$leaf = $classification->fetch(PDO::FETCH_ASSOC);
+		if (!is_array($leaf))
+		{
+			return $this->ProfileUnavailable('explicit_taxonomy_required');
+		}
+		$leafSlug = (string)$leaf['slug'];
+		if (preg_match('/baby|pet|frozen|preserved/i', $leafSlug) === 1)
+		{
+			return $this->ProfileUnavailable('taxonomy_leaf_excluded');
+		}
+
+		$profileStatement = $this->Db->prepare('SELECT profile.profile_key, profile.factor, profile.approximate, profile.source_name, profile.source_item_id, profile.source_version, profile.source_basis, profile.status, revision.status AS revision_status, revision.version AS revision_version FROM grocy_ai_conversion_profiles AS profile INNER JOIN grocy_ai_conversion_profile_revisions AS revision ON revision.id = profile.revision_id WHERE profile.revision_id = ? AND profile.taxonomy_leaf_id = ? AND profile.from_unit_key = ? AND profile.to_unit_key = ?');
+		$profileStatement->execute([GrocyAiConversionMigration::INACTIVE_PROFILE_REVISION_ID, (string)$leaf['id'], $fromUnitKey, $toUnitKey]);
+		$profile = $profileStatement->fetch(PDO::FETCH_ASSOC);
+		if (!is_array($profile))
+		{
+			return $this->ProfileUnavailable('profile_unavailable');
+		}
+
+		$expected = self::SOURCED_PROFILE_RECORDS[(string)$profile['profile_key']] ?? null;
+		$factor = $this->Factor($profile['factor']);
+		if ($expected === null
+			|| $expected !== [(string)$leaf['id'], $fromUnitKey, $toUnitKey, (string)$profile['factor'], (string)$profile['source_item_id'], (string)$profile['source_basis']]
+			|| $factor === null || $factor <= 0 || (int)$profile['approximate'] !== 1 || $profile['status'] !== 'inactive'
+			|| $profile['revision_status'] !== 'inactive' || $profile['revision_version'] !== GrocyAiConversionMigration::VERSION
+			|| $profile['source_name'] !== GrocyAiConversionMigration::PROFILE_SOURCE_NAME
+			|| $profile['source_version'] !== GrocyAiConversionMigration::PROFILE_SOURCE_VERSION
+			|| preg_match('/^[1-9][0-9]{0,9}$/D', (string)$profile['source_item_id']) !== 1
+			|| trim((string)$profile['source_basis']) === '')
+		{
+			return $this->ProfileUnavailable('profile_invalid');
+		}
+
+		return $this->ProfileDto(
+			'inactive', [], trim((string)$profile['factor']), 'mass_volume', (string)$profile['profile_key'], $leafSlug,
+			(string)$profile['source_name'], (string)$profile['source_item_id'], (string)$profile['source_version'], (string)$profile['source_basis']
+		);
 	}
 
 	private function CandidateUnits(array $candidate): ?array
@@ -262,6 +315,30 @@ class GrocyAiConversionService
 	private function Blocked(string $scope, string $blocker, ?string $sourceVersion = null): array
 	{
 		return $this->Dto('blocked', $scope, [$blocker], null, null, $sourceVersion);
+	}
+
+	private function ProfileUnavailable(string $blocker): array
+	{
+		return $this->ProfileDto('unavailable', [$blocker], null, null, null, null, null, null, null, null);
+	}
+
+	private function ProfileDto(string $status, array $blockers, ?string $factor, ?string $dimension, ?string $profileKey, ?string $taxonomyLeaf, ?string $sourceName, ?string $sourceItemId, ?string $sourceVersion, ?string $sourceBasis): array
+	{
+		return [
+			'status' => $status,
+			'scope' => 'food_profile',
+			'blockers' => $blockers,
+			'factor' => $factor,
+			'dimension' => $dimension,
+			'approximate' => true,
+			'profile_key' => $profileKey,
+			'taxonomy_leaf' => $taxonomyLeaf,
+			'source_name' => $sourceName,
+			'source_item_id' => $sourceItemId,
+			'source_version' => $sourceVersion,
+			'source_basis' => $sourceBasis,
+			'inactive_revision_id' => GrocyAiConversionMigration::INACTIVE_PROFILE_REVISION_ID
+		];
 	}
 
 	private function Factor(mixed $value): ?float
