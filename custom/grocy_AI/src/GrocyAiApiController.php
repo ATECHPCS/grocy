@@ -9,6 +9,7 @@ use GrocyAI\Services\GrocyAiDiagnostic;
 use GrocyAI\Services\GrocyAiService;
 use GrocyAI\Services\GrocyAiServiceException;
 use GrocyAI\Services\GrocyAiTaxonomyService;
+use GrocyAI\Services\GrocyAiConversionService;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 
@@ -160,6 +161,26 @@ class GrocyAiApiController extends BaseApiController
 		catch (\RuntimeException)
 		{
 			return $this->GenericErrorResponse($response, 'Product unavailable', 404);
+		}
+	}
+
+	public function ValidateConversion(Request $request, Response $response, array $args): Response
+	{
+		User::CheckPermission($request, User::PERMISSION_MASTER_DATA_EDIT);
+		$query = $request->getQueryParams();
+		$candidate = array_intersect_key($query, array_flip([
+			'product_id', 'from_qu_id', 'to_qu_id', 'factor', 'inactive_revision_id', 'source_version'
+		]));
+		$objectId = $query['object_id'] ?? null;
+		$objectId = is_string($objectId) && preg_match('/^[1-9][0-9]{0,9}$/D', $objectId) === 1 ? (int)$objectId : null;
+
+		try
+		{
+			return $this->ApiResponse($response, (new GrocyAiConversionService())->ValidateNativeConversionBeforeWrite($candidate, $objectId));
+		}
+		catch (\Throwable)
+		{
+			return $this->GenericErrorResponse($response, 'Conversion validation unavailable', 503);
 		}
 	}
 

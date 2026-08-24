@@ -157,6 +157,193 @@ function runConversionRules(): never
 	exit(0);
 }
 
+function conversionNativeSaveHookPdo(): PDO
+{
+	$pdo = new PDO('sqlite::memory:');
+	$pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+	$pdo->exec(<<<'SQL'
+CREATE TABLE quantity_units (id INTEGER PRIMARY KEY, name TEXT NOT NULL, name_plural TEXT NOT NULL);
+CREATE TABLE products (id INTEGER PRIMARY KEY, qu_id_stock INTEGER NOT NULL, qu_id_purchase INTEGER NOT NULL, qu_id_consume INTEGER NOT NULL, qu_id_price INTEGER NOT NULL);
+CREATE TABLE quantity_unit_conversions (id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT UNIQUE, from_qu_id INTEGER NOT NULL, to_qu_id INTEGER NOT NULL, factor REAL NOT NULL, product_id INTEGER, row_created_timestamp DATETIME DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE user_permissions_resolved (id INTEGER NOT NULL PRIMARY KEY, user_id INTEGER NOT NULL, permission_name TEXT NOT NULL);
+CREATE VIEW quantity_unit_conversions_resolved AS SELECT NULL AS id, NULL AS product_id, NULL AS from_qu_id, NULL AS from_qu_name, NULL AS from_qu_name_plural, NULL AS to_qu_id, NULL AS to_qu_name, NULL AS to_qu_name_plural, NULL AS factor, NULL AS path WHERE 0;
+CREATE TRIGGER qu_conversions_inverse_INS AFTER INSERT ON quantity_unit_conversions BEGIN SELECT 1; END;
+CREATE TRIGGER qu_conversions_inverse_UPD AFTER UPDATE ON quantity_unit_conversions BEGIN SELECT 1; END;
+CREATE TRIGGER qu_conversions_inverse_DEL AFTER DELETE ON quantity_unit_conversions BEGIN SELECT 1; END;
+SQL);
+
+	$resolverSql = file_get_contents(dirname(__DIR__, 3) . '/migrations/0208.sql');
+	$cacheSql = file_get_contents(dirname(__DIR__, 3) . '/migrations/0225.sql');
+	$cachePrefix = is_string($cacheSql) ? strstr($cacheSql, 'DROP VIEW recipes_pos_resolved;', true) : false;
+	if (!is_string($resolverSql) || $resolverSql === '' || !is_string($cachePrefix) || $cachePrefix === '')
+	{
+		throw new RuntimeException('native_conversion_fixture_migrations_unavailable');
+	}
+	$pdo->exec($resolverSql);
+	$pdo->exec($cachePrefix);
+	$pdo->exec(<<<'SQL'
+INSERT INTO quantity_units (id, name, name_plural) VALUES
+	(1, 'kg', 'kg'), (2, 'lb', 'lb'), (3, 'mL', 'mL'), (4, 'L', 'L'), (5, 'pack', 'packs'),
+	(6, 'count', 'counts'), (7, 'g', 'g'), (8, 'tsp', 'tsp'), (9, 'fl oz', 'fl oz'), (10, 'piece', 'pieces');
+INSERT INTO products (id, qu_id_stock, qu_id_purchase, qu_id_consume, qu_id_price) VALUES (11, 7, 8, 7, 7);
+INSERT INTO quantity_unit_conversions (id, product_id, from_qu_id, to_qu_id, factor) VALUES (91, 11, 10, 7, 3);
+INSERT INTO user_permissions_resolved (id, user_id, permission_name) VALUES (1, 1, 'MASTER_DATA_EDIT');
+CREATE TABLE conversion_native_write_audit (id INTEGER PRIMARY KEY AUTOINCREMENT, operation TEXT NOT NULL, object_id INTEGER NOT NULL, product_id INTEGER, from_qu_id INTEGER NOT NULL, to_qu_id INTEGER NOT NULL);
+CREATE TRIGGER conversion_native_write_audit_INS AFTER INSERT ON quantity_unit_conversions BEGIN
+	INSERT INTO conversion_native_write_audit (operation, object_id, product_id, from_qu_id, to_qu_id) VALUES ('insert', NEW.id, NEW.product_id, NEW.from_qu_id, NEW.to_qu_id);
+END;
+CREATE TRIGGER conversion_native_write_audit_UPD AFTER UPDATE ON quantity_unit_conversions BEGIN
+	INSERT INTO conversion_native_write_audit (operation, object_id, product_id, from_qu_id, to_qu_id) VALUES ('update', NEW.id, NEW.product_id, NEW.from_qu_id, NEW.to_qu_id);
+END;
+SQL);
+	return $pdo;
+}
+
+function conversionNativeSaveHookInstallDatabase(PDO $pdo): LessQL\Database
+{
+	$database = new LessQL\Database($pdo);
+	$serviceReflection = new ReflectionClass(Grocy\Services\DatabaseService::class);
+	foreach (['DbConnectionRaw' => $pdo, 'DbConnection' => $database, 'instance' => $serviceReflection->newInstance()] as $propertyName => $value)
+	{
+		$property = $serviceReflection->getProperty($propertyName);
+		$property->setValue(null, $value);
+	}
+	return $database;
+}
+
+function conversionNativeSaveHookController(LessQL\Database $database): Grocy\Controllers\Api\GenericEntityApiController
+{
+	$reflection = new ReflectionClass(Grocy\Controllers\Api\GenericEntityApiController::class);
+	$controller = $reflection->newInstanceWithoutConstructor();
+	foreach (['DB' => $database, 'OpenApiSpec' => json_decode((string)file_get_contents(dirname(__DIR__, 3) . '/grocy.openapi.json'), false, 512, JSON_THROW_ON_ERROR)] as $propertyName => $value)
+	{
+		$owner = $propertyName === 'DB' ? Grocy\Controllers\BaseController::class : Grocy\Controllers\Api\BaseApiController::class;
+		$property = (new ReflectionClass($owner))->getProperty($propertyName);
+		$property->setValue($controller, $value);
+	}
+	return $controller;
+}
+
+function conversionNativeSaveHookRequest(string $method, array $candidate): Psr\Http\Message\ServerRequestInterface
+{
+	return (new Slim\Psr7\Factory\ServerRequestFactory())
+		->createServerRequest($method, '/api/objects/quantity_unit_conversions')
+		->withHeader('Content-Type', 'application/json')
+		->withParsedBody($candidate);
+}
+
+function conversionNativeSaveHookResponse(): Psr\Http\Message\ResponseInterface
+{
+	return (new Slim\Psr7\Factory\ResponseFactory())->createResponse();
+}
+
+function conversionNativeSaveHookSnapshot(PDO $pdo): array
+{
+	return [
+		'native' => $pdo->query('SELECT id, product_id, from_qu_id, to_qu_id, factor FROM quantity_unit_conversions ORDER BY id')->fetchAll(PDO::FETCH_ASSOC),
+		'cache' => $pdo->query('SELECT product_id, from_qu_id, to_qu_id, factor, path FROM cache__quantity_unit_conversions_resolved ORDER BY product_id, from_qu_id, to_qu_id')->fetchAll(PDO::FETCH_ASSOC),
+		'audit_count' => (int)$pdo->query('SELECT COUNT(*) FROM conversion_native_write_audit')->fetchColumn()
+	];
+}
+
+function conversionNativeSaveHookInvokeAdd(Grocy\Controllers\Api\GenericEntityApiController $controller, array $candidate): Psr\Http\Message\ResponseInterface
+{
+	return $controller->AddObject(conversionNativeSaveHookRequest('POST', $candidate), conversionNativeSaveHookResponse(), ['entity' => 'quantity_unit_conversions']);
+}
+
+function conversionNativeSaveHookInvokeEdit(Grocy\Controllers\Api\GenericEntityApiController $controller, int $objectId, array $candidate): Psr\Http\Message\ResponseInterface
+{
+	return $controller->EditObject(conversionNativeSaveHookRequest('PUT', $candidate), conversionNativeSaveHookResponse(), ['entity' => 'quantity_unit_conversions', 'objectId' => $objectId]);
+}
+
+function conversionNativeSaveHookAssertRejectedWithoutWrite(PDO $pdo, Grocy\Controllers\Api\GenericEntityApiController $controller, array $candidate, string $expectedReason): void
+{
+	$before = conversionNativeSaveHookSnapshot($pdo);
+	$response = conversionNativeSaveHookInvokeAdd($controller, $candidate);
+	conversionAssertSame(400, $response->getStatusCode(), 'invalid or reusable native conversion must return a bounded API error');
+	$body = json_decode((string)$response->getBody(), true, 512, JSON_THROW_ON_ERROR);
+	conversionAssertSame('conversion_write_blocked:' . $expectedReason, $body['error_message'] ?? null, 'native rejection reason must be bounded');
+	conversionAssertSame($before, conversionNativeSaveHookSnapshot($pdo), 'rejected native conversion must mutate neither native rows, cache, nor native audit');
+}
+
+function conversionNativeSaveHookAssertRejectedEditWithoutWrite(PDO $pdo, Grocy\Controllers\Api\GenericEntityApiController $controller, int $objectId, array $candidate, string $expectedReason): void
+{
+	$before = conversionNativeSaveHookSnapshot($pdo);
+	$response = conversionNativeSaveHookInvokeEdit($controller, $objectId, $candidate);
+	conversionAssertSame(400, $response->getStatusCode(), 'invalid or reusable conversion edit must return a bounded API error');
+	$body = json_decode((string)$response->getBody(), true, 512, JSON_THROW_ON_ERROR);
+	conversionAssertSame('conversion_write_blocked:' . $expectedReason, $body['error_message'] ?? null, 'native edit rejection reason must be bounded');
+	conversionAssertSame($before, conversionNativeSaveHookSnapshot($pdo), 'rejected conversion edit must mutate neither native rows, cache, nor native audit');
+}
+
+function runConversionNativeSaveHook(): never
+{
+	if (!defined('GROCY_MODE'))
+	{
+		define('GROCY_MODE', 'production');
+	}
+	if (!defined('GROCY_DATAPATH'))
+	{
+		define('GROCY_DATAPATH', sys_get_temp_dir());
+	}
+	if (!defined('GROCY_USER_ID'))
+	{
+		define('GROCY_USER_ID', 1);
+	}
+	if (!is_dir(GROCY_DATAPATH . '/viewcache') && !mkdir(GROCY_DATAPATH . '/viewcache', 0700, true) && !is_dir(GROCY_DATAPATH . '/viewcache'))
+	{
+		throw new RuntimeException('native_conversion_viewcache_unavailable');
+	}
+	require_once dirname(__DIR__, 3) . '/packages/autoload.php';
+	require_once dirname(__DIR__, 3) . '/controllers/Api/GenericEntityApiController.php';
+	require_once dirname(__DIR__) . '/src/GrocyAiApiController.php';
+
+	$pdo = conversionNativeSaveHookPdo();
+	$database = conversionNativeSaveHookInstallDatabase($pdo);
+	$controller = conversionNativeSaveHookController($database);
+
+	$addResponse = conversionNativeSaveHookInvokeAdd($controller, productScopedPackageCandidate());
+	conversionAssertSame(200, $addResponse->getStatusCode(), 'valid product package conversion must retain native AddObject');
+	conversionAssertSame(1, (int)$pdo->query("SELECT COUNT(*) FROM quantity_unit_conversions WHERE product_id = 11 AND from_qu_id = 5 AND to_qu_id = 7 AND factor = 12")->fetchColumn(), 'native AddObject must create the submitted product conversion exactly once');
+	conversionAssertSame(1, (int)$pdo->query("SELECT COUNT(*) FROM conversion_native_write_audit WHERE operation = 'insert' AND product_id = 11 AND from_qu_id = 5 AND to_qu_id = 7")->fetchColumn(), 'native AddObject must execute the submitted write exactly once');
+	conversionAssertSame(1, (int)$pdo->query("SELECT COUNT(*) FROM cache__quantity_unit_conversions_resolved WHERE product_id = 11 AND from_qu_id = 5 AND to_qu_id = 7")->fetchColumn(), 'native AddObject must rebuild one resolved cache row for the submitted conversion');
+
+	$editResponse = conversionNativeSaveHookInvokeEdit($controller, 91, productScopedDensityCandidate());
+	conversionAssertSame(204, $editResponse->getStatusCode(), 'valid measured-density conversion must retain native EditObject');
+	conversionAssertSame(1, (int)$pdo->query("SELECT COUNT(*) FROM quantity_unit_conversions WHERE id = 91 AND product_id = 11 AND from_qu_id = 7 AND to_qu_id = 3 AND factor = 0.9")->fetchColumn(), 'native EditObject must update the actual requested object');
+	conversionAssertSame(1, (int)$pdo->query("SELECT COUNT(*) FROM conversion_native_write_audit WHERE operation = 'update' AND object_id = 91 AND product_id = 11 AND from_qu_id = 7 AND to_qu_id = 3")->fetchColumn(), 'native EditObject must execute the submitted write exactly once');
+	conversionAssertSame(1, (int)$pdo->query("SELECT COUNT(*) FROM cache__quantity_unit_conversions_resolved WHERE product_id = 11 AND from_qu_id = 7 AND to_qu_id = 3")->fetchColumn(), 'native EditObject must rebuild one resolved cache row for the measured-density conversion');
+
+	conversionNativeSaveHookAssertRejectedWithoutWrite($pdo, $controller, ['product_id' => null, 'from_qu_id' => 1, 'to_qu_id' => 2, 'factor' => '2.2046226218487757'], 'reusable_scope_inactive');
+	conversionNativeSaveHookAssertRejectedWithoutWrite($pdo, $controller, reusablePackageCandidate(), 'reusable_count_scope');
+	conversionNativeSaveHookAssertRejectedWithoutWrite($pdo, $controller, crossDimensionCandidate(), 'dimension_mismatch');
+	conversionNativeSaveHookAssertRejectedEditWithoutWrite($pdo, $controller, 91, ['product_id' => null, 'from_qu_id' => 1, 'to_qu_id' => 2, 'factor' => '2.2046226218487757'], 'reusable_scope_inactive');
+
+	$apiReflection = new ReflectionClass(GrocyAI\Controllers\Api\GrocyAiApiController::class);
+	$apiController = $apiReflection->newInstanceWithoutConstructor();
+	$readRequest = (new Slim\Psr7\Factory\ServerRequestFactory())->createServerRequest('GET', '/api/grocy-ai/conversions/validate')->withQueryParams([
+		'product_id' => '', 'from_qu_id' => '1', 'to_qu_id' => '2', 'factor' => '2.2046226218487757'
+	]);
+	$readResponse = $apiController->ValidateConversion($readRequest, conversionNativeSaveHookResponse(), []);
+	$readBody = json_decode((string)$readResponse->getBody(), true, 512, JSON_THROW_ON_ERROR);
+	conversionAssertSame('inactive', $readBody['status'] ?? null, 'permission-checked validation endpoint must remain read-only and inactive');
+	$readSnapshot = conversionNativeSaveHookSnapshot($pdo);
+	$pdo->exec("DELETE FROM user_permissions_resolved WHERE permission_name = 'MASTER_DATA_EDIT'");
+	try
+	{
+		$apiController->ValidateConversion($readRequest, conversionNativeSaveHookResponse(), []);
+		throw new RuntimeException('conversion_validation_permission_not_checked');
+	}
+	catch (Grocy\Controllers\Users\PermissionMissingException)
+	{
+		// The read-only validation endpoint must check permission before validation.
+	}
+	conversionAssertSame($readSnapshot, conversionNativeSaveHookSnapshot($pdo), 'validation reads and permission rejection must not mutate native rows or cache');
+
+	fwrite(STDOUT, "Conversion native save hook tests passed\n");
+	exit(0);
+}
+
 function runConversionCharacterization(string $mainRoot, string $stableRoot, string $fixtureRoot, string $blockedDataPath): array
 {
 	$openedPaths = [];

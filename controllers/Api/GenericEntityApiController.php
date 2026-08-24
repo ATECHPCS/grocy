@@ -6,6 +6,7 @@ use Grocy\Controllers\Users\User;
 use Grocy\Services\StockService;
 use Grocy\Services\UserfieldsService;
 use Grocy\Services\UsersService;
+use GrocyAI\Services\GrocyAiConversionService;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 
@@ -50,6 +51,7 @@ class GenericEntityApiController extends BaseApiController
 					throw new \Exception('Request body could not be parsed (probably invalid JSON format or missing/wrong Content-Type header)');
 				}
 
+				$this->ValidateQuantityUnitConversionBeforeWrite($args['entity'], $requestBody, null);
 				$newRow = $this->DB->{$args['entity']}()->createRow($requestBody);
 				$newRow->save();
 				$newObjectId = $this->DB->lastInsertId();
@@ -170,6 +172,7 @@ class GenericEntityApiController extends BaseApiController
 					return $this->GenericErrorResponse($response, 'Object not found', 400);
 				}
 
+				$this->ValidateQuantityUnitConversionBeforeWrite($args['entity'], $requestBody, (int)$args['objectId']);
 				$row->update($requestBody);
 
 				// TODO: This should be better done somehow in StockService
@@ -321,5 +324,45 @@ class GenericEntityApiController extends BaseApiController
 	private function IsValidExposedEntity($entity)
 	{
 		return in_array($entity, $this->GetOpenApispec()->components->schemas->ExposedEntity->enum);
+	}
+
+	private function ValidateQuantityUnitConversionBeforeWrite(string $entity, array $requestBody, ?int $objectId): void
+	{
+		if ($entity !== 'quantity_unit_conversions' || !defined('GROCY_FEATURE_FLAG_GROCY_AI') || !GROCY_FEATURE_FLAG_GROCY_AI)
+		{
+			return;
+		}
+
+		try
+		{
+			if (!class_exists(GrocyAiConversionService::class))
+			{
+				throw new \RuntimeException('conversion_service_unavailable');
+			}
+			$result = (new GrocyAiConversionService())->ValidateNativeConversionBeforeWrite($requestBody, $objectId);
+		}
+		catch (\Throwable)
+		{
+			throw new \Exception('conversion_write_blocked:validation_unavailable');
+		}
+
+		if (($result['status'] ?? null) === 'product_native' && ($result['scope'] ?? null) === 'product' && ($result['blockers'] ?? null) === [])
+		{
+			return;
+		}
+
+		$reason = ($result['status'] ?? null) === 'inactive' ? 'reusable_scope_inactive' : (($result['blockers'][0] ?? null));
+		$boundedReasons = [
+			'factor_not_finite', 'factor_non_positive', 'unit_not_cataloged', 'reusable_count_scope',
+			'inactive_revision_unavailable', 'revision_source_version_invalid', 'catalog_source_version_invalid',
+			'catalog_unit_invalid', 'dimension_mismatch', 'stale_revision_identity', 'stale_source_version',
+			'catalog_rule_source_version_invalid', 'catalog_rule_invalid', 'competing_path', 'reciprocal_mismatch',
+			'cycle_detected', 'factor_tolerance', 'reusable_scope_inactive'
+		];
+		if (!is_string($reason) || !in_array($reason, $boundedReasons, true))
+		{
+			$reason = 'validation_failed';
+		}
+		throw new \Exception('conversion_write_blocked:' . $reason);
 	}
 }
