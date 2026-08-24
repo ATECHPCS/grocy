@@ -1,5 +1,6 @@
 embedded.txt
 .DS_Store
 /.release
+/.worktrees
 /packages
 /public/packages
