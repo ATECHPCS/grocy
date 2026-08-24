@@ -248,9 +248,21 @@ function conversionNativeSaveHookSnapshot(PDO $pdo): array
 
 function conversionValidationReadSnapshot(PDO $pdo): array
 {
+	$schema = $pdo->query("SELECT type, name, sql FROM sqlite_master WHERE name LIKE 'grocy_ai_conversion_%' ORDER BY type, name")->fetchAll(PDO::FETCH_ASSOC);
+	$moduleState = [];
+	foreach ($schema as $object)
+	{
+		if (($object['type'] ?? null) !== 'table')
+		{
+			continue;
+		}
+		$table = (string)$object['name'];
+		$moduleState[$table] = $pdo->query('SELECT * FROM "' . str_replace('"', '""', $table) . '" ORDER BY rowid')->fetchAll(PDO::FETCH_ASSOC);
+	}
 	return [
 		'native' => conversionNativeSaveHookSnapshot($pdo),
-		'module_schema' => $pdo->query("SELECT type, name, sql FROM sqlite_master WHERE name LIKE 'grocy_ai_conversion_%' ORDER BY type, name")->fetchAll(PDO::FETCH_ASSOC),
+		'module_schema' => $schema,
+		'module_state' => $moduleState,
 		'total_changes' => (int)$pdo->query('SELECT total_changes()')->fetchColumn()
 	];
 }
@@ -328,6 +340,15 @@ function runConversionNativeSaveHook(): never
 	$preBootstrapProductResponse = $apiController->ValidateConversion($productReadRequest, conversionNativeSaveHookResponse(), []);
 	conversionAssertSame($preBootstrapProductSnapshot, conversionValidationReadSnapshot($pdo), 'product-scoped validation GET must also leave unavailable inactive state untouched');
 	conversionAssertSame(503, $preBootstrapProductResponse->getStatusCode(), 'product-scoped validation GET must fail closed when inactive schema is unavailable');
+	GrocyAiConversionMigration::Bootstrap($pdo);
+	$pdo->exec('DROP TABLE grocy_ai_conversion_validation_ledger');
+	$pdo->exec('DROP TABLE grocy_ai_conversion_migrations');
+	$partialReadSnapshot = conversionValidationReadSnapshot($pdo);
+	$partialReadResponse = $apiController->ValidateConversion($readRequest, conversionNativeSaveHookResponse(), []);
+	conversionAssertSame($partialReadSnapshot, conversionValidationReadSnapshot($pdo), 'partial inactive module state validation GET must remain exactly non-persisting');
+	conversionAssertSame(503, $partialReadResponse->getStatusCode(), 'validation GET must fail closed when migration marker or validation ledger is missing');
+	$partialReadBody = json_decode((string)$partialReadResponse->getBody(), true, 512, JSON_THROW_ON_ERROR);
+	conversionAssertSame('Conversion validation unavailable', $partialReadBody['error_message'] ?? null, 'partial inactive module state must return a bounded error');
 
 	$addResponse = conversionNativeSaveHookInvokeAdd($controller, productScopedPackageCandidate());
 	conversionAssertSame(200, $addResponse->getStatusCode(), 'valid product package conversion must retain native AddObject');
@@ -346,11 +367,13 @@ function runConversionNativeSaveHook(): never
 	conversionNativeSaveHookAssertRejectedWithoutWrite($pdo, $controller, crossDimensionCandidate(), 'dimension_mismatch');
 	conversionNativeSaveHookAssertRejectedEditWithoutWrite($pdo, $controller, 91, ['product_id' => null, 'from_qu_id' => 1, 'to_qu_id' => 2, 'factor' => '2.2046226218487757'], 'reusable_scope_inactive');
 
+	$initializedReadSnapshot = conversionValidationReadSnapshot($pdo);
 	$readResponse = $apiController->ValidateConversion($readRequest, conversionNativeSaveHookResponse(), []);
 	$readBody = json_decode((string)$readResponse->getBody(), true, 512, JSON_THROW_ON_ERROR);
 	conversionAssertSame('inactive', $readBody['status'] ?? null, 'permission-checked validation endpoint must remain read-only and inactive');
-	$readSnapshot = conversionNativeSaveHookSnapshot($pdo);
+	conversionAssertSame($initializedReadSnapshot, conversionValidationReadSnapshot($pdo), 'successful initialized validation GET must leave all native and module schema/state exactly unchanged');
 	$pdo->exec("DELETE FROM user_permissions_resolved WHERE permission_name = 'MASTER_DATA_EDIT'");
+	$permissionReadSnapshot = conversionValidationReadSnapshot($pdo);
 	try
 	{
 		$apiController->ValidateConversion($readRequest, conversionNativeSaveHookResponse(), []);
@@ -360,7 +383,7 @@ function runConversionNativeSaveHook(): never
 	{
 		// The read-only validation endpoint must check permission before validation.
 	}
-	conversionAssertSame($readSnapshot, conversionNativeSaveHookSnapshot($pdo), 'validation reads and permission rejection must not mutate native rows or cache');
+	conversionAssertSame($permissionReadSnapshot, conversionValidationReadSnapshot($pdo), 'permission rejection must not mutate native or module conversion state');
 
 	fwrite(STDOUT, "Conversion native save hook tests passed\n");
 	exit(0);

@@ -179,17 +179,37 @@ class GrocyAiApiController extends BaseApiController
 		try
 		{
 			$database = DatabaseService::GetInstance()->GetDbConnectionRaw();
+			$schemaObjects = $database->query("SELECT type || ':' || name FROM sqlite_master WHERE name IN (
+				'grocy_ai_conversion_migrations', 'grocy_ai_conversion_catalog_units', 'grocy_ai_conversion_revisions',
+				'grocy_ai_conversion_rules', 'grocy_ai_conversion_rules_revision_idx', 'grocy_ai_conversion_validation_ledger'
+			) ORDER BY type, name")->fetchAll(\PDO::FETCH_COLUMN);
+			if ($schemaObjects !== [
+				'index:grocy_ai_conversion_rules_revision_idx',
+				'table:grocy_ai_conversion_catalog_units',
+				'table:grocy_ai_conversion_migrations',
+				'table:grocy_ai_conversion_revisions',
+				'table:grocy_ai_conversion_rules',
+				'table:grocy_ai_conversion_validation_ledger'
+			])
+			{
+				throw new \RuntimeException('conversion_validation_schema_unavailable');
+			}
 			$state = $database->prepare("SELECT
+				(SELECT COUNT(*) FROM grocy_ai_conversion_migrations WHERE version = ?) AS migration_count,
 				(SELECT COUNT(*) FROM grocy_ai_conversion_revisions WHERE id = ? AND status = 'inactive' AND source_version = ?) AS revision_count,
 				(SELECT COUNT(*) FROM grocy_ai_conversion_catalog_units WHERE source_version = ?) AS catalog_count,
-				(SELECT COUNT(*) FROM grocy_ai_conversion_rules WHERE revision_id = ? AND source_version = ?) AS rule_count");
+				(SELECT COUNT(*) FROM grocy_ai_conversion_rules WHERE revision_id = ? AND source_version = ?) AS rule_count,
+				(SELECT COUNT(*) FROM grocy_ai_conversion_validation_ledger WHERE revision_id IS NULL OR status NOT IN ('inactive', 'blocked', 'product_native') OR validated_at IS NULL) AS invalid_ledger_count,
+				(SELECT COUNT(id) + COUNT(blocker) FROM grocy_ai_conversion_validation_ledger) AS ledger_shape_probe");
 			$state->execute([
+				GrocyAiConversionMigration::VERSION,
 				GrocyAiConversionMigration::INACTIVE_REVISION_ID, GrocyAiConversionMigration::SOURCE_VERSION,
 				GrocyAiConversionMigration::SOURCE_VERSION, GrocyAiConversionMigration::INACTIVE_REVISION_ID,
 				GrocyAiConversionMigration::SOURCE_VERSION
 			]);
 			$state = $state->fetch(\PDO::FETCH_ASSOC);
-			if (!is_array($state) || (int)$state['revision_count'] !== 1 || (int)$state['catalog_count'] !== 14 || (int)$state['rule_count'] !== 12)
+			if (!is_array($state) || (int)$state['migration_count'] !== 1 || (int)$state['revision_count'] !== 1
+				|| (int)$state['catalog_count'] !== 14 || (int)$state['rule_count'] !== 12 || (int)$state['invalid_ledger_count'] !== 0)
 			{
 				throw new \RuntimeException('conversion_validation_state_unavailable');
 			}
