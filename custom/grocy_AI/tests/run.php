@@ -50,6 +50,14 @@ if (is_file($taxonomyTestFile))
 	require_once $taxonomyTestFile;
 }
 
+if (($argv[1] ?? '') === 'conversion-characterization')
+{
+	require_once __DIR__ . '/conversions.php';
+	require_once __DIR__ . '/conversion-characterization.php';
+	runConversionCharacterizationContract();
+	exit(0);
+}
+
 use GrocyAI\Services\GrocyAiDiagnostic;
 use GrocyAI\Services\GrocyAiContract;
 use GrocyAI\Services\GrocyAiService;
