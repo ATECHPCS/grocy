@@ -4,7 +4,9 @@ namespace GrocyAI\Controllers\Api;
 
 use Grocy\Controllers\Api\BaseApiController;
 use Grocy\Controllers\Users\User;
+use Grocy\Services\DatabaseService;
 use GrocyAI\Services\GrocyAiBarcodeService;
+use GrocyAI\Services\GrocyAiConversionMigration;
 use GrocyAI\Services\GrocyAiDiagnostic;
 use GrocyAI\Services\GrocyAiService;
 use GrocyAI\Services\GrocyAiServiceException;
@@ -176,7 +178,22 @@ class GrocyAiApiController extends BaseApiController
 
 		try
 		{
-			return $this->ApiResponse($response, (new GrocyAiConversionService())->ValidateNativeConversionBeforeWrite($candidate, $objectId));
+			$database = DatabaseService::GetInstance()->GetDbConnectionRaw();
+			$state = $database->prepare("SELECT
+				(SELECT COUNT(*) FROM grocy_ai_conversion_revisions WHERE id = ? AND status = 'inactive' AND source_version = ?) AS revision_count,
+				(SELECT COUNT(*) FROM grocy_ai_conversion_catalog_units WHERE source_version = ?) AS catalog_count,
+				(SELECT COUNT(*) FROM grocy_ai_conversion_rules WHERE revision_id = ? AND source_version = ?) AS rule_count");
+			$state->execute([
+				GrocyAiConversionMigration::INACTIVE_REVISION_ID, GrocyAiConversionMigration::SOURCE_VERSION,
+				GrocyAiConversionMigration::SOURCE_VERSION, GrocyAiConversionMigration::INACTIVE_REVISION_ID,
+				GrocyAiConversionMigration::SOURCE_VERSION
+			]);
+			$state = $state->fetch(\PDO::FETCH_ASSOC);
+			if (!is_array($state) || (int)$state['revision_count'] !== 1 || (int)$state['catalog_count'] !== 14 || (int)$state['rule_count'] !== 12)
+			{
+				throw new \RuntimeException('conversion_validation_state_unavailable');
+			}
+			return $this->ApiResponse($response, (new GrocyAiConversionService($database, false))->ValidateNativeConversionBeforeWrite($candidate, $objectId));
 		}
 		catch (\Throwable)
 		{

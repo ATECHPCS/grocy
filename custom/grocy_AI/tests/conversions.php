@@ -246,6 +246,15 @@ function conversionNativeSaveHookSnapshot(PDO $pdo): array
 	];
 }
 
+function conversionValidationReadSnapshot(PDO $pdo): array
+{
+	return [
+		'native' => conversionNativeSaveHookSnapshot($pdo),
+		'module_schema' => $pdo->query("SELECT type, name, sql FROM sqlite_master WHERE name LIKE 'grocy_ai_conversion_%' ORDER BY type, name")->fetchAll(PDO::FETCH_ASSOC),
+		'total_changes' => (int)$pdo->query('SELECT total_changes()')->fetchColumn()
+	];
+}
+
 function conversionNativeSaveHookInvokeAdd(Grocy\Controllers\Api\GenericEntityApiController $controller, array $candidate): Psr\Http\Message\ResponseInterface
 {
 	return $controller->AddObject(conversionNativeSaveHookRequest('POST', $candidate), conversionNativeSaveHookResponse(), ['entity' => 'quantity_unit_conversions']);
@@ -301,6 +310,24 @@ function runConversionNativeSaveHook(): never
 	$pdo = conversionNativeSaveHookPdo();
 	$database = conversionNativeSaveHookInstallDatabase($pdo);
 	$controller = conversionNativeSaveHookController($database);
+	$apiReflection = new ReflectionClass(GrocyAI\Controllers\Api\GrocyAiApiController::class);
+	$apiController = $apiReflection->newInstanceWithoutConstructor();
+	$readRequest = (new Slim\Psr7\Factory\ServerRequestFactory())->createServerRequest('GET', '/api/grocy-ai/conversions/validate')->withQueryParams([
+		'product_id' => '', 'from_qu_id' => '1', 'to_qu_id' => '2', 'factor' => '2.2046226218487757'
+	]);
+	$preBootstrapReadSnapshot = conversionValidationReadSnapshot($pdo);
+	$preBootstrapReadResponse = $apiController->ValidateConversion($readRequest, conversionNativeSaveHookResponse(), []);
+	conversionAssertSame($preBootstrapReadSnapshot, conversionValidationReadSnapshot($pdo), 'first validation GET must not create, seed, or otherwise mutate module/native state');
+	conversionAssertSame(503, $preBootstrapReadResponse->getStatusCode(), 'validation GET must fail closed when inactive schema is unavailable');
+	$preBootstrapReadBody = json_decode((string)$preBootstrapReadResponse->getBody(), true, 512, JSON_THROW_ON_ERROR);
+	conversionAssertSame('Conversion validation unavailable', $preBootstrapReadBody['error_message'] ?? null, 'unavailable inactive validation state must return a bounded error');
+	$productReadRequest = (new Slim\Psr7\Factory\ServerRequestFactory())->createServerRequest('GET', '/api/grocy-ai/conversions/validate')->withQueryParams([
+		'product_id' => '11', 'from_qu_id' => '5', 'to_qu_id' => '7', 'factor' => '12'
+	]);
+	$preBootstrapProductSnapshot = conversionValidationReadSnapshot($pdo);
+	$preBootstrapProductResponse = $apiController->ValidateConversion($productReadRequest, conversionNativeSaveHookResponse(), []);
+	conversionAssertSame($preBootstrapProductSnapshot, conversionValidationReadSnapshot($pdo), 'product-scoped validation GET must also leave unavailable inactive state untouched');
+	conversionAssertSame(503, $preBootstrapProductResponse->getStatusCode(), 'product-scoped validation GET must fail closed when inactive schema is unavailable');
 
 	$addResponse = conversionNativeSaveHookInvokeAdd($controller, productScopedPackageCandidate());
 	conversionAssertSame(200, $addResponse->getStatusCode(), 'valid product package conversion must retain native AddObject');
@@ -319,11 +346,6 @@ function runConversionNativeSaveHook(): never
 	conversionNativeSaveHookAssertRejectedWithoutWrite($pdo, $controller, crossDimensionCandidate(), 'dimension_mismatch');
 	conversionNativeSaveHookAssertRejectedEditWithoutWrite($pdo, $controller, 91, ['product_id' => null, 'from_qu_id' => 1, 'to_qu_id' => 2, 'factor' => '2.2046226218487757'], 'reusable_scope_inactive');
 
-	$apiReflection = new ReflectionClass(GrocyAI\Controllers\Api\GrocyAiApiController::class);
-	$apiController = $apiReflection->newInstanceWithoutConstructor();
-	$readRequest = (new Slim\Psr7\Factory\ServerRequestFactory())->createServerRequest('GET', '/api/grocy-ai/conversions/validate')->withQueryParams([
-		'product_id' => '', 'from_qu_id' => '1', 'to_qu_id' => '2', 'factor' => '2.2046226218487757'
-	]);
 	$readResponse = $apiController->ValidateConversion($readRequest, conversionNativeSaveHookResponse(), []);
 	$readBody = json_decode((string)$readResponse->getBody(), true, 512, JSON_THROW_ON_ERROR);
 	conversionAssertSame('inactive', $readBody['status'] ?? null, 'permission-checked validation endpoint must remain read-only and inactive');
