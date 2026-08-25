@@ -119,7 +119,7 @@ class GrocyAiConversionService
 			return $this->ProfileUnavailable('profile_request_invalid');
 		}
 
-		if (!$this->TaxonomyClassificationsAvailable())
+		if (!$this->TaxonomyClassificationsRelationAvailable())
 		{
 			return $this->ProfileUnavailable('taxonomy_unavailable');
 		}
@@ -326,11 +326,11 @@ class GrocyAiConversionService
 		return $this->ProfileDto('unavailable', [$blocker], null, null, null, null, null, null, null, null);
 	}
 
-	private function TaxonomyClassificationsAvailable(): bool
+	private function TaxonomyClassificationsRelationAvailable(): bool
 	{
-		$statement = $this->Db->prepare("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?");
+		$statement = $this->Db->prepare('SELECT 1 FROM sqlite_master WHERE name = ? LIMIT 1');
 		$statement->execute(['grocy_ai_taxonomy_classifications']);
-		return (int)$statement->fetchColumn() === 1;
+		return $statement->fetchColumn() !== false;
 	}
 
 	private function ProfileDto(string $status, array $blockers, ?string $factor, ?string $dimension, ?string $profileKey, ?string $taxonomyLeaf, ?string $sourceName, ?string $sourceItemId, ?string $sourceVersion, ?string $sourceBasis): array

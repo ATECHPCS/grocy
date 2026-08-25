@@ -239,6 +239,14 @@ function conversionResolutionMalformedTaxonomyPdo(): PDO
 	return $pdo;
 }
 
+function conversionResolutionViewTaxonomyPdo(): PDO
+{
+	$pdo = conversionResolutionMissingTaxonomyPdo();
+	$pdo->exec("CREATE TABLE grocy_ai_taxonomy_nodes (id TEXT NOT NULL PRIMARY KEY, version TEXT NOT NULL, parent_id TEXT NULL, slug TEXT NOT NULL, depth INTEGER NOT NULL)");
+	$pdo->exec("CREATE VIEW grocy_ai_taxonomy_classifications AS SELECT 1 AS product_id, NULL AS leaf_id");
+	return $pdo;
+}
+
 function conversionResolutionAssertUnavailable(GrocyAiConversionService $service, int $productId, string $fromUnit, string $toUnit, string $blocker): void
 {
 	$result = $service->InspectSourcedProfile($productId, $fromUnit, $toUnit);
@@ -293,6 +301,23 @@ function runConversionResolution(): never
 		}
 	}
 	conversionAssertSame($malformedTaxonomyBefore, conversionResolutionMissingTaxonomySnapshot($malformedTaxonomy), 'malformed taxonomy inspection must propagate without mutating module, native conversion, product, or cache state');
+
+	$viewTaxonomy = conversionResolutionViewTaxonomyPdo();
+	GrocyAiConversionMigration::Bootstrap($viewTaxonomy);
+	$viewTaxonomyBefore = conversionResolutionMissingTaxonomySnapshot($viewTaxonomy);
+	try
+	{
+		(new GrocyAiConversionService($viewTaxonomy, false))->InspectSourcedProfile(1, 'cup', 'g');
+		throw new RuntimeException('view-backed malformed taxonomy schema was converted to an unavailable DTO');
+	}
+	catch (PDOException $ex)
+	{
+		if (!str_contains($ex->getMessage(), 'ruleset_version'))
+		{
+			throw new RuntimeException('unexpected view-backed taxonomy schema error');
+		}
+	}
+	conversionAssertSame($viewTaxonomyBefore, conversionResolutionMissingTaxonomySnapshot($viewTaxonomy), 'view-backed malformed taxonomy inspection must propagate without mutating module, native conversion, product, or cache state');
 
 	$protectedBeforeInspection = conversionResolutionProtectedSnapshot($pdo);
 	$water = (new GrocyAiConversionService($pdo, false))->InspectSourcedProfile(1, 'cup', 'g');
