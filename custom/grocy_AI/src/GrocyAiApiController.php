@@ -232,6 +232,56 @@ class GrocyAiApiController extends BaseApiController
 		}
 	}
 
+	public function ProductConversionStatus(Request $request, Response $response, array $args): Response
+	{
+		User::CheckPermission($request, User::PERMISSION_MASTER_DATA_EDIT);
+		$productId = $args['productId'] ?? null;
+		$query = $request->getQueryParams();
+		$fromUnitKey = $query['from_unit_key'] ?? null;
+		$toUnitKey = $query['to_unit_key'] ?? null;
+		if (!is_string($productId) || preg_match('/^[1-9][0-9]{0,9}$/D', $productId) !== 1
+			|| !is_string($fromUnitKey) || preg_match('/^[a-z][a-z0-9_]{0,31}$/D', $fromUnitKey) !== 1
+			|| !is_string($toUnitKey) || preg_match('/^[a-z][a-z0-9_]{0,31}$/D', $toUnitKey) !== 1)
+		{
+			return $this->GenericErrorResponse($response, 'Invalid conversion status request', 400);
+		}
+
+		try
+		{
+			$database = DatabaseService::GetInstance()->GetDbConnectionRaw();
+			$product = $database->prepare('SELECT 1 FROM products WHERE id = ?');
+			$product->execute([(int)$productId]);
+			if ($product->fetchColumn() === false)
+			{
+				return $this->GenericErrorResponse($response, 'Product unavailable', 404);
+			}
+
+			$status = (new GrocyAiConversionService($database, false))->InspectConversionResolution(
+				(int)$productId,
+				$fromUnitKey,
+				$toUnitKey
+			);
+			$keys = [
+				'status', 'blockers', 'factor', 'dimension', 'approximate', 'winner_source', 'source_name', 'source_version',
+				'source_status', 'source_item_id', 'profile_key', 'taxonomy_leaf', 'precedence', 'inactive_revision_id'
+			];
+			if (array_keys($status) !== $keys || !in_array($status['status'], ['product_native', 'inactive', 'unavailable', 'blocked'], true))
+			{
+				throw new \RuntimeException('conversion_status_contract_invalid');
+			}
+			if ($status['status'] !== 'product_native')
+			{
+				$status['factor'] = null;
+			}
+
+			return $this->ApiResponse($response, $status);
+		}
+		catch (\Throwable)
+		{
+			return $this->GenericErrorResponse($response, 'Conversion status unavailable', 503);
+		}
+	}
+
 	public function FetchImage(Request $request, Response $response, array $args): Response
 	{
 		User::CheckPermission($request, User::PERMISSION_MASTER_DATA_EDIT);

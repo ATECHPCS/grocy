@@ -287,6 +287,261 @@ function conversionResolutionGraphPdo(): PDO
 	return $pdo;
 }
 
+function conversionProductStatusRuntime(): void
+{
+	if (!defined('GROCY_MODE'))
+	{
+		define('GROCY_MODE', 'production');
+	}
+	if (!defined('GROCY_DATAPATH'))
+	{
+		define('GROCY_DATAPATH', sys_get_temp_dir());
+	}
+	if (!defined('GROCY_USER_ID'))
+	{
+		define('GROCY_USER_ID', 1);
+	}
+	require_once dirname(__DIR__, 3) . '/packages/autoload.php';
+	require_once dirname(__DIR__) . '/src/GrocyAiApiController.php';
+}
+
+function conversionProductStatusRequest(string $productId, array $query = []): Psr\Http\Message\ServerRequestInterface
+{
+	return (new Slim\Psr7\Factory\ServerRequestFactory())
+		->createServerRequest('GET', '/api/grocy-ai/products/' . $productId . '/conversion-status')
+		->withQueryParams($query);
+}
+
+function conversionProductStatusInvoke(
+	GrocyAI\Controllers\Api\GrocyAiApiController $controller,
+	string|int|null $productId,
+	array $query
+): Psr\Http\Message\ResponseInterface
+{
+	return $controller->ProductConversionStatus(
+		conversionProductStatusRequest(is_scalar($productId) ? (string)$productId : 'missing', $query),
+		conversionNativeSaveHookResponse(),
+		$productId === null ? [] : ['productId' => $productId]
+	);
+}
+
+function conversionProductStatusBody(Psr\Http\Message\ResponseInterface $response): array
+{
+	$body = json_decode((string)$response->getBody(), true, 512, JSON_THROW_ON_ERROR);
+	if (!is_array($body))
+	{
+		throw new RuntimeException('conversion_product_status_body_invalid');
+	}
+	return $body;
+}
+
+function conversionProductStatusSnapshot(PDO $pdo): array
+{
+	return array_merge(conversionResolutionInspectionSnapshot($pdo), [
+		'activation_evidence' => $pdo->query('SELECT * FROM grocy_ai_conversion_activation_evidence ORDER BY id')->fetchAll(PDO::FETCH_ASSOC),
+		'projection_spy' => $pdo->query('SELECT * FROM grocy_ai_conversion_projection_spy ORDER BY id')->fetchAll(PDO::FETCH_ASSOC),
+		'route_write_spy' => $pdo->query('SELECT * FROM grocy_ai_conversion_route_write_spy ORDER BY id')->fetchAll(PDO::FETCH_ASSOC),
+		'total_changes' => (int)$pdo->query('SELECT total_changes()')->fetchColumn()
+	]);
+}
+
+function conversionProductStatusReadOnlyCall(
+	PDO $pdo,
+	GrocyAI\Controllers\Api\GrocyAiApiController $controller,
+	string|int|null $productId,
+	array $query
+): Psr\Http\Message\ResponseInterface
+{
+	$before = conversionProductStatusSnapshot($pdo);
+	$pdo->exec('PRAGMA query_only = ON');
+	try
+	{
+		$response = conversionProductStatusInvoke($controller, $productId, $query);
+	}
+	finally
+	{
+		$pdo->exec('PRAGMA query_only = OFF');
+	}
+	conversionAssertSame($before, conversionProductStatusSnapshot($pdo), 'product status GET must not bootstrap, activate, project, refresh cache, or mutate module/native/taxonomy/product state');
+	return $response;
+}
+
+function conversionProductStatusNativeSnapshot(PDO $pdo): array
+{
+	return array_merge(conversionValidationReadSnapshot($pdo), [
+		'products' => $pdo->query('SELECT * FROM products ORDER BY id')->fetchAll(PDO::FETCH_ASSOC)
+	]);
+}
+
+function conversionProductStatusNativeReadOnlyCall(
+	PDO $pdo,
+	GrocyAI\Controllers\Api\GrocyAiApiController $controller,
+	string $productId,
+	array $query
+): Psr\Http\Message\ResponseInterface
+{
+	$before = conversionProductStatusNativeSnapshot($pdo);
+	$pdo->exec('PRAGMA query_only = ON');
+	try
+	{
+		$response = conversionProductStatusInvoke($controller, $productId, $query);
+	}
+	finally
+	{
+		$pdo->exec('PRAGMA query_only = OFF');
+	}
+	conversionAssertSame($before, conversionProductStatusNativeSnapshot($pdo), 'product status GET after native Save must not bootstrap, activate, project, refresh cache, or write again');
+	return $response;
+}
+
+function conversionProductStatusAssertError(Psr\Http\Message\ResponseInterface $response, int $status, string $message): void
+{
+	conversionAssertSame($status, $response->getStatusCode(), 'product status failure must use its fixed HTTP status');
+	conversionAssertSame(['error_message' => $message], conversionProductStatusBody($response), 'product status failure must expose only one bounded message');
+}
+
+function conversionProductStatusAssertRouteRegistered(): void
+{
+	$container = new DI\Container();
+	$app = Slim\Factory\AppFactory::createFromContainer($container);
+	require dirname(__DIR__) . '/routes.php';
+	$matching = [];
+	foreach ($app->getRouteCollector()->getRoutes() as $route)
+	{
+		if ($route->getPattern() === '/api/grocy-ai/products/{productId}/conversion-status')
+		{
+			$matching[] = $route->getMethods();
+		}
+	}
+	conversionAssertSame([['GET']], $matching, 'product conversion status must be registered exactly once as GET with no custom write route');
+}
+
+function conversionProductStatusContract(): void
+{
+	conversionProductStatusRuntime();
+	if (!method_exists(GrocyAI\Controllers\Api\GrocyAiApiController::class, 'ProductConversionStatus'))
+	{
+		expectedRed('EXPECTED_RED: conversion-product-status', 'The bounded read-only product conversion status endpoint is not implemented');
+	}
+
+	$pdo = conversionResolutionGraphPdo();
+	$pdo->exec(<<<'SQL'
+CREATE TABLE user_permissions_resolved (id INTEGER NOT NULL PRIMARY KEY, user_id INTEGER NOT NULL, permission_name TEXT NOT NULL);
+INSERT INTO user_permissions_resolved (id, user_id, permission_name) VALUES (1, 1, 'MASTER_DATA_EDIT');
+CREATE TABLE grocy_ai_conversion_activation_evidence (id INTEGER NOT NULL PRIMARY KEY, revision_id TEXT NOT NULL, evidence_hash TEXT NOT NULL);
+CREATE TABLE grocy_ai_conversion_projection_spy (id INTEGER NOT NULL PRIMARY KEY, operation TEXT NOT NULL);
+CREATE TABLE grocy_ai_conversion_route_write_spy (id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT, target TEXT NOT NULL, operation TEXT NOT NULL);
+CREATE TRIGGER grocy_ai_conversion_route_products_update AFTER UPDATE ON products BEGIN
+	INSERT INTO grocy_ai_conversion_route_write_spy (target, operation) VALUES ('products', 'update');
+END;
+CREATE TRIGGER grocy_ai_conversion_route_native_insert AFTER INSERT ON quantity_unit_conversions BEGIN
+	INSERT INTO grocy_ai_conversion_route_write_spy (target, operation) VALUES ('quantity_unit_conversions', 'insert');
+END;
+CREATE TRIGGER grocy_ai_conversion_route_native_update AFTER UPDATE ON quantity_unit_conversions BEGIN
+	INSERT INTO grocy_ai_conversion_route_write_spy (target, operation) VALUES ('quantity_unit_conversions', 'update');
+END;
+CREATE TRIGGER grocy_ai_conversion_route_cache_insert AFTER INSERT ON cache__quantity_unit_conversions_resolved BEGIN
+	INSERT INTO grocy_ai_conversion_route_write_spy (target, operation) VALUES ('cache', 'insert');
+END;
+CREATE TRIGGER grocy_ai_conversion_route_cache_update AFTER UPDATE ON cache__quantity_unit_conversions_resolved BEGIN
+	INSERT INTO grocy_ai_conversion_route_write_spy (target, operation) VALUES ('cache', 'update');
+END;
+SQL);
+	conversionNativeSaveHookInstallDatabase($pdo);
+	$controller = (new ReflectionClass(GrocyAI\Controllers\Api\GrocyAiApiController::class))->newInstanceWithoutConstructor();
+	conversionProductStatusAssertRouteRegistered();
+
+	$query = ['from_unit_key' => 'ml', 'to_unit_key' => 'g'];
+	$nativeResponse = conversionProductStatusReadOnlyCall($pdo, $controller, '1', $query);
+	conversionAssertSame(200, $nativeResponse->getStatusCode(), 'valid product status request must succeed');
+	$nativeBody = conversionProductStatusBody($nativeResponse);
+	conversionAssertSame([
+		'status', 'blockers', 'factor', 'dimension', 'approximate', 'winner_source', 'source_name', 'source_version',
+		'source_status', 'source_item_id', 'profile_key', 'taxonomy_leaf', 'precedence', 'inactive_revision_id'
+	], array_keys($nativeBody), 'product status response must expose only the fixed resolver DTO keys');
+	conversionAssertSame('product_native', $nativeBody['status'], 'native product override must retain its closed status');
+	conversionAssertSame('1.01', $nativeBody['factor'], 'native product override may expose its precise usable factor');
+	conversionAssertSame('product_override', $nativeBody['winner_source'], 'native product override must identify its closed winner source');
+
+	$inactiveQuery = ['from_unit_key' => 'cup', 'to_unit_key' => 'g'];
+	$inactiveBeforeActivation = conversionProductStatusBody(conversionProductStatusReadOnlyCall($pdo, $controller, '1', $inactiveQuery));
+	conversionAssertSame('inactive', $inactiveBeforeActivation['status'], 'eligible sourced profile must remain visibly inactive');
+	conversionAssertSame(null, $inactiveBeforeActivation['factor'], 'inactive source must not expose a usable factor through the product status boundary');
+	conversionAssertSame('food_profile', $inactiveBeforeActivation['winner_source'], 'inactive source may retain its bounded provenance category');
+
+	$pdo->exec("INSERT INTO grocy_ai_conversion_activation_evidence (id, revision_id, evidence_hash) VALUES (1, 'conversion-catalog-v1', 'fixture-approved-evidence')");
+	$pdo->exec("INSERT INTO quantity_unit_conversions (id, product_id, from_qu_id, to_qu_id, factor) VALUES (301, NULL, 1, 4, 236.5882365)");
+	$pdo->exec("INSERT INTO cache__quantity_unit_conversions_resolved (product_id, from_qu_id, to_qu_id, factor, path) VALUES (NULL, 1, 4, 236.5882365, '301')");
+	$pdo->exec("INSERT INTO grocy_ai_conversion_projection_spy (id, operation) VALUES (1, 'fixture_activation_completed')");
+	$pdo->exec('DELETE FROM grocy_ai_conversion_route_write_spy');
+	$inactiveAfterActivation = conversionProductStatusBody(conversionProductStatusReadOnlyCall($pdo, $controller, '1', $inactiveQuery));
+	conversionAssertSame($inactiveBeforeActivation, $inactiveAfterActivation, 'status read before and after activation fixture must retain the same closed inspection contract');
+	conversionAssertSame([], $pdo->query('SELECT * FROM grocy_ai_conversion_route_write_spy')->fetchAll(PDO::FETCH_ASSOC), 'status route must invoke no activation, native projection, cache refresh, taxonomy, or product write seam');
+
+	$malformedCases = [
+		['0', $inactiveQuery], ['01', $inactiveQuery], ['+1', $inactiveQuery], ['1e0', $inactiveQuery],
+		['10000000000', $inactiveQuery], [1, $inactiveQuery], [null, $inactiveQuery],
+		['1', []], ['1', ['from_unit_key' => 'cup']], ['1', ['to_unit_key' => 'g']],
+		['1', ['from_unit_key' => 'Cup', 'to_unit_key' => 'g']],
+		['1', ['from_unit_key' => 'cup;select', 'to_unit_key' => 'g']],
+		['1', ['from_unit_key' => str_repeat('a', 33), 'to_unit_key' => 'g']]
+	];
+	foreach ($malformedCases as [$productId, $malformedQuery])
+	{
+		conversionProductStatusAssertError(
+			conversionProductStatusReadOnlyCall($pdo, $controller, $productId, $malformedQuery),
+			400,
+			'Invalid conversion status request'
+		);
+	}
+	conversionProductStatusAssertError(
+		conversionProductStatusReadOnlyCall($pdo, $controller, '999', $inactiveQuery),
+		404,
+		'Product unavailable'
+	);
+
+	$pdo->exec("DELETE FROM user_permissions_resolved WHERE permission_name = 'MASTER_DATA_EDIT'");
+	$unauthorizedBefore = conversionProductStatusSnapshot($pdo);
+	try
+	{
+		conversionProductStatusInvoke($controller, '1', $inactiveQuery);
+		throw new RuntimeException('conversion_product_status_permission_not_checked');
+	}
+	catch (Grocy\Controllers\Users\PermissionMissingException $ex)
+	{
+		conversionAssertSame('Permission missing: MASTER_DATA_EDIT', $ex->getMessage(), 'unauthorized status failure must disclose no SQL, evidence, product, or household detail');
+	}
+	conversionAssertSame($unauthorizedBefore, conversionProductStatusSnapshot($pdo), 'unauthorized status request must mutate no lifecycle, native, cache, taxonomy, or product state');
+
+	$nativePdo = conversionNativeSaveHookPdo();
+	$nativeDatabase = conversionNativeSaveHookInstallDatabase($nativePdo);
+	$nativeController = conversionNativeSaveHookController($nativeDatabase);
+	$nativeApiController = (new ReflectionClass(GrocyAI\Controllers\Api\GrocyAiApiController::class))->newInstanceWithoutConstructor();
+	$addResponse = conversionNativeSaveHookInvokeAdd($nativeController, productScopedPackageCandidate());
+	$editResponse = conversionNativeSaveHookInvokeEdit($nativeController, 91, productScopedDensityCandidate());
+	conversionAssertSame(200, $addResponse->getStatusCode(), 'normal product-scoped package save must retain independent native authority');
+	conversionAssertSame(204, $editResponse->getStatusCode(), 'normal measured-density edit must retain independent native authority');
+	$nativeAfterSave = conversionNativeSaveHookSnapshot($nativePdo);
+	conversionAssertSame(4, $nativeAfterSave['audit_count'], 'normal native controller must own the two submitted product writes and their two native inverse-trigger writes');
+	$densityResponse = conversionProductStatusNativeReadOnlyCall(
+		$nativePdo,
+		$nativeApiController,
+		'11',
+		['from_unit_key' => 'g', 'to_unit_key' => 'ml']
+	);
+	$densityBody = conversionProductStatusBody($densityResponse);
+	conversionAssertSame('product_native', $densityBody['status'], 'status route may inspect the independently saved measured-density row');
+	conversionAssertSame('0.9', $densityBody['factor'], 'status route may expose the precise independently saved native factor');
+	conversionAssertSame($nativeAfterSave, conversionNativeSaveHookSnapshot($nativePdo), 'status inspection after native saves must not perform another native or cache write');
+}
+
+function runConversionProductStatus(): never
+{
+	conversionProductStatusContract();
+	fwrite(STDOUT, "Conversion product status tests passed\n");
+	exit(0);
+}
+
 function runConversionResolution(): never
 {
 	if (!class_exists(GrocyAiConversionMigration::class) || !method_exists(GrocyAiConversionService::class, 'InspectSourcedProfile') || !method_exists(GrocyAiConversionService::class, 'InspectConversionResolution'))
@@ -516,6 +771,7 @@ function runConversionResolution(): never
 	$malformedProfile = conversionResolutionGraphPdo();
 	$malformedProfile->exec("UPDATE grocy_ai_conversion_profiles SET factor = 'not-a-number' WHERE profile_key = 'water-like-beverage'");
 	conversionResolutionAssertBlockedInspection($malformedProfile, 1, 'cup', 'g', 'malformed_factor');
+	conversionProductStatusContract();
 
 	fwrite(STDOUT, "Conversion resolution tests passed\n");
 	exit(0);
