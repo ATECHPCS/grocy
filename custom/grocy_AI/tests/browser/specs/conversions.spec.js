@@ -24,6 +24,13 @@ async function validateImpact(page)
 	await button.press('Enter');
 }
 
+async function saveConversion(page)
+{
+	const button = page.locator('#save-quconversion-button');
+	await button.focus();
+	await button.press('Enter');
+}
+
 test('@conv04 inactive reusable validation shows reviewed evidence and never enables native Save', async ({ page }) =>
 {
 	const pageErrors = [];
@@ -50,6 +57,8 @@ test('@conv04 inactive reusable validation shows reviewed evidence and never ena
 	expect(pageErrors).toEqual([]);
 	await expect(status).toHaveClass(/alert-warning/);
 	await expect(page.locator('#save-quconversion-button')).toBeDisabled();
+	await page.locator('#save-quconversion-button').evaluate(function (button) { button.click(); });
+	expect(await page.evaluate(function () { return window.__fixtureNativeWrites || null; })).toEqual([]);
 	await expect(page.locator('body')).not.toContainText('Ruleset ready');
 	expect((await page.locator('#validate-quconversion-impact-button').boundingBox()).height).toBeGreaterThanOrEqual(44);
 	expect((await page.locator('#save-quconversion-button').boundingBox()).height).toBeGreaterThanOrEqual(44);
@@ -119,6 +128,41 @@ test('@conv04 product package validation keeps the existing native Save availabl
 	await expect(status).not.toContainText('server-field-not-a-product-source');
 	await expect(status).not.toContainText('NIST');
 	await expect(page.locator('#save-quconversion-button')).toBeEnabled();
+	await saveConversion(page);
+	expect(await page.evaluate(function () { return window.__fixtureNativeWrites || null; })).toEqual([{
+		method: 'POST',
+		url: 'objects/quantity_unit_conversions',
+		data: { product_id: '91', from_qu_id: '5', to_qu_id: '7', factor: '12' }
+	}]);
+});
+
+test('@conv04 product edit validation invokes the existing native PUT exactly once', async ({ page }) =>
+{
+	await page.route('**/api/grocy-ai/conversions/validate?**', async function (route)
+	{
+		const url = new URL(route.request().url());
+		expect(url.searchParams.get('object_id')).toBe('42');
+		await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+			status: 'product_native', scope: 'product', blockers: [], factor: '0.9', dimension: 'product_scoped',
+			source_version: 'NIST-SP-811-2008-Appendix-B.9', inactive_revision_id: 'conversion-catalog-v1'
+		}) });
+	});
+	await page.goto('/fixtures/quantityunitconversionform.html');
+	await page.evaluate(function ()
+	{
+		window.Grocy.EditMode = 'edit';
+		window.Grocy.EditObjectId = 42;
+		document.querySelector('input[name="product_id"]').value = '91';
+	});
+	await choose(page, '4', '2', '0.9');
+	await validateImpact(page);
+	await expect(page.locator('#save-quconversion-button')).toBeEnabled();
+	await saveConversion(page);
+	expect(await page.evaluate(function () { return window.__fixtureNativeWrites || null; })).toEqual([{
+		method: 'PUT',
+		url: 'objects/quantity_unit_conversions/42',
+		data: { product_id: '91', from_qu_id: '4', to_qu_id: '2', factor: '0.9' }
+	}]);
 });
 
 test('@conv04 reusable package and dimension blockers use bounded alert copy and focus recovery', async ({ page }) =>
@@ -139,6 +183,8 @@ test('@conv04 reusable package and dimension blockers use bounded alert copy and
 	await expect(page.locator('#qu-conversion-validation-status')).toContainText('This quantity-unit pair is not eligible for a reusable default. Keep package and count conversions on the product.');
 	await expect(page.locator('#qu-conversion-validation-heading')).toBeFocused();
 	await expect(page.locator('#save-quconversion-button')).toBeDisabled();
+	await page.locator('#save-quconversion-button').evaluate(function (button) { button.click(); });
+	expect(await page.evaluate(function () { return window.__fixtureNativeWrites || null; })).toEqual([]);
 
 	await choose(page, '1', '4', '1');
 	await validateImpact(page);
@@ -161,4 +207,32 @@ test('@conv04 failed read validation preserves values and exposes only bounded r
 	await expect(page.locator('#factor')).toHaveValue('453.59237');
 	await expect(page.locator('#qu-conversion-validation-heading')).toBeFocused();
 	await expect(page.locator('#save-quconversion-button')).toBeDisabled();
+});
+
+test('@conv04 native rejection preserves entered values and exposes no invented source or cache state', async ({ page }) =>
+{
+	await page.route('**/api/grocy-ai/conversions/validate?**', async function (route)
+	{
+		await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+			status: 'product_native', scope: 'product', blockers: [], factor: '12', dimension: 'product_scoped',
+			source_version: 'server-field-not-a-product-source', inactive_revision_id: 'conversion-catalog-v1'
+		}) });
+	});
+	await page.goto('/fixtures/quantityunitconversionform.html');
+	await page.evaluate(function ()
+	{
+		document.querySelector('input[name="product_id"]').value = '91';
+		window.__fixtureNativeOutcome = 'reject';
+	});
+	await choose(page, '5', '7', '12');
+	await validateImpact(page);
+	await saveConversion(page);
+
+	expect(await page.evaluate(function () { return window.__fixtureNativeWrites || null; })).toHaveLength(1);
+	await expect(page.locator('#from_qu_id')).toHaveValue('5');
+	await expect(page.locator('#to_qu_id')).toHaveValue('7');
+	await expect(page.locator('#factor')).toHaveValue('12');
+	expect(await page.evaluate(function () { return window.__fixtureGenericErrors || null; })).toHaveLength(1);
+	await expect(page.locator('#qu-conversion-validation-status')).not.toContainText('NIST');
+	await expect(page.locator('body')).not.toContainText('cache active');
 });

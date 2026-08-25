@@ -178,7 +178,6 @@
 				data-validating-label="{{ $__t('Validating') }}"
 				data-product-override-label="{{ $__t('Product override') }}"
 				data-inactive-label="{{ $__t('Inactive — not saved or active') }}"
-				data-active-label="{{ $__t('Active and eligible') }}"
 				data-blocked-label="{{ $__t('Blocked') }}"
 				data-unavailable-label="{{ $__t('Validation unavailable') }}"
 				data-dimension-label="{{ $__t('Dimension: %s') }}"

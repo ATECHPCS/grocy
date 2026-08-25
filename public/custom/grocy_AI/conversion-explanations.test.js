@@ -190,7 +190,7 @@ test('malformed reusable provenance is bounded as a validation failure and canno
 	assert.doesNotMatch(JSON.stringify(fixture.latest()), /script|provider/);
 });
 
-test('only a current server-active reusable response reaches active-ready Save state', async function ()
+test('a current server-active reusable response remains fail-closed before Plan 08', async function ()
 {
 	const response = deferred();
 	const fixture = harness(reusableCandidate(), [response]);
@@ -200,9 +200,10 @@ test('only a current server-active reusable response reaches active-ready Save s
 		source_version: 'NIST-SP-811-2008-Appendix-B.9', inactive_revision_id: 'conversion-catalog-v1'
 	});
 	await validation;
-	assert.equal(fixture.latest().kind, 'active-ready');
-	assert.equal(fixture.latest().statusLabel, 'Active and eligible');
-	assert.equal(fixture.latest().saveEnabled, true);
+	assert.equal(fixture.latest().kind, 'request-failure');
+	assert.equal(fixture.latest().statusLabel, 'Validation unavailable');
+	assert.equal(fixture.latest().saveEnabled, false);
+	assert.doesNotMatch(JSON.stringify(fixture.latest()), /active-ready|Active and eligible/);
 });
 
 test('a response scope that disagrees with the current form scope fails closed', async function ()

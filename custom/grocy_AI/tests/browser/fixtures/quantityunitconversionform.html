@@ -84,7 +84,6 @@
 			data-validating-label="Validating"
 			data-product-override-label="Product override"
 			data-inactive-label="Inactive — not saved or active"
-			data-active-label="Active and eligible"
 			data-blocked-label="Blocked"
 			data-unavailable-label="Validation unavailable"
 			data-dimension-label="Dimension: %s"
@@ -230,6 +229,9 @@
 		window.jQuery.fn = FixtureQuery.prototype;
 
 		window.__fixtureApiCalls = [];
+		window.__fixtureNativeWrites = [];
+		window.__fixtureGenericErrors = [];
+		window.__fixtureNativeOutcome = 'success';
 		window.U = function (path) { return path; };
 		window.GetUriParam = function () { return undefined; };
 		window.WindowMessageBag = function (message) { return message; };
@@ -256,7 +258,10 @@
 				ValidateForm: function () { return true; },
 				BeginUiBusy: function () {},
 				EndUiBusy: function () {},
-				ShowGenericError: function () {}
+				ShowGenericError: function (message, response)
+				{
+					window.__fixtureGenericErrors.push({ message: message, response: response });
+				}
 			},
 			Components: {
 				UserfieldsForm: {
@@ -287,11 +292,28 @@
 			xhr.send();
 			return xhr;
 		};
-		window.Grocy.Api.Post = function ()
+		function recordNativeWrite(method, apiFunction, data, success, error)
 		{
-			throw new Error('Native persistence is outside the Task 1 fixture');
+			window.__fixtureNativeWrites.push({
+				method: method,
+				url: apiFunction,
+				data: JSON.parse(JSON.stringify(data || {}))
+			});
+			if (window.__fixtureNativeOutcome === 'reject')
+			{
+				if (error) error({ response: 'fixture native rejection' });
+				return;
+			}
+			if (success) success(method === 'POST' ? { created_object_id: 501 } : {});
+		}
+		window.Grocy.Api.Post = function (apiFunction, data, success, error)
+		{
+			recordNativeWrite('POST', apiFunction, data, success, error);
 		};
-		window.Grocy.Api.Put = window.Grocy.Api.Post;
+		window.Grocy.Api.Put = function (apiFunction, data, success, error)
+		{
+			recordNativeWrite('PUT', apiFunction, data, success, error);
+		};
 
 	})();
 	</script>

@@ -36,7 +36,6 @@
 		validatingLabel: 'Validating',
 		productOverrideLabel: 'Product override',
 		inactiveLabel: 'Inactive — not saved or active',
-		activeLabel: 'Active and eligible',
 		blockedLabel: 'Blocked',
 		unavailableLabel: 'Validation unavailable',
 		dimensionLabel: 'Dimension: %s',
@@ -159,24 +158,27 @@
 			});
 		}
 
-		if ((response.status === 'inactive' || response.status === 'active')
-			&& response.scope === 'reusable' && response.blockers.length === 0)
+		if (response.status === 'active' && response.scope === 'reusable')
+		{
+			return requestFailureState(copy);
+		}
+
+		if (response.status === 'inactive' && response.scope === 'reusable' && response.blockers.length === 0)
 		{
 			if (!responseFactor || !reusableEvidenceIsBounded(response))
 			{
 				return requestFailureState(copy);
 			}
-			var isActive = response.status === 'active';
 			return fixedState({
-				kind: isActive ? 'active-ready' : 'inactive-gate',
-				statusLabel: isActive ? copy.activeLabel : copy.inactiveLabel,
-				message: isActive ? copy.impactClear : copy.inactiveGate,
+				kind: 'inactive-gate',
+				statusLabel: copy.inactiveLabel,
+				message: copy.inactiveGate,
 				pair: pairLabel(candidate, responseFactor),
 				dimensionLabel: copy.dimensionLabel.replace('%s', response.dimension.charAt(0).toUpperCase() + response.dimension.slice(1)),
 				sourceLabel: copy.sourceLabel.replace('%s', response.source_version),
 				impact: copy.impactClear,
 				factor: responseFactor,
-				saveEnabled: isActive
+				saveEnabled: false
 			});
 		}
 
@@ -295,7 +297,6 @@
 			validatingLabel: regionCopy('validating-label', COPY.validatingLabel),
 			productOverrideLabel: regionCopy('product-override-label', COPY.productOverrideLabel),
 			inactiveLabel: regionCopy('inactive-label', COPY.inactiveLabel),
-			activeLabel: regionCopy('active-label', COPY.activeLabel),
 			blockedLabel: regionCopy('blocked-label', COPY.blockedLabel),
 			unavailableLabel: regionCopy('unavailable-label', COPY.unavailableLabel),
 			dimensionLabel: regionCopy('dimension-label', COPY.dimensionLabel),
@@ -344,7 +345,6 @@
 			$status.removeClass('alert-secondary alert-info alert-success alert-warning alert-danger');
 			var stateClass = {
 				pending: 'alert-info',
-				'active-ready': 'alert-success',
 				'product-normal': 'alert-success',
 				'inactive-gate': 'alert-warning',
 				blocked: 'alert-danger',
