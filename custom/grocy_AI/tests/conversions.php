@@ -479,6 +479,37 @@ function runConversionResolution(): never
 	$malformedUniversal = conversionResolutionGraphPdo();
 	$malformedUniversal->exec("UPDATE grocy_ai_conversion_rules SET factor = 'not-a-number' WHERE revision_id = 'conversion-catalog-v1' AND from_unit_key = 'cup' AND to_unit_key = 'l'");
 	conversionResolutionAssertBlockedInspection($malformedUniversal, 8, 'cup', 'ml', 'malformed_factor');
+
+	$tamperedUniversalDirect = conversionResolutionGraphPdo();
+	$tamperedUniversalDirect->exec("UPDATE grocy_ai_conversion_rules SET factor = 'not-a-number' WHERE revision_id = 'conversion-catalog-v1' AND from_unit_key = 'cup' AND to_unit_key = 'l'");
+	$tamperedUniversalDirect->exec("INSERT INTO quantity_unit_conversions (id, product_id, from_qu_id, to_qu_id, factor) VALUES (201, 2, 1, 2, 238)");
+	$tamperedUniversalDirectBefore = conversionResolutionInspectionSnapshot($tamperedUniversalDirect);
+	$tamperedDirectWinner = (new GrocyAiConversionService($tamperedUniversalDirect, false))->InspectConversionResolution(2, 'cup', 'g');
+	conversionAssertSame('product_native', $tamperedDirectWinner['status'], 'invalid lower-ranked universal graph must not block a valid direct native product winner');
+	conversionAssertSame('238', $tamperedDirectWinner['factor'], 'direct native winner must retain its stored factor despite lower-rank corruption');
+	conversionAssertSame('product_override', $tamperedDirectWinner['winner_source'], 'direct native winner must retain highest precedence despite lower-rank corruption');
+	conversionAssertSame($tamperedUniversalDirectBefore, conversionResolutionInspectionSnapshot($tamperedUniversalDirect), 'direct native rank isolation must remain fully read-only');
+
+	$tamperedUniversalPath = conversionResolutionGraphPdo();
+	$tamperedUniversalPath->exec("UPDATE grocy_ai_conversion_rules SET factor = 'not-a-number' WHERE revision_id = 'conversion-catalog-v1' AND from_unit_key = 'cup' AND to_unit_key = 'l'");
+	$tamperedUniversalPath->exec("INSERT INTO quantity_unit_conversions (id, product_id, from_qu_id, to_qu_id, factor) VALUES (201, 2, 1, 4, 200), (202, 2, 4, 2, 1.1)");
+	$tamperedUniversalPathBefore = conversionResolutionInspectionSnapshot($tamperedUniversalPath);
+	$tamperedPathWinner = (new GrocyAiConversionService($tamperedUniversalPath, false))->InspectConversionResolution(2, 'cup', 'g');
+	conversionAssertSame('product_native', $tamperedPathWinner['status'], 'invalid lower-ranked universal graph must not block one valid native product path');
+	conversionAssertSame('220', $tamperedPathWinner['factor'], 'native path winner must multiply deterministically despite lower-rank corruption');
+	conversionAssertSame('product_override', $tamperedPathWinner['winner_source'], 'native path winner must retain highest precedence despite lower-rank corruption');
+	conversionAssertSame($tamperedUniversalPathBefore, conversionResolutionInspectionSnapshot($tamperedUniversalPath), 'native path rank isolation must remain fully read-only');
+
+	$tamperedUniversalProfile = conversionResolutionGraphPdo();
+	$tamperedUniversalProfile->exec("UPDATE grocy_ai_conversion_rules SET factor = 'not-a-number' WHERE revision_id = 'conversion-catalog-v1' AND from_unit_key = 'cup' AND to_unit_key = 'l'");
+	$tamperedUniversalProfileBefore = conversionResolutionInspectionSnapshot($tamperedUniversalProfile);
+	$tamperedProfileWinner = (new GrocyAiConversionService($tamperedUniversalProfile, false))->InspectConversionResolution(1, 'cup', 'g');
+	conversionAssertSame('inactive', $tamperedProfileWinner['status'], 'invalid lower-ranked universal graph must not block an eligible sourced profile winner');
+	conversionAssertSame('237', $tamperedProfileWinner['factor'], 'eligible sourced profile must retain its reviewed factor despite lower-rank corruption');
+	conversionAssertSame('food_profile', $tamperedProfileWinner['winner_source'], 'eligible sourced profile must retain second precedence despite lower-rank corruption');
+	conversionAssertSame($tamperedUniversalProfileBefore, conversionResolutionInspectionSnapshot($tamperedUniversalProfile), 'profile rank isolation must remain fully read-only');
+
+	conversionResolutionAssertBlockedInspection($tamperedUniversalProfile, 8, 'cup', 'ml', 'malformed_factor');
 	$profileDrift = conversionResolutionGraphPdo();
 	$profileDrift->exec("UPDATE grocy_ai_conversion_profiles SET factor = '238' WHERE profile_key = 'water-like-beverage'");
 	conversionResolutionAssertBlockedInspection($profileDrift, 1, 'cup', 'g', 'tolerance_drift');

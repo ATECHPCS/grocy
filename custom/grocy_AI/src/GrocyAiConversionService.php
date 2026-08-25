@@ -171,13 +171,6 @@ class GrocyAiConversionService
 			return $this->InspectionUnavailable('resolution_request_invalid');
 		}
 
-		$catalog = $this->Catalog();
-		$universalBlocker = $this->ValidateInspectionUniversalGraph($catalog);
-		if ($universalBlocker !== null)
-		{
-			return $this->InspectionBlocked($universalBlocker);
-		}
-
 		$productGraph = $this->InspectProductGraph($productId, $fromUnitKey, $toUnitKey);
 		if ($productGraph['blocker'] !== null)
 		{
@@ -186,9 +179,9 @@ class GrocyAiConversionService
 		if ($productGraph['candidate'] !== null)
 		{
 			$candidate = $productGraph['candidate'];
-			$dimension = isset($catalog[$fromUnitKey], $catalog[$toUnitKey]) && $catalog[$fromUnitKey]['dimension'] === $catalog[$toUnitKey]['dimension']
-				? $catalog[$fromUnitKey]['dimension']
-				: 'product_scoped';
+			$fromDimension = $this->UnitDimension($fromUnitKey);
+			$toDimension = $this->UnitDimension($toUnitKey);
+			$dimension = $fromDimension !== null && $fromDimension === $toDimension ? $fromDimension : 'product_scoped';
 			return $this->InspectionDto(
 				'product_native', [], $candidate['factor_raw'], $dimension, false, 'product_override',
 				'Grocy native product conversion', null, 'native', null, null, null, null
@@ -217,10 +210,16 @@ class GrocyAiConversionService
 			return $this->InspectionBlocked($this->InvalidProfileBlocker($productId, $fromUnitKey, $toUnitKey));
 		}
 
+		$catalog = $this->Catalog();
 		$from = $catalog[$fromUnitKey] ?? null;
 		$to = $catalog[$toUnitKey] ?? null;
 		if ($from !== null && $to !== null && $from['dimension'] === $to['dimension'])
 		{
+			$universalBlocker = $this->ValidateInspectionUniversalGraph($catalog);
+			if ($universalBlocker !== null)
+			{
+				return $this->InspectionBlocked($universalBlocker);
+			}
 			$factor = $from['metric_factor'] / $to['metric_factor'];
 			return $this->InspectionDto(
 				'inactive', [], (string)$factor, $from['dimension'], false, 'universal', 'NIST SP 811',
@@ -773,6 +772,19 @@ class GrocyAiConversionService
 	{
 		$normalized = strtolower(trim($name));
 		return preg_match('/^(?:pack|packs|can|cans|bottle|bottles|piece|pieces|count|counts)$/D', $normalized) === 1;
+	}
+
+	private function UnitDimension(string $unitKey): ?string
+	{
+		if (in_array($unitKey, ['mg', 'g', 'kg', 'oz', 'lb'], true))
+		{
+			return 'mass';
+		}
+		if (in_array($unitKey, ['ml', 'l', 'tsp', 'tbsp', 'cup', 'fl_oz', 'pint', 'quart', 'gallon'], true))
+		{
+			return 'volume';
+		}
+		return null;
 	}
 
 	private function RelativeDifference(float $actual, float $expected): float
