@@ -26,6 +26,15 @@ const allowlistedFiles = new Map([
 		path: resolve(browserRoot, 'fixtures/productform.html'),
 		contentType: 'text/html; charset=utf-8'
 	}],
+	['/fixtures/quantityunitconversionform.html', {
+		path: resolve(browserRoot, 'fixtures/quantityunitconversionform.html'),
+		contentType: 'text/html; charset=utf-8'
+	}],
+	['/assets/quantityunitconversionform.js', {
+		path: resolve(repositoryRoot, 'public/viewjs/quantityunitconversionform.js'),
+		root: resolve(repositoryRoot, 'public/viewjs'),
+		contentType: 'text/javascript; charset=utf-8'
+	}],
 	['/assets/product-enrichment.js', {
 		path: resolve(repositoryRoot, 'public/custom/grocy_AI/product-enrichment.js'),
 		contentType: 'text/javascript; charset=utf-8'
@@ -136,9 +145,9 @@ const server = createServer(async function (request, response)
 		return;
 	}
 
-	const allowedRoot = pathname.startsWith('/fixtures/')
+	const allowedRoot = allowed.root || (pathname.startsWith('/fixtures/')
 		? resolve(browserRoot, 'fixtures')
-		: resolve(repositoryRoot, 'public/custom/grocy_AI');
+		: resolve(repositoryRoot, 'public/custom/grocy_AI'));
 	if (!isInsideRoot(allowed.path, allowedRoot))
 	{
 		sendText(response, 403, 'Forbidden');
