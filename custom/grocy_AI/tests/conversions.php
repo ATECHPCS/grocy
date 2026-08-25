@@ -212,6 +212,19 @@ function conversionResolutionProtectedSnapshot(PDO $pdo): array
 	];
 }
 
+function conversionResolutionInspectionSnapshot(PDO $pdo): array
+{
+	return array_merge(conversionResolutionProtectedSnapshot($pdo), [
+		'conversion_catalog' => $pdo->query('SELECT * FROM grocy_ai_conversion_catalog_units ORDER BY unit_key')->fetchAll(PDO::FETCH_ASSOC),
+		'conversion_revisions' => $pdo->query('SELECT * FROM grocy_ai_conversion_revisions ORDER BY id')->fetchAll(PDO::FETCH_ASSOC),
+		'conversion_rules' => $pdo->query('SELECT * FROM grocy_ai_conversion_rules ORDER BY id')->fetchAll(PDO::FETCH_ASSOC),
+		'conversion_validation_ledger' => $pdo->query('SELECT * FROM grocy_ai_conversion_validation_ledger ORDER BY id')->fetchAll(PDO::FETCH_ASSOC),
+		'conversion_profile_revisions' => $pdo->query('SELECT * FROM grocy_ai_conversion_profile_revisions ORDER BY id')->fetchAll(PDO::FETCH_ASSOC),
+		'conversion_profiles' => $pdo->query('SELECT * FROM grocy_ai_conversion_profiles ORDER BY profile_key')->fetchAll(PDO::FETCH_ASSOC),
+		'conversion_migrations' => $pdo->query('SELECT * FROM grocy_ai_conversion_migrations ORDER BY version')->fetchAll(PDO::FETCH_ASSOC)
+	]);
+}
+
 function conversionResolutionMissingTaxonomySnapshot(PDO $pdo): array
 {
 	return [
@@ -256,11 +269,29 @@ function conversionResolutionAssertUnavailable(GrocyAiConversionService $service
 	conversionAssertSame(true, $result['approximate'], 'profile inspection must remain visibly approximate even when unavailable');
 }
 
+function conversionResolutionAssertBlockedInspection(PDO $pdo, int $productId, string $fromUnit, string $toUnit, string $blocker): void
+{
+	$before = conversionResolutionInspectionSnapshot($pdo);
+	$result = (new GrocyAiConversionService($pdo, false))->InspectConversionResolution($productId, $fromUnit, $toUnit);
+	conversionAssertSame('blocked', $result['status'], 'invalid effective conversion graph must block inspection');
+	conversionAssertSame([$blocker], $result['blockers'], 'effective graph blocker must be bounded and deterministic');
+	conversionAssertSame(null, $result['factor'], 'blocked inspection must never expose a usable factor');
+	conversionAssertSame(null, $result['winner_source'], 'blocked inspection must not claim a winning source');
+	conversionAssertSame($before, conversionResolutionInspectionSnapshot($pdo), 'blocked inspection must not mutate products, taxonomy, module lifecycle, native conversions, cache, or projection state');
+}
+
+function conversionResolutionGraphPdo(): PDO
+{
+	$pdo = conversionResolutionPdo();
+	GrocyAiConversionMigration::Bootstrap($pdo);
+	return $pdo;
+}
+
 function runConversionResolution(): never
 {
-	if (!class_exists(GrocyAiConversionMigration::class) || !method_exists(GrocyAiConversionService::class, 'InspectSourcedProfile'))
+	if (!class_exists(GrocyAiConversionMigration::class) || !method_exists(GrocyAiConversionService::class, 'InspectSourcedProfile') || !method_exists(GrocyAiConversionService::class, 'InspectConversionResolution'))
 	{
-		expectedRed('EXPECTED_RED: conversion-resolution', 'Inactive sourced profile inspection is not implemented');
+		expectedRed('EXPECTED_RED: conversion-resolution', 'Deterministic conversion resolution inspection is not implemented');
 	}
 
 	$pdo = conversionResolutionPdo();
@@ -283,6 +314,10 @@ function runConversionResolution(): never
 	conversionAssertSame('unavailable', $taxonomyUnavailable['status'] ?? null, 'missing taxonomy module schema must return the bounded unavailable DTO');
 	conversionAssertSame(['taxonomy_unavailable'], $taxonomyUnavailable['blockers'] ?? null, 'missing taxonomy module schema must identify taxonomy availability without exposing database errors');
 	conversionAssertSame(null, $taxonomyUnavailable['factor'] ?? null, 'missing taxonomy module schema must not expose a profile factor');
+	$missingResolution = (new GrocyAiConversionService($missingTaxonomy, false))->InspectConversionResolution(1, 'cup', 'g');
+	conversionAssertSame('unavailable', $missingResolution['status'] ?? null, 'missing taxonomy relation must keep full resolution inspection unavailable');
+	conversionAssertSame(['taxonomy_unavailable'], $missingResolution['blockers'] ?? null, 'full resolution must preserve the bounded missing-taxonomy guard');
+	conversionAssertSame(null, $missingResolution['factor'] ?? null, 'missing taxonomy relation must not fall through to a usable factor');
 	conversionAssertSame($missingTaxonomyBefore, conversionResolutionMissingTaxonomySnapshot($missingTaxonomy), 'missing-taxonomy inspection must not bootstrap or mutate module, native conversion, product, or cache state');
 
 	$malformedTaxonomy = conversionResolutionMalformedTaxonomyPdo();
@@ -298,6 +333,18 @@ function runConversionResolution(): never
 		if (!str_contains($ex->getMessage(), 'ruleset_version'))
 		{
 			throw new RuntimeException('unexpected malformed taxonomy schema error');
+		}
+	}
+	try
+	{
+		(new GrocyAiConversionService($malformedTaxonomy, false))->InspectConversionResolution(1, 'cup', 'g');
+		throw new RuntimeException('full resolution converted malformed taxonomy schema to a DTO');
+	}
+	catch (PDOException $ex)
+	{
+		if (!str_contains($ex->getMessage(), 'ruleset_version'))
+		{
+			throw new RuntimeException('unexpected malformed taxonomy resolution error');
 		}
 	}
 	conversionAssertSame($malformedTaxonomyBefore, conversionResolutionMissingTaxonomySnapshot($malformedTaxonomy), 'malformed taxonomy inspection must propagate without mutating module, native conversion, product, or cache state');
@@ -347,6 +394,97 @@ function runConversionResolution(): never
 	conversionResolutionAssertUnavailable($service, 1, 'cup', 'g', 'profile_invalid');
 	$pdo->exec("UPDATE grocy_ai_conversion_profiles SET source_item_id = '174158', source_basis = '1 cup = 237 g' WHERE profile_key = 'water-like-beverage'");
 	conversionAssertSame($protectedBeforeInspection, conversionResolutionProtectedSnapshot($pdo), 'all profile inspection outcomes must leave taxonomy, products, native conversions, cache, and projection state unchanged');
+
+	$resolverBefore = conversionResolutionInspectionSnapshot($pdo);
+	$pdo->exec("INSERT INTO quantity_unit_conversions (id, product_id, from_qu_id, to_qu_id, factor) VALUES (92, 1, 1, 2, 241)");
+	$productOverride = (new GrocyAiConversionService($pdo, false))->InspectConversionResolution(1, 'cup', 'g');
+	conversionAssertSame(['status', 'blockers', 'factor', 'dimension', 'approximate', 'winner_source', 'source_name', 'source_version', 'source_status', 'source_item_id', 'profile_key', 'taxonomy_leaf', 'precedence', 'inactive_revision_id'], array_keys($productOverride), 'resolution inspection DTO keys must remain fixed and bounded');
+	conversionAssertSame('product_native', $productOverride['status'], 'an exact native product row must outrank the eligible sourced profile');
+	conversionAssertSame('241', $productOverride['factor'], 'product override winner must retain its stored precise factor');
+	conversionAssertSame('product_override', $productOverride['winner_source'], 'product override winner must expose its closed source category');
+	conversionAssertSame('Grocy native product conversion', $productOverride['source_name'], 'product override winner must identify its native source');
+	conversionAssertSame(null, $productOverride['source_version'], 'native rows without stored provenance must not invent a source version');
+	conversionAssertSame('native', $productOverride['source_status'], 'product override winner must expose its native lifecycle status');
+	conversionAssertSame(false, $productOverride['approximate'], 'native product override must not be relabeled approximate');
+	$pdo->exec('DELETE FROM quantity_unit_conversions WHERE id = 92');
+	$pdo->exec("INSERT INTO quantity_unit_conversions (id, product_id, from_qu_id, to_qu_id, factor) VALUES (92, 1, 1, 4, 200)");
+	$productPath = (new GrocyAiConversionService($pdo, false))->InspectConversionResolution(1, 'cup', 'g');
+	conversionAssertSame('product_native', $productPath['status'], 'one validated native product path must outrank the eligible sourced profile');
+	conversionAssertSame('202', $productPath['factor'], 'native product path winner must multiply its exact stored factors deterministically');
+	conversionAssertSame('product_override', $productPath['winner_source'], 'native product path must retain product-override precedence');
+	$pdo->exec('DELETE FROM quantity_unit_conversions WHERE id = 92');
+
+	$profileWinner = (new GrocyAiConversionService($pdo, false))->InspectConversionResolution(1, 'cup', 'g');
+	conversionAssertSame('inactive', $profileWinner['status'], 'eligible food profile must remain inactive for inspection');
+	conversionAssertSame('237', $profileWinner['factor'], 'eligible food profile must win when no product override exists');
+	conversionAssertSame('food_profile', $profileWinner['winner_source'], 'profile winner must expose its closed source category');
+	conversionAssertSame('USDA FoodData Central', $profileWinner['source_name'], 'profile winner must expose the reviewed source name');
+	conversionAssertSame('SR Legacy 2018-04; published 2019-04-01', $profileWinner['source_version'], 'profile winner must expose the reviewed source version');
+	conversionAssertSame('inactive', $profileWinner['source_status'], 'profile winner must expose its inactive lifecycle');
+	conversionAssertSame(true, $profileWinner['approximate'], 'food profile winner must remain visibly approximate');
+
+	$universalWinner = (new GrocyAiConversionService($pdo, false))->InspectConversionResolution(8, 'cup', 'ml');
+	conversionAssertSame('inactive', $universalWinner['status'], 'universal candidate must remain inactive for inspection');
+	conversionAssertSame('236.5882365', $universalWinner['factor'], 'universal fallback must derive the deterministic catalog factor');
+	conversionAssertSame('universal', $universalWinner['winner_source'], 'universal fallback must expose its closed source category');
+	conversionAssertSame('NIST SP 811', $universalWinner['source_name'], 'universal fallback must identify its named source');
+	conversionAssertSame('NIST-SP-811-2008-Appendix-B.9', $universalWinner['source_version'], 'universal fallback must expose its accepted source version');
+	conversionAssertSame('inactive', $universalWinner['source_status'], 'universal fallback must expose its inactive lifecycle');
+	conversionAssertSame(false, $universalWinner['approximate'], 'same-dimension universal factor must remain exact');
+	conversionAssertSame('product_override>food_profile>universal', $universalWinner['precedence'], 'resolver must disclose the fixed precedence policy');
+
+	$unavailable = (new GrocyAiConversionService($pdo, false))->InspectConversionResolution(4, 'cup', 'g');
+	conversionAssertSame('unavailable', $unavailable['status'], 'a cross-dimension request without an eligible profile must remain unavailable');
+	conversionAssertSame(['explicit_taxonomy_required'], $unavailable['blockers'], 'unavailable resolution must retain the bounded taxonomy eligibility reason');
+	conversionAssertSame(null, $unavailable['factor'], 'unavailable resolution must not expose a guessed factor');
+	conversionAssertSame(null, $unavailable['winner_source'], 'unavailable resolution must not claim a winner');
+	conversionAssertSame($resolverBefore, conversionResolutionInspectionSnapshot($pdo), 'all winning and unavailable resolution inspections must leave module lifecycle and protected state unchanged');
+
+	$sameRank = conversionResolutionGraphPdo();
+	$sameRank->exec("INSERT INTO quantity_unit_conversions (id, product_id, from_qu_id, to_qu_id, factor) VALUES (201, 2, 1, 2, 238), (202, 2, 1, 2, 239)");
+	conversionResolutionAssertBlockedInspection($sameRank, 2, 'cup', 'g', 'same_rank_collision');
+	$profileCollision = conversionResolutionGraphPdo();
+	$profileCollision->exec("DROP INDEX grocy_ai_conversion_profiles_leaf_pair_idx");
+	$profileCollision->exec("UPDATE grocy_ai_conversion_profiles SET profile_key = 'water-like-beverage-copy' WHERE profile_key = 'water-like-beverage'");
+	$profileCollision->exec("INSERT INTO grocy_ai_conversion_profiles (profile_key, revision_id, taxonomy_leaf_id, from_unit_key, to_unit_key, factor, approximate, source_name, source_item_id, source_version, source_basis, status) VALUES ('water-like-beverage', 'conversion-profiles-v1', 'leaf-beverages', 'cup', 'g', '237', 1, 'USDA FoodData Central', '174158', 'SR Legacy 2018-04; published 2019-04-01', '1 cup = 237 g', 'inactive')");
+	conversionResolutionAssertBlockedInspection($profileCollision, 1, 'cup', 'g', 'same_rank_collision');
+
+	$malformed = conversionResolutionGraphPdo();
+	$malformed->exec("INSERT INTO quantity_unit_conversions (id, product_id, from_qu_id, to_qu_id, factor) VALUES (201, 2, 1, 2, 'NAN')");
+	conversionResolutionAssertBlockedInspection($malformed, 2, 'cup', 'g', 'malformed_factor');
+
+	$reciprocal = conversionResolutionGraphPdo();
+	$reciprocal->exec("INSERT INTO quantity_unit_conversions (id, product_id, from_qu_id, to_qu_id, factor) VALUES (201, 2, 1, 2, 240), (202, 2, 2, 1, 0.005)");
+	conversionResolutionAssertBlockedInspection($reciprocal, 2, 'cup', 'g', 'reciprocal_inconsistency');
+
+	$competing = conversionResolutionGraphPdo();
+	$competing->exec("INSERT INTO quantity_unit_conversions (id, product_id, from_qu_id, to_qu_id, factor) VALUES (203, 2, 4, 2, 1.1), (201, 2, 1, 2, 237), (202, 2, 1, 4, 200)");
+	conversionResolutionAssertBlockedInspection($competing, 2, 'cup', 'g', 'competing_paths');
+	$competingReverseOrder = conversionResolutionGraphPdo();
+	$competingReverseOrder->exec("INSERT INTO quantity_unit_conversions (id, product_id, from_qu_id, to_qu_id, factor) VALUES (201, 2, 4, 2, 1.1), (203, 2, 1, 2, 237), (202, 2, 1, 4, 200)");
+	conversionResolutionAssertBlockedInspection($competingReverseOrder, 2, 'cup', 'g', 'competing_paths');
+
+	$cycle = conversionResolutionGraphPdo();
+	$cycle->exec("INSERT INTO quantity_unit_conversions (id, product_id, from_qu_id, to_qu_id, factor) VALUES (201, 2, 1, 4, 200), (202, 2, 4, 3, 10), (203, 2, 3, 1, 0.0005)");
+	conversionResolutionAssertBlockedInspection($cycle, 2, 'cup', 'g', 'cycle_detected');
+
+	$dimensionMismatch = conversionResolutionGraphPdo();
+	$dimensionMismatch->exec("INSERT INTO grocy_ai_conversion_rules (revision_id, from_unit_key, to_unit_key, factor, source_version) VALUES ('conversion-catalog-v1', 'cup', 'g', '236.5882365', 'NIST-SP-811-2008-Appendix-B.9')");
+	conversionResolutionAssertBlockedInspection($dimensionMismatch, 8, 'cup', 'ml', 'dimension_mismatch');
+
+	$toleranceDrift = conversionResolutionGraphPdo();
+	$toleranceDrift->exec("UPDATE grocy_ai_conversion_rules SET factor = '0.24' WHERE revision_id = 'conversion-catalog-v1' AND from_unit_key = 'cup' AND to_unit_key = 'l'");
+	conversionResolutionAssertBlockedInspection($toleranceDrift, 8, 'cup', 'ml', 'tolerance_drift');
+
+	$malformedUniversal = conversionResolutionGraphPdo();
+	$malformedUniversal->exec("UPDATE grocy_ai_conversion_rules SET factor = 'not-a-number' WHERE revision_id = 'conversion-catalog-v1' AND from_unit_key = 'cup' AND to_unit_key = 'l'");
+	conversionResolutionAssertBlockedInspection($malformedUniversal, 8, 'cup', 'ml', 'malformed_factor');
+	$profileDrift = conversionResolutionGraphPdo();
+	$profileDrift->exec("UPDATE grocy_ai_conversion_profiles SET factor = '238' WHERE profile_key = 'water-like-beverage'");
+	conversionResolutionAssertBlockedInspection($profileDrift, 1, 'cup', 'g', 'tolerance_drift');
+	$malformedProfile = conversionResolutionGraphPdo();
+	$malformedProfile->exec("UPDATE grocy_ai_conversion_profiles SET factor = 'not-a-number' WHERE profile_key = 'water-like-beverage'");
+	conversionResolutionAssertBlockedInspection($malformedProfile, 1, 'cup', 'g', 'malformed_factor');
 
 	fwrite(STDOUT, "Conversion resolution tests passed\n");
 	exit(0);

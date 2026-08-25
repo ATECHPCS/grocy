@@ -164,6 +164,339 @@ class GrocyAiConversionService
 		);
 	}
 
+	public function InspectConversionResolution(int $productId, string $fromUnitKey, string $toUnitKey): array
+	{
+		if ($productId < 1 || preg_match('/^[a-z][a-z0-9_]{0,31}$/D', $fromUnitKey) !== 1 || preg_match('/^[a-z][a-z0-9_]{0,31}$/D', $toUnitKey) !== 1)
+		{
+			return $this->InspectionUnavailable('resolution_request_invalid');
+		}
+
+		$catalog = $this->Catalog();
+		$universalBlocker = $this->ValidateInspectionUniversalGraph($catalog);
+		if ($universalBlocker !== null)
+		{
+			return $this->InspectionBlocked($universalBlocker);
+		}
+
+		$productGraph = $this->InspectProductGraph($productId, $fromUnitKey, $toUnitKey);
+		if ($productGraph['blocker'] !== null)
+		{
+			return $this->InspectionBlocked($productGraph['blocker']);
+		}
+		if ($productGraph['candidate'] !== null)
+		{
+			$candidate = $productGraph['candidate'];
+			$dimension = isset($catalog[$fromUnitKey], $catalog[$toUnitKey]) && $catalog[$fromUnitKey]['dimension'] === $catalog[$toUnitKey]['dimension']
+				? $catalog[$fromUnitKey]['dimension']
+				: 'product_scoped';
+			return $this->InspectionDto(
+				'product_native', [], $candidate['factor_raw'], $dimension, false, 'product_override',
+				'Grocy native product conversion', null, 'native', null, null, null, null
+			);
+		}
+
+		if (!$this->TaxonomyClassificationsRelationAvailable())
+		{
+			return $this->InspectionUnavailable('taxonomy_unavailable');
+		}
+		if ($this->EligibleProfileCount($productId, $fromUnitKey, $toUnitKey) > 1)
+		{
+			return $this->InspectionBlocked('same_rank_collision');
+		}
+		$profile = $this->InspectSourcedProfile($productId, $fromUnitKey, $toUnitKey);
+		if ($profile['status'] === 'inactive')
+		{
+			return $this->InspectionDto(
+				'inactive', [], $profile['factor'], $profile['dimension'], true, 'food_profile',
+				$profile['source_name'], $profile['source_version'], 'inactive', $profile['source_item_id'],
+				$profile['profile_key'], $profile['taxonomy_leaf'], $profile['inactive_revision_id']
+			);
+		}
+		if (($profile['blockers'][0] ?? null) === 'profile_invalid')
+		{
+			return $this->InspectionBlocked($this->InvalidProfileBlocker($productId, $fromUnitKey, $toUnitKey));
+		}
+
+		$from = $catalog[$fromUnitKey] ?? null;
+		$to = $catalog[$toUnitKey] ?? null;
+		if ($from !== null && $to !== null && $from['dimension'] === $to['dimension'])
+		{
+			$factor = $from['metric_factor'] / $to['metric_factor'];
+			return $this->InspectionDto(
+				'inactive', [], (string)$factor, $from['dimension'], false, 'universal', 'NIST SP 811',
+				GrocyAiConversionMigration::SOURCE_VERSION, 'inactive', null, null, null, GrocyAiConversionMigration::INACTIVE_REVISION_ID
+			);
+		}
+
+		return $this->InspectionUnavailable((string)($profile['blockers'][0] ?? 'conversion_unavailable'));
+	}
+
+	private function ValidateInspectionUniversalGraph(array $catalog): ?string
+	{
+		$revision = $this->InactiveRevision();
+		if ($revision === null || (string)$revision['source_version'] !== GrocyAiConversionMigration::SOURCE_VERSION)
+		{
+			return 'provenance_mismatch';
+		}
+		foreach ($catalog as $unit)
+		{
+			if ($unit['source_version'] !== GrocyAiConversionMigration::SOURCE_VERSION)
+			{
+				return 'provenance_mismatch';
+			}
+			if ($unit['metric_factor'] === null || $unit['metric_factor'] <= 0)
+			{
+				return 'malformed_factor';
+			}
+			if (!in_array($unit['dimension'], ['mass', 'volume'], true))
+			{
+				return 'dimension_mismatch';
+			}
+		}
+
+		$statement = $this->Db->prepare('SELECT from_unit_key, to_unit_key, factor, source_version FROM grocy_ai_conversion_rules WHERE revision_id = ?');
+		$statement->execute([GrocyAiConversionMigration::INACTIVE_REVISION_ID]);
+		$rules = $statement->fetchAll(PDO::FETCH_ASSOC);
+		usort($rules, static function(array $left, array $right): int
+		{
+			return [(string)$left['from_unit_key'], (string)$left['to_unit_key'], (string)$left['factor']]
+				<=> [(string)$right['from_unit_key'], (string)$right['to_unit_key'], (string)$right['factor']];
+		});
+		$edges = [];
+		$pairs = [];
+		foreach ($rules as $rule)
+		{
+			$from = (string)$rule['from_unit_key'];
+			$to = (string)$rule['to_unit_key'];
+			$factor = $this->Factor($rule['factor']);
+			if ($factor === null || $factor <= 0)
+			{
+				return 'malformed_factor';
+			}
+			if ((string)$rule['source_version'] !== GrocyAiConversionMigration::SOURCE_VERSION)
+			{
+				return 'provenance_mismatch';
+			}
+			if (!isset($catalog[$from], $catalog[$to]) || $catalog[$from]['dimension'] !== $catalog[$to]['dimension'])
+			{
+				return 'dimension_mismatch';
+			}
+			$key = $from . '>' . $to;
+			if (isset($pairs[$key]))
+			{
+				return 'same_rank_collision';
+			}
+			$expected = $catalog[$from]['metric_factor'] / $catalog[$to]['metric_factor'];
+			if ($this->RelativeDifference($factor, $expected) > self::RELATIVE_TOLERANCE)
+			{
+				return 'tolerance_drift';
+			}
+			$pairs[$key] = $factor;
+			$edges[] = ['from' => $from, 'to' => $to, 'factor' => $factor];
+		}
+		foreach ($pairs as $key => $factor)
+		{
+			[$from, $to] = explode('>', $key, 2);
+			$reverse = $pairs[$to . '>' . $from] ?? null;
+			if ($reverse !== null && $this->RelativeDifference($factor * $reverse, 1.0) > self::RELATIVE_TOLERANCE)
+			{
+				return 'reciprocal_inconsistency';
+			}
+		}
+		return $this->InspectionGraphBlocker($edges, $pairs);
+	}
+
+	private function InspectProductGraph(int $productId, string $fromUnitKey, string $toUnitKey): array
+	{
+		$statement = $this->Db->prepare('SELECT conversion.id, conversion.factor, from_unit.name AS from_name, to_unit.name AS to_name FROM quantity_unit_conversions AS conversion INNER JOIN quantity_units AS from_unit ON from_unit.id = conversion.from_qu_id INNER JOIN quantity_units AS to_unit ON to_unit.id = conversion.to_qu_id WHERE conversion.product_id = ?');
+		$statement->execute([$productId]);
+		$rows = $statement->fetchAll(PDO::FETCH_ASSOC);
+		usort($rows, static fn(array $left, array $right): int => (int)$left['id'] <=> (int)$right['id']);
+		$edges = [];
+		$pairs = [];
+		$candidates = [];
+		foreach ($rows as $row)
+		{
+			$from = $this->UnitKey((string)$row['from_name']);
+			$to = $this->UnitKey((string)$row['to_name']);
+			if ($from === null || $to === null)
+			{
+				continue;
+			}
+			$factor = $this->Factor($row['factor']);
+			if ($factor === null || $factor <= 0)
+			{
+				return ['blocker' => 'malformed_factor', 'candidate' => null];
+			}
+			$key = $from . '>' . $to;
+			if (isset($pairs[$key]))
+			{
+				return ['blocker' => 'same_rank_collision', 'candidate' => null];
+			}
+			$pairs[$key] = $factor;
+			$edge = ['from' => $from, 'to' => $to, 'factor' => $factor, 'factor_raw' => trim((string)$row['factor'])];
+			$edges[] = $edge;
+			if ($from === $fromUnitKey && $to === $toUnitKey)
+			{
+				$candidates[] = $edge;
+			}
+		}
+		foreach ($pairs as $key => $factor)
+		{
+			[$from, $to] = explode('>', $key, 2);
+			$reverse = $pairs[$to . '>' . $from] ?? null;
+			if ($reverse !== null && $this->RelativeDifference($factor * $reverse, 1.0) > self::RELATIVE_TOLERANCE)
+			{
+				return ['blocker' => 'reciprocal_inconsistency', 'candidate' => null];
+			}
+		}
+		$blocker = $this->InspectionGraphBlocker($edges, $pairs);
+		if ($blocker !== null)
+		{
+			return ['blocker' => $blocker, 'candidate' => null];
+		}
+		if (count($candidates) === 1)
+		{
+			return ['blocker' => null, 'candidate' => $candidates[0]];
+		}
+		$adjacency = $this->InspectionAdjacency($edges);
+		$paths = [];
+		$this->CollectInspectionPaths($fromUnitKey, 1.0, [$fromUnitKey => true], $adjacency, $paths);
+		if (isset($paths[$toUnitKey][0]))
+		{
+			return ['blocker' => null, 'candidate' => ['factor_raw' => (string)$paths[$toUnitKey][0]]];
+		}
+		return ['blocker' => null, 'candidate' => null];
+	}
+
+	private function InspectionGraphBlocker(array $edges, array $pairs): ?string
+	{
+		$adjacency = $this->InspectionAdjacency($edges);
+		$state = [];
+		foreach (array_keys($adjacency) as $node)
+		{
+			if ($this->HasInspectionCycle($node, null, $adjacency, $pairs, $state))
+			{
+				return 'cycle_detected';
+			}
+		}
+
+		foreach (array_keys($adjacency) as $source)
+		{
+			$paths = [];
+			$this->CollectInspectionPaths($source, 1.0, [$source => true], $adjacency, $paths);
+			foreach ($paths as $factors)
+			{
+				if (count($factors) < 2)
+				{
+					continue;
+				}
+				$expected = $factors[0];
+				foreach (array_slice($factors, 1) as $factor)
+				{
+					if ($this->RelativeDifference($factor, $expected) > self::RELATIVE_TOLERANCE)
+					{
+						return 'competing_paths';
+					}
+				}
+			}
+		}
+		return null;
+	}
+
+	private function InspectionAdjacency(array $edges): array
+	{
+		$adjacency = [];
+		foreach ($edges as $edge)
+		{
+			$adjacency[$edge['from']][] = $edge;
+		}
+		foreach ($adjacency as &$neighbors)
+		{
+			usort($neighbors, static fn(array $left, array $right): int => [$left['to'], $left['factor']] <=> [$right['to'], $right['factor']]);
+		}
+		unset($neighbors);
+		return $adjacency;
+	}
+
+	private function HasInspectionCycle(string $node, ?string $parent, array $adjacency, array $pairs, array &$state): bool
+	{
+		if (($state[$node] ?? 0) === 1)
+		{
+			return true;
+		}
+		if (($state[$node] ?? 0) === 2)
+		{
+			return false;
+		}
+		$state[$node] = 1;
+		foreach ($adjacency[$node] ?? [] as $edge)
+		{
+			$neighbor = $edge['to'];
+			if ($neighbor === $parent && isset($pairs[$neighbor . '>' . $node]))
+			{
+				continue;
+			}
+			if ($this->HasInspectionCycle($neighbor, $node, $adjacency, $pairs, $state))
+			{
+				return true;
+			}
+		}
+		$state[$node] = 2;
+		return false;
+	}
+
+	private function CollectInspectionPaths(string $node, float $factor, array $visited, array $adjacency, array &$paths): void
+	{
+		foreach ($adjacency[$node] ?? [] as $edge)
+		{
+			$target = $edge['to'];
+			if (isset($visited[$target]))
+			{
+				continue;
+			}
+			$pathFactor = $factor * $edge['factor'];
+			$paths[$target][] = $pathFactor;
+			if (count($paths[$target]) > 64)
+			{
+				continue;
+			}
+			$nextVisited = $visited;
+			$nextVisited[$target] = true;
+			$this->CollectInspectionPaths($target, $pathFactor, $nextVisited, $adjacency, $paths);
+		}
+	}
+
+	private function EligibleProfileCount(int $productId, string $fromUnitKey, string $toUnitKey): int
+	{
+		$statement = $this->Db->prepare('SELECT COUNT(*) FROM grocy_ai_conversion_profiles AS profile INNER JOIN grocy_ai_taxonomy_classifications AS classification ON classification.leaf_id = profile.taxonomy_leaf_id INNER JOIN grocy_ai_taxonomy_nodes AS node ON node.id = classification.leaf_id WHERE classification.product_id = ? AND classification.ruleset_version = ? AND node.version = ? AND node.parent_id IS NOT NULL AND node.depth = 2 AND profile.revision_id = ? AND profile.from_unit_key = ? AND profile.to_unit_key = ?');
+		$statement->execute([$productId, GrocyAiTaxonomyMigration::VERSION, GrocyAiTaxonomyMigration::VERSION, GrocyAiConversionMigration::INACTIVE_PROFILE_REVISION_ID, $fromUnitKey, $toUnitKey]);
+		return (int)$statement->fetchColumn();
+	}
+
+	private function InvalidProfileBlocker(int $productId, string $fromUnitKey, string $toUnitKey): string
+	{
+		$statement = $this->Db->prepare('SELECT profile.profile_key, profile.factor FROM grocy_ai_conversion_profiles AS profile INNER JOIN grocy_ai_taxonomy_classifications AS classification ON classification.leaf_id = profile.taxonomy_leaf_id INNER JOIN grocy_ai_taxonomy_nodes AS node ON node.id = classification.leaf_id WHERE classification.product_id = ? AND classification.ruleset_version = ? AND node.version = ? AND node.parent_id IS NOT NULL AND node.depth = 2 AND profile.revision_id = ? AND profile.from_unit_key = ? AND profile.to_unit_key = ?');
+		$statement->execute([$productId, GrocyAiTaxonomyMigration::VERSION, GrocyAiTaxonomyMigration::VERSION, GrocyAiConversionMigration::INACTIVE_PROFILE_REVISION_ID, $fromUnitKey, $toUnitKey]);
+		$profile = $statement->fetch(PDO::FETCH_ASSOC);
+		if (!is_array($profile))
+		{
+			return 'profile_invalid';
+		}
+		$factor = $this->Factor($profile['factor']);
+		if ($factor === null || $factor <= 0)
+		{
+			return 'malformed_factor';
+		}
+		$expected = self::SOURCED_PROFILE_RECORDS[(string)$profile['profile_key']] ?? null;
+		$expectedFactor = is_array($expected) ? $this->Factor($expected[3] ?? null) : null;
+		if ($expectedFactor !== null && $this->RelativeDifference($factor, $expectedFactor) > self::RELATIVE_TOLERANCE)
+		{
+			return 'tolerance_drift';
+		}
+		return 'profile_invalid';
+	}
+
 	private function CandidateUnits(array $candidate): ?array
 	{
 		$fromId = $this->PositiveInteger($candidate['from_qu_id'] ?? null);
@@ -349,6 +682,36 @@ class GrocyAiConversionService
 			'source_version' => $sourceVersion,
 			'source_basis' => $sourceBasis,
 			'inactive_revision_id' => GrocyAiConversionMigration::INACTIVE_PROFILE_REVISION_ID
+		];
+	}
+
+	private function InspectionBlocked(string $blocker): array
+	{
+		return $this->InspectionDto('blocked', [$blocker], null, null, null, null, null, null, null, null, null, null, null);
+	}
+
+	private function InspectionUnavailable(string $blocker): array
+	{
+		return $this->InspectionDto('unavailable', [$blocker], null, null, null, null, null, null, null, null, null, null, null);
+	}
+
+	private function InspectionDto(string $status, array $blockers, ?string $factor, ?string $dimension, ?bool $approximate, ?string $winnerSource, ?string $sourceName, ?string $sourceVersion, ?string $sourceStatus, ?string $sourceItemId, ?string $profileKey, ?string $taxonomyLeaf, ?string $inactiveRevisionId): array
+	{
+		return [
+			'status' => $status,
+			'blockers' => $blockers,
+			'factor' => $factor,
+			'dimension' => $dimension,
+			'approximate' => $approximate,
+			'winner_source' => $winnerSource,
+			'source_name' => $sourceName,
+			'source_version' => $sourceVersion,
+			'source_status' => $sourceStatus,
+			'source_item_id' => $sourceItemId,
+			'profile_key' => $profileKey,
+			'taxonomy_leaf' => $taxonomyLeaf,
+			'precedence' => 'product_override>food_profile>universal',
+			'inactive_revision_id' => $inactiveRevisionId
 		];
 	}
 
