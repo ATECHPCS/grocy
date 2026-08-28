@@ -43,7 +43,7 @@
       "id": 6,
       "name": "04-09 product conversion provenance UI and zero-write browser proof",
       "status": "done",
-      "commit": "pending"
+      "commit": "6c7c5a59"
     }
   ],
   "remaining_tasks": [
