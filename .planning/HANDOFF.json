@@ -49,7 +49,7 @@
       "id": 7,
       "name": "04-06 resolved-conversion provenance read and native-table source/status",
       "status": "done",
-      "commit": "pending"
+      "commit": "ab287a7a"
     }
   ],
   "remaining_tasks": [
