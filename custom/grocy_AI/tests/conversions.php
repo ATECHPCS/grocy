@@ -455,10 +455,11 @@ SQL);
 	$nativeResponse = conversionProductStatusReadOnlyCall($pdo, $controller, '1', $query);
 	conversionAssertSame(200, $nativeResponse->getStatusCode(), 'valid product status request must succeed');
 	$nativeBody = conversionProductStatusBody($nativeResponse);
-	conversionAssertSame([
+	$expectedDtoKeys = [
 		'status', 'blockers', 'factor', 'dimension', 'approximate', 'winner_source', 'source_name', 'source_version',
 		'source_status', 'source_item_id', 'profile_key', 'taxonomy_leaf', 'precedence', 'inactive_revision_id'
-	], array_keys($nativeBody), 'product status response must expose only the fixed resolver DTO keys');
+	];
+	conversionAssertSame($expectedDtoKeys, array_keys($nativeBody), 'product status response must expose only the fixed resolver DTO keys');
 	conversionAssertSame('product_native', $nativeBody['status'], 'native product override must retain its closed status');
 	conversionAssertSame('1.01', $nativeBody['factor'], 'native product override may expose its precise usable factor');
 	conversionAssertSame('product_override', $nativeBody['winner_source'], 'native product override must identify its closed winner source');
@@ -477,6 +478,24 @@ SQL);
 	$inactiveAfterActivation = conversionProductStatusBody(conversionProductStatusReadOnlyCall($pdo, $controller, '1', $inactiveQuery));
 	conversionAssertSame($inactiveBeforeActivation, $inactiveAfterActivation, 'status read before and after activation fixture must retain the same closed inspection contract');
 	conversionAssertSame([], $pdo->query('SELECT * FROM grocy_ai_conversion_route_write_spy')->fetchAll(PDO::FETCH_ASSOC), 'status route must invoke no activation, native projection, cache refresh, taxonomy, or product write seam');
+
+	$pdo->exec("INSERT INTO quantity_unit_conversions (id, product_id, from_qu_id, to_qu_id, factor) VALUES (401, 2, 1, 2, 238), (402, 2, 1, 2, 239)");
+	$pdo->exec('DELETE FROM grocy_ai_conversion_route_write_spy');
+	$blockedResponse = conversionProductStatusReadOnlyCall($pdo, $controller, '2', $inactiveQuery);
+	conversionAssertSame(200, $blockedResponse->getStatusCode(), 'blocked resolver outcome must remain a bounded successful inspection response');
+	$blockedBody = conversionProductStatusBody($blockedResponse);
+	conversionAssertSame($expectedDtoKeys, array_keys($blockedBody), 'blocked endpoint response must retain the exact fixed resolver DTO keys');
+	conversionAssertSame('blocked', $blockedBody['status'], 'same-rank product graph conflict must reach the endpoint as blocked');
+	conversionAssertSame(['same_rank_collision'], $blockedBody['blockers'], 'blocked endpoint response must expose only the bounded resolver blocker');
+	conversionAssertSame(null, $blockedBody['factor'], 'blocked endpoint response must never expose a usable factor');
+
+	$unavailableResponse = conversionProductStatusReadOnlyCall($pdo, $controller, '4', $inactiveQuery);
+	conversionAssertSame(200, $unavailableResponse->getStatusCode(), 'unavailable resolver outcome must remain a bounded successful inspection response');
+	$unavailableBody = conversionProductStatusBody($unavailableResponse);
+	conversionAssertSame($expectedDtoKeys, array_keys($unavailableBody), 'unavailable endpoint response must retain the exact fixed resolver DTO keys');
+	conversionAssertSame('unavailable', $unavailableBody['status'], 'product without an explicit taxonomy assignment must reach the endpoint as unavailable');
+	conversionAssertSame(['explicit_taxonomy_required'], $unavailableBody['blockers'], 'unavailable endpoint response must expose only the bounded resolver reason');
+	conversionAssertSame(null, $unavailableBody['factor'], 'unavailable endpoint response must never expose a usable factor');
 
 	$malformedCases = [
 		['0', $inactiveQuery], ['01', $inactiveQuery], ['+1', $inactiveQuery], ['1e0', $inactiveQuery],
