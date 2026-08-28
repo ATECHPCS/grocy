@@ -25,5 +25,6 @@ $app->group('/api/grocy-ai', function (RouteCollectorProxy $group)
 	$group->put('/products/{productId}/taxonomy', [GrocyAiApiController::class, 'AssignProductTaxonomy']);
 	$group->get('/products/{productId}/conversion-status', [GrocyAiApiController::class, 'ProductConversionStatus']);
 	$group->get('/conversions/validate', [GrocyAiApiController::class, 'ValidateConversion']);
+	$group->get('/conversions/resolved-provenance', [GrocyAiApiController::class, 'ResolvedConversionProvenance']);
 	$group->get('/images/{variant}/{token}', [GrocyAiApiController::class, 'FetchImage']);
 })->add(new CorsMiddleware($container, $app->getResponseFactory()))->add(new JsonMiddleware($container, $app->getResponseFactory()));

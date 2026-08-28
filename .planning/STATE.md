@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Phase 4 Plan 04-09 complete
+stopped_at: Phase 4 Plan 04-06 complete
 last_updated: "2026-08-28T00:00:00.000Z"
-last_activity: 2026-08-28 -- Phase 4 Plan 04-09 complete
+last_activity: 2026-08-28 -- Phase 4 Plan 04-06 complete
 progress:
   total_phases: 7
   completed_phases: 2
   total_plans: 44
-  completed_plans: 40
+  completed_plans: 41
   percent: 33
 ---
 
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-08-20)
 ## Current Position
 
 Phase: 4
-Plan: 04-09 complete; 04-06 next
+Plan: 04-06 complete; 04-07 next
 Status: Executing
 Last activity: 2026-08-23 -- Phase 4 planning complete
 
@@ -130,6 +130,8 @@ Recent decisions affecting current work:
 - [Phase 04]: Only a `product_native` conversion status may carry a factor, and the browser redacts it a second time so a tampered inactive/unavailable/blocked response cannot present a usable number.
 - [Phase 04]: Blocker codes map to closed correction-category sentences and are never rendered raw.
 
+- [Phase 04]: `GrocyAiConversionService::UnitKeyForName` is the single owner of the Grocy-unit-name to catalog-key mapping; inspection callers must not restate it.
+
 ### Pending Todos
 
 None yet.
@@ -173,5 +175,5 @@ Items acknowledged for v2 after the preview/audit model is proven:
 ## Session Continuity
 
 Last session: 2026-08-28
-Stopped at: Phase 4 Plan 04-09 complete
-Resume file: .planning/phases/04-reusable-conversion-model/04-06-PLAN.md
+Stopped at: Phase 4 Plan 04-06 complete
+Resume file: .planning/phases/04-reusable-conversion-model/04-07-PLAN.md

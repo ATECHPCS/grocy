@@ -528,6 +528,21 @@ details.grocy-ai-diagnostics:not([open]) > .grocy-ai-diagnostic-body {
 	border-left-color: var(--primary);
 }
 
+.grocy-ai-resolved-source,
+.grocy-ai-resolved-status {
+	font-size: 14px;
+	overflow-wrap: anywhere;
+}
+
+.grocy-ai-resolved-status {
+	overflow-wrap: anywhere;
+}
+
+.grocy-ai-resolved-details {
+	margin-top: 8px;
+}
+
+
 @media (max-width: 575.98px) {
 	.grocy-ai-actions .btn {
 		flex: 1 1 100%;
@@ -574,6 +589,13 @@ details.grocy-ai-diagnostics:not([open]) > .grocy-ai-diagnostic-body {
 
 	.grocy-ai-conversion-status {
 		padding: 8px;
+	}
+
+	/* The rounded factor and its prose move into the expanded details region instead of
+	   competing with source, status, and the details control for narrow table width. */
+	.grocy-ai-resolved-prose-column,
+	.grocy-ai-resolved-factor-column {
+		display: none;
 	}
 
 	.grocy-ai-conversion-disclosure > summary {

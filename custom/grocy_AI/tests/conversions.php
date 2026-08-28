@@ -791,6 +791,7 @@ function runConversionResolution(): never
 	$malformedProfile->exec("UPDATE grocy_ai_conversion_profiles SET factor = 'not-a-number' WHERE profile_key = 'water-like-beverage'");
 	conversionResolutionAssertBlockedInspection($malformedProfile, 1, 'cup', 'g', 'malformed_factor');
 	conversionProductStatusContract();
+	conversionResolvedProvenanceContract();
 
 	fwrite(STDOUT, "Conversion resolution tests passed\n");
 	exit(0);
@@ -1607,4 +1608,193 @@ function conversionCharacterizationImmutableCommit(string $root): string
 		throw new RuntimeException('invalid_branch_root');
 	}
 	return $commit;
+}
+
+function conversionResolvedProvenanceRequest(array $query): Psr\Http\Message\ServerRequestInterface
+{
+	return (new Slim\Psr7\Factory\ServerRequestFactory())
+		->createServerRequest('GET', '/api/grocy-ai/conversions/resolved-provenance')
+		->withQueryParams($query);
+}
+
+function conversionResolvedProvenanceInvoke(
+	GrocyAI\Controllers\Api\GrocyAiApiController $controller,
+	array $query
+): Psr\Http\Message\ResponseInterface
+{
+	return $controller->ResolvedConversionProvenance(
+		conversionResolvedProvenanceRequest($query),
+		conversionNativeSaveHookResponse(),
+		[]
+	);
+}
+
+function conversionResolvedProvenanceReadOnlyCall(
+	PDO $pdo,
+	GrocyAI\Controllers\Api\GrocyAiApiController $controller,
+	array $query
+): Psr\Http\Message\ResponseInterface
+{
+	$before = conversionProductStatusSnapshot($pdo);
+	$pdo->exec('PRAGMA query_only = ON');
+	try
+	{
+		$response = conversionResolvedProvenanceInvoke($controller, $query);
+	}
+	finally
+	{
+		$pdo->exec('PRAGMA query_only = OFF');
+	}
+	conversionAssertSame($before, conversionProductStatusSnapshot($pdo), 'resolved provenance GET must not bootstrap, activate, project, refresh cache, or mutate module/native/taxonomy/product state');
+	return $response;
+}
+
+function conversionResolvedProvenanceAssertError(Psr\Http\Message\ResponseInterface $response, int $status, string $message): void
+{
+	conversionAssertSame($status, $response->getStatusCode(), 'resolved provenance failure must use its fixed HTTP status');
+	conversionAssertSame(['error_message' => $message], conversionProductStatusBody($response), 'resolved provenance failure must expose only one bounded message');
+}
+
+function conversionResolvedProvenanceAssertRouteRegistered(): void
+{
+	$container = new DI\Container();
+	$app = Slim\Factory\AppFactory::createFromContainer($container);
+	require dirname(__DIR__) . '/routes.php';
+	$matching = [];
+	foreach ($app->getRouteCollector()->getRoutes() as $route)
+	{
+		if ($route->getPattern() === '/api/grocy-ai/conversions/resolved-provenance')
+		{
+			$matching[] = $route->getMethods();
+		}
+	}
+	conversionAssertSame([['GET']], $matching, 'resolved conversion provenance must be registered exactly once as GET with no custom write route');
+}
+
+function conversionResolvedProvenanceContract(): void
+{
+	conversionProductStatusRuntime();
+	if (!method_exists(GrocyAI\Controllers\Api\GrocyAiApiController::class, 'ResolvedConversionProvenance'))
+	{
+		expectedRed('EXPECTED_RED: conversion-resolved-provenance', 'The bounded read-only resolved conversion provenance endpoint is not implemented');
+	}
+
+	$pdo = conversionResolutionGraphPdo();
+	$pdo->exec(<<<'SQL'
+CREATE TABLE user_permissions_resolved (id INTEGER NOT NULL PRIMARY KEY, user_id INTEGER NOT NULL, permission_name TEXT NOT NULL);
+INSERT INTO user_permissions_resolved (id, user_id, permission_name) VALUES (1, 1, 'MASTER_DATA_EDIT');
+CREATE TABLE grocy_ai_conversion_activation_evidence (id INTEGER NOT NULL PRIMARY KEY, revision_id TEXT NOT NULL, evidence_hash TEXT NOT NULL);
+CREATE TABLE grocy_ai_conversion_projection_spy (id INTEGER NOT NULL PRIMARY KEY, operation TEXT NOT NULL);
+CREATE TABLE grocy_ai_conversion_route_write_spy (id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT, target TEXT NOT NULL, operation TEXT NOT NULL);
+CREATE TRIGGER grocy_ai_conversion_resolved_products_update AFTER UPDATE ON products BEGIN
+	INSERT INTO grocy_ai_conversion_route_write_spy (target, operation) VALUES ('products', 'update');
+END;
+CREATE TRIGGER grocy_ai_conversion_resolved_native_insert AFTER INSERT ON quantity_unit_conversions BEGIN
+	INSERT INTO grocy_ai_conversion_route_write_spy (target, operation) VALUES ('quantity_unit_conversions', 'insert');
+END;
+CREATE TRIGGER grocy_ai_conversion_resolved_cache_insert AFTER INSERT ON cache__quantity_unit_conversions_resolved BEGIN
+	INSERT INTO grocy_ai_conversion_route_write_spy (target, operation) VALUES ('cache', 'insert');
+END;
+INSERT INTO quantity_units (id, name) VALUES (5, 'Piece'), (6, 'Package');
+SQL);
+	conversionNativeSaveHookInstallDatabase($pdo);
+	$controller = (new ReflectionClass(GrocyAI\Controllers\Api\GrocyAiApiController::class))->newInstanceWithoutConstructor();
+	conversionResolvedProvenanceAssertRouteRegistered();
+
+	$expectedDtoKeys = [
+		'status', 'blockers', 'factor', 'dimension', 'approximate', 'winner_source', 'source_name', 'source_version',
+		'source_status', 'source_item_id', 'profile_key', 'taxonomy_leaf', 'precedence', 'inactive_revision_id'
+	];
+
+	// Test 1: a resolved row identity maps to exactly one resolver result.
+	$nativeBody = conversionProductStatusBody(conversionResolvedProvenanceReadOnlyCall($pdo, $controller, ['product_id' => '1', 'from_qu_id' => '4', 'to_qu_id' => '2']));
+	conversionAssertSame($expectedDtoKeys, array_keys($nativeBody), 'resolved provenance response must expose only the fixed resolver DTO keys');
+	conversionAssertSame('product_native', $nativeBody['status'], 'a resolved row backed by a product conversion must report the product override');
+	conversionAssertSame('1.01', $nativeBody['factor'], 'a native resolved row may expose its precise usable factor');
+	conversionAssertSame('product_override', $nativeBody['winner_source'], 'a native resolved row must identify its closed winner source');
+	$serviceResult = (new GrocyAiConversionService($pdo, false))->InspectConversionResolution(1, 'ml', 'g');
+	$serviceResult['factor'] = $serviceResult['status'] === 'product_native' ? $serviceResult['factor'] : null;
+	conversionAssertSame($serviceResult, $nativeBody, 'resolved provenance must return exactly one existing resolver result and add no second data source');
+
+	$inactiveBody = conversionProductStatusBody(conversionResolvedProvenanceReadOnlyCall($pdo, $controller, ['product_id' => '1', 'from_qu_id' => '1', 'to_qu_id' => '2']));
+	conversionAssertSame('inactive', $inactiveBody['status'], 'an eligible sourced profile must remain visibly inactive through the resolved boundary');
+	conversionAssertSame(null, $inactiveBody['factor'], 'an inactive resolved row must not expose a usable factor');
+	conversionAssertSame('food_profile', $inactiveBody['winner_source'], 'an inactive resolved row may retain its bounded provenance category');
+
+	// Test 2: unavailable and blocked entries omit usable factors and retain bounded reasons.
+	$unavailableBody = conversionProductStatusBody(conversionResolvedProvenanceReadOnlyCall($pdo, $controller, ['product_id' => '4', 'from_qu_id' => '1', 'to_qu_id' => '2']));
+	conversionAssertSame($expectedDtoKeys, array_keys($unavailableBody), 'unavailable resolved response must retain the exact fixed resolver DTO keys');
+	conversionAssertSame('unavailable', $unavailableBody['status'], 'a product without an explicit taxonomy assignment must reach the resolved boundary as unavailable');
+	conversionAssertSame(['explicit_taxonomy_required'], $unavailableBody['blockers'], 'unavailable resolved response must expose only the bounded resolver reason');
+	conversionAssertSame(null, $unavailableBody['factor'], 'unavailable resolved response must never expose a usable factor');
+
+	$pdo->exec("INSERT INTO quantity_unit_conversions (id, product_id, from_qu_id, to_qu_id, factor) VALUES (501, 2, 1, 2, 238), (502, 2, 1, 2, 239)");
+	$pdo->exec('DELETE FROM grocy_ai_conversion_route_write_spy');
+	$blockedBody = conversionProductStatusBody(conversionResolvedProvenanceReadOnlyCall($pdo, $controller, ['product_id' => '2', 'from_qu_id' => '1', 'to_qu_id' => '2']));
+	conversionAssertSame('blocked', $blockedBody['status'], 'a same-rank product graph conflict must reach the resolved boundary as blocked');
+	conversionAssertSame(['same_rank_collision'], $blockedBody['blockers'], 'blocked resolved response must expose only the bounded resolver blocker');
+	conversionAssertSame(null, $blockedBody['factor'], 'blocked resolved response must never expose a usable factor');
+	conversionAssertSame([], $pdo->query('SELECT * FROM grocy_ai_conversion_route_write_spy')->fetchAll(PDO::FETCH_ASSOC), 'resolved provenance must invoke no activation, native projection, cache refresh, taxonomy, or product write seam');
+
+	// A count or package unit is outside the reusable boundary and must never borrow a factor.
+	foreach ([['5', '2'], ['1', '6'], ['5', '6']] as [$fromQuId, $toQuId])
+	{
+		$countBody = conversionProductStatusBody(conversionResolvedProvenanceReadOnlyCall($pdo, $controller, ['product_id' => '1', 'from_qu_id' => $fromQuId, 'to_qu_id' => $toQuId]));
+		conversionAssertSame($expectedDtoKeys, array_keys($countBody), 'count-scope resolved response must retain the exact fixed resolver DTO keys');
+		conversionAssertSame('unavailable', $countBody['status'], 'a count or package unit pair must remain outside the reusable boundary');
+		conversionAssertSame(['reusable_count_scope'], $countBody['blockers'], 'count-scope resolved response must name the bounded scope reason');
+		conversionAssertSame(null, $countBody['factor'], 'count-scope resolved response must never expose a usable factor');
+	}
+
+	// The activation fixture must not change the closed inspection contract or trigger any write seam.
+	$pdo->exec("INSERT INTO grocy_ai_conversion_activation_evidence (id, revision_id, evidence_hash) VALUES (1, 'conversion-catalog-v1', 'fixture-approved-evidence')");
+	$pdo->exec("INSERT INTO grocy_ai_conversion_projection_spy (id, operation) VALUES (1, 'fixture_activation_completed')");
+	$pdo->exec('DELETE FROM grocy_ai_conversion_route_write_spy');
+	$afterActivation = conversionProductStatusBody(conversionResolvedProvenanceReadOnlyCall($pdo, $controller, ['product_id' => '1', 'from_qu_id' => '1', 'to_qu_id' => '2']));
+	conversionAssertSame($inactiveBody, $afterActivation, 'resolved provenance before and after the activation fixture must retain the same closed inspection contract');
+	conversionAssertSame([], $pdo->query('SELECT * FROM grocy_ai_conversion_route_write_spy')->fetchAll(PDO::FETCH_ASSOC), 'resolved provenance after activation must still invoke no write seam');
+
+	// Test 3: the endpoint is permission-protected and read-only, and rejects every malformed identity.
+	$malformedCases = [
+		[], ['product_id' => '1'], ['product_id' => '1', 'from_qu_id' => '1'], ['from_qu_id' => '1', 'to_qu_id' => '2'],
+		['product_id' => '0', 'from_qu_id' => '1', 'to_qu_id' => '2'],
+		['product_id' => '01', 'from_qu_id' => '1', 'to_qu_id' => '2'],
+		['product_id' => '+1', 'from_qu_id' => '1', 'to_qu_id' => '2'],
+		['product_id' => '1e0', 'from_qu_id' => '1', 'to_qu_id' => '2'],
+		['product_id' => '10000000000', 'from_qu_id' => '1', 'to_qu_id' => '2'],
+		['product_id' => '1', 'from_qu_id' => '1 OR 1=1', 'to_qu_id' => '2'],
+		['product_id' => '1', 'from_qu_id' => '1', 'to_qu_id' => '-2'],
+		['product_id' => ['1'], 'from_qu_id' => '1', 'to_qu_id' => '2']
+	];
+	foreach ($malformedCases as $malformedQuery)
+	{
+		conversionResolvedProvenanceAssertError(
+			conversionResolvedProvenanceReadOnlyCall($pdo, $controller, $malformedQuery),
+			400,
+			'Invalid resolved conversion request'
+		);
+	}
+	conversionResolvedProvenanceAssertError(
+		conversionResolvedProvenanceReadOnlyCall($pdo, $controller, ['product_id' => '999', 'from_qu_id' => '1', 'to_qu_id' => '2']),
+		404,
+		'Product unavailable'
+	);
+	conversionResolvedProvenanceAssertError(
+		conversionResolvedProvenanceReadOnlyCall($pdo, $controller, ['product_id' => '1', 'from_qu_id' => '888', 'to_qu_id' => '2']),
+		404,
+		'Quantity unit unavailable'
+	);
+
+	$pdo->exec("DELETE FROM user_permissions_resolved WHERE permission_name = 'MASTER_DATA_EDIT'");
+	$unauthorizedBefore = conversionProductStatusSnapshot($pdo);
+	try
+	{
+		conversionResolvedProvenanceInvoke($controller, ['product_id' => '1', 'from_qu_id' => '1', 'to_qu_id' => '2']);
+		throw new RuntimeException('conversion_resolved_provenance_permission_not_checked');
+	}
+	catch (Grocy\Controllers\Users\PermissionMissingException $ex)
+	{
+		conversionAssertSame('Permission missing: MASTER_DATA_EDIT', $ex->getMessage(), 'unauthorized resolved provenance failure must disclose no SQL, evidence, product, or household detail');
+	}
+	conversionAssertSame($unauthorizedBefore, conversionProductStatusSnapshot($pdo), 'unauthorized resolved provenance request must mutate no lifecycle, native, cache, taxonomy, or product state');
 }

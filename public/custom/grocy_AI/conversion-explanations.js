@@ -12,6 +12,8 @@
 		root.GrocyAIConversionExplanations = api;
 		if (root.document)
 		{
+			// The product panel is self-contained. The resolved table is attached by its own
+			// view script instead, so enrichment always runs after native DataTables initialization.
 			api.attachProductStatus(root.document);
 		}
 	}
@@ -161,6 +163,12 @@
 		return true;
 	}
 
+	function mappedCorrectionCategory(blockers)
+	{
+		var code = blockers.length > 0 ? blockers[0] : '';
+		return Object.prototype.hasOwnProperty.call(CORRECTION_CATEGORIES, code) ? CORRECTION_CATEGORIES[code] : null;
+	}
+
 	function correctionCategory(blockers)
 	{
 		var code = blockers.length > 0 ? blockers[0] : '';
@@ -273,7 +281,18 @@
 		detail(rows, 'Rule revision', payload.inactive_revision_id);
 		if (presentation.kind === 'blocked')
 		{
+			// A blocker always states a correction state, even for an unmapped future code.
 			detail(rows, 'Correction needed', correctionCategory(payload.blockers));
+		}
+		else if (presentation.kind === 'unavailable')
+		{
+			// An unavailable result only names a correction category when its reason maps to a
+			// closed one; the generic fallback would misdescribe the empty-estimate cases.
+			var mapped = mappedCorrectionCategory(payload.blockers);
+			if (mapped !== null)
+			{
+				detail(rows, 'Correction needed', mapped);
+			}
 		}
 		presentation.details = rows;
 
@@ -320,6 +339,65 @@
 		}
 
 		return { load: load };
+	}
+
+	function createResolvedProvenanceController(options)
+	{
+		// One sequence per resolved row: a late or superseded answer may never paint a row,
+		// and an answer can only ever reach the row that asked for it.
+		var sequences = {};
+
+		function loadRow(identity)
+		{
+			var rowKey = identity.rowKey;
+			sequences[rowKey] = (sequences[rowKey] || 0) + 1;
+			var owned = sequences[rowKey];
+			var request;
+			try
+			{
+				request = Promise.resolve(options.requestProvenance(identity));
+			}
+			catch (error)
+			{
+				request = Promise.reject(error);
+			}
+
+			return request.then(function (payload)
+			{
+				return describeProductConversionStatus(payload);
+			}, function ()
+			{
+				return errorPresentation();
+			}).then(function (presentation)
+			{
+				if (sequences[rowKey] !== owned)
+				{
+					return null;
+				}
+				options.renderRow(rowKey, presentation);
+				return presentation;
+			});
+		}
+
+		function loadRows(identities)
+		{
+			var seen = {};
+			var pending = [];
+			for (var index = 0; index < identities.length; index++)
+			{
+				var identity = identities[index];
+				var key = identity.rowKey + ':' + identity.productId + ':' + identity.fromQuId + '>' + identity.toQuId;
+				if (seen[key])
+				{
+					continue;
+				}
+				seen[key] = true;
+				pending.push(loadRow(identity));
+			}
+			return Promise.all(pending);
+		}
+
+		return { loadRow: loadRow, loadRows: loadRows };
 	}
 
 	function element(document, tag, text)
@@ -425,11 +503,137 @@
 		return controller;
 	}
 
+	function renderResolvedRow(document, row, presentation)
+	{
+		var source = row.querySelector('[data-grocy-ai-resolved-source]');
+		var status = row.querySelector('[data-grocy-ai-resolved-status]');
+		var details = row.querySelector('[data-grocy-ai-resolved-details]');
+		var disclosure = row.querySelector('[data-grocy-ai-resolved-disclosure]');
+
+		source.textContent = presentation.headline;
+		status.textContent = '';
+		var icon = element(document, 'i');
+		icon.className = 'fa-solid fa-' + presentation.icon;
+		icon.setAttribute('aria-hidden', 'true');
+		status.appendChild(icon);
+		// The outcome is always a visible word, never colour or an icon alone.
+		status.appendChild(element(document, 'span', ' ' + presentation.statusLabel));
+		status.className = 'grocy-ai-resolved-status text-' + presentation.statusVariant;
+
+		details.textContent = '';
+		presentation.details.forEach(function (detailRow)
+		{
+			details.appendChild(element(document, 'dt', detailRow.term));
+			details.appendChild(element(document, 'dd', detailRow.value));
+		});
+
+		// The rounded factor and its native explanation move here rather than competing for
+		// narrow table width. Both texts come from the row Grocy already rendered.
+		[['Rounded factor', '[data-grocy-ai-resolved-factor]'], ['Conversion', '[data-grocy-ai-resolved-prose]']].forEach(function (native)
+		{
+			var cell = row.querySelector(native[1]);
+			if (cell !== null && cell.textContent.trim() !== '')
+			{
+				details.appendChild(element(document, 'dt', native[0]));
+				details.appendChild(element(document, 'dd', cell.textContent.trim()));
+			}
+		});
+		disclosure.hidden = details.childElementCount === 0;
+	}
+
+	function attachResolvedProvenance(document, options)
+	{
+		var hooks = options || {};
+		var table = document.getElementById('qu-conversions-resolved-table');
+		if (!table)
+		{
+			return null;
+		}
+		var rows = Array.prototype.filter.call(
+			table.querySelectorAll('tr[data-grocy-ai-resolved-row]'),
+			function (row)
+			{
+				return /^[1-9][0-9]{0,9}$/.test(row.getAttribute('data-product-id') || '')
+					&& /^[1-9][0-9]{0,9}$/.test(row.getAttribute('data-from-qu-id') || '')
+					&& /^[1-9][0-9]{0,9}$/.test(row.getAttribute('data-to-qu-id') || '');
+			}
+		);
+		if (rows.length === 0)
+		{
+			return null;
+		}
+
+		var byKey = {};
+		var identities = rows.map(function (row, index)
+		{
+			var rowKey = row.getAttribute('data-grocy-ai-resolved-row') || String(index);
+			byKey[rowKey] = row;
+			return {
+				rowKey: rowKey,
+				productId: row.getAttribute('data-product-id'),
+				fromQuId: row.getAttribute('data-from-qu-id'),
+				toQuId: row.getAttribute('data-to-qu-id')
+			};
+		});
+
+		var controller = createResolvedProvenanceController({
+			requestProvenance: function (identity)
+			{
+				return new Promise(function (resolve, reject)
+				{
+					var xhr = new XMLHttpRequest();
+					xhr.open('GET', '/api/grocy-ai/conversions/resolved-provenance?product_id='
+						+ encodeURIComponent(identity.productId) + '&from_qu_id=' + encodeURIComponent(identity.fromQuId)
+						+ '&to_qu_id=' + encodeURIComponent(identity.toQuId));
+					xhr.setRequestHeader('Accept', 'application/json');
+					xhr.onload = function ()
+					{
+						if (xhr.status < 200 || xhr.status >= 300)
+						{
+							reject(new Error('unavailable'));
+							return;
+						}
+						try
+						{
+							resolve(JSON.parse(xhr.responseText));
+						}
+						catch (error)
+						{
+							reject(new Error('unavailable'));
+						}
+					};
+					xhr.onerror = function () { reject(new Error('unavailable')); };
+					xhr.send(null);
+				});
+			},
+			renderRow: function (rowKey, presentation)
+			{
+				renderResolvedRow(document, byKey[rowKey], presentation);
+				if (typeof hooks.onRowPainted === 'function')
+				{
+					hooks.onRowPainted(byKey[rowKey]);
+				}
+			}
+		});
+
+		controller.loadRows(identities).then(function ()
+		{
+			if (typeof hooks.onComplete === 'function')
+			{
+				hooks.onComplete();
+			}
+		});
+		return controller;
+	}
+
 	return {
 		COPY: COPY,
 		describeProductConversionStatus: describeProductConversionStatus,
 		createProductStatusController: createProductStatusController,
+		createResolvedProvenanceController: createResolvedProvenanceController,
 		renderProductStatus: renderProductStatus,
-		attachProductStatus: attachProductStatus
+		renderResolvedRow: renderResolvedRow,
+		attachProductStatus: attachProductStatus,
+		attachResolvedProvenance: attachResolvedProvenance
 	};
 });

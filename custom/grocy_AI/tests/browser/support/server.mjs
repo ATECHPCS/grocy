@@ -20,12 +20,55 @@ const conversionCounts = {
 	nativeProductPut: 0,
 	nativeUniversalPost: 0,
 	nativeUniversalPut: 0,
+	resolvedProvenance: 0,
 	activation: 0,
 	projection: 0,
 	cache: 0,
 	unknownApi: 0
 };
 const conversionState = { rulesetActivated: false };
+
+function resolvedProvenanceEnvelope(pair)
+{
+	const base = {
+		status: 'unavailable',
+		blockers: ['reusable_count_scope'],
+		factor: null,
+		dimension: null,
+		approximate: null,
+		winner_source: null,
+		source_name: null,
+		source_version: null,
+		source_status: null,
+		source_item_id: null,
+		profile_key: null,
+		taxonomy_leaf: null,
+		precedence: 'product_override>food_profile>universal',
+		inactive_revision_id: null
+	};
+	if (pair === '4>2')
+	{
+		return Object.assign(base, {
+			status: 'product_native', blockers: [], factor: '1.01', dimension: 'product_scoped',
+			approximate: false, winner_source: 'product_override', source_name: 'Grocy native product conversion',
+			source_status: 'native'
+		});
+	}
+	if (pair === '1>2')
+	{
+		return Object.assign(base, {
+			status: 'inactive', blockers: [], dimension: 'volume', approximate: true,
+			winner_source: 'food_profile', source_name: 'USDA FoodData Central', source_version: 'FDC-2024-10',
+			source_status: 'inactive', source_item_id: '174158', profile_key: 'water-like-beverage',
+			taxonomy_leaf: 'beverages', inactive_revision_id: 'conversion-profile-v1'
+		});
+	}
+	if (pair === '3>2')
+	{
+		return Object.assign(base, { status: 'blocked', blockers: ['same_rank_collision'] });
+	}
+	return base;
+}
 
 function conversionStatusEnvelope(productId)
 {
@@ -89,6 +132,10 @@ const allowlistedFiles = new Map([
 		path: resolve(browserRoot, 'fixtures/quantityunitconversionform.html'),
 		contentType: 'text/html; charset=utf-8'
 	}],
+	['/fixtures/quantityunitconversionsresolved.html', {
+		path: resolve(browserRoot, 'fixtures/quantityunitconversionsresolved.html'),
+		contentType: 'text/html; charset=utf-8'
+	}],
 	['/assets/quantityunitconversionform.js', {
 		path: resolve(repositoryRoot, 'public/viewjs/quantityunitconversionform.js'),
 		root: resolve(repositoryRoot, 'public/viewjs'),
@@ -104,6 +151,11 @@ const allowlistedFiles = new Map([
 	}],
 	['/assets/conversion-explanations.js', {
 		path: resolve(repositoryRoot, 'public/custom/grocy_AI/conversion-explanations.js'),
+		contentType: 'text/javascript; charset=utf-8'
+	}],
+	['/assets/quantityunitconversionsresolved.js', {
+		path: resolve(repositoryRoot, 'public/viewjs/quantityunitconversionsresolved.js'),
+		root: resolve(repositoryRoot, 'public/viewjs'),
 		contentType: 'text/javascript; charset=utf-8'
 	}],
 	['/assets/grocy-ai.css', {
@@ -204,6 +256,25 @@ const server = createServer(async function (request, response)
 		conversionState.rulesetActivated = true;
 		response.writeHead(204, { 'Cache-Control': 'no-store' });
 		response.end();
+		return;
+	}
+
+	if (pathname === '/api/grocy-ai/conversions/resolved-provenance')
+	{
+		if (request.method !== 'GET')
+		{
+			conversionCounts.unknownApi++;
+			sendText(response, 405, 'Method not allowed');
+			return;
+		}
+		conversionCounts.resolvedProvenance++;
+		const parameters = new URL(rawUrl, `http://${host}:${port}`).searchParams;
+		const pair = parameters.get('from_qu_id') + '>' + parameters.get('to_qu_id');
+		response.writeHead(200, {
+			'Content-Type': 'application/json; charset=utf-8',
+			'Cache-Control': 'no-store'
+		});
+		response.end(JSON.stringify(resolvedProvenanceEnvelope(pair)));
 		return;
 	}
 

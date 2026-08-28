@@ -483,3 +483,158 @@ test('a failed status read renders bounded recovery copy without a factor or raw
 	assert.equal(rendered.at(-1).headline, 'The conversion status could not be loaded. Try again. Nothing was changed.');
 	assert.doesNotMatch(renderedText(rendered.at(-1)), /SQLSTATE|grocy\.db/);
 });
+
+function resolvedIdentity(overrides = {})
+{
+	return Object.assign({ rowKey: 'row-1', productId: '1', fromQuId: '4', toQuId: '2' }, overrides);
+}
+
+function resolvedHarness(pending)
+{
+	const painted = [];
+	const requested = [];
+	const controller = productStatus.createResolvedProvenanceController({
+		requestProvenance: function (identity)
+		{
+			requested.push(identity.rowKey + ':' + identity.fromQuId + '>' + identity.toQuId);
+			return pending.shift().promise;
+		},
+		renderRow: function (rowKey, presentation) { painted.push({ rowKey, kind: presentation.kind, statusLabel: presentation.statusLabel }); }
+	});
+	return { controller, painted, requested };
+}
+
+test('a resolved row presents the same closed contract as the product status boundary', async function ()
+{
+	const answer = deferred();
+	const fixture = resolvedHarness([answer]);
+
+	const load = fixture.controller.loadRow(resolvedIdentity());
+	answer.resolve(nativeStatus());
+	await load;
+
+	assert.deepEqual(fixture.painted, [{ rowKey: 'row-1', kind: 'product-override', statusLabel: 'Exact' }]);
+	assert.deepEqual(fixture.requested, ['row-1:4>2']);
+});
+
+test('a late response for one resolved row can never paint a different row', async function ()
+{
+	const first = deferred();
+	const second = deferred();
+	const fixture = resolvedHarness([first, second]);
+
+	const firstLoad = fixture.controller.loadRow(resolvedIdentity({ rowKey: 'row-1' }));
+	const secondLoad = fixture.controller.loadRow(resolvedIdentity({ rowKey: 'row-2', fromQuId: '1' }));
+	second.resolve(profileStatus());
+	await secondLoad;
+	first.resolve(nativeStatus());
+	await firstLoad;
+
+	assert.deepEqual(fixture.painted.map(function (entry) { return entry.rowKey; }), ['row-2', 'row-1']);
+	assert.equal(fixture.painted.find(function (entry) { return entry.rowKey === 'row-2'; }).kind, 'approximate-profile');
+	assert.equal(fixture.painted.find(function (entry) { return entry.rowKey === 'row-1'; }).kind, 'product-override');
+});
+
+test('a superseded response for the same resolved row is dropped', async function ()
+{
+	const first = deferred();
+	const second = deferred();
+	const fixture = resolvedHarness([first, second]);
+
+	const firstLoad = fixture.controller.loadRow(resolvedIdentity());
+	const secondLoad = fixture.controller.loadRow(resolvedIdentity());
+	second.resolve(profileStatus());
+	await secondLoad;
+	first.resolve(nativeStatus());
+	await firstLoad;
+
+	assert.deepEqual(fixture.painted, [{ rowKey: 'row-1', kind: 'approximate-profile', statusLabel: 'Approximate' }]);
+});
+
+test('a blocked or unavailable resolved row can never present a factor even when the response carries one', async function ()
+{
+	const blocked = deferred();
+	const unavailable = deferred();
+	const presentations = [];
+	const controller = productStatus.createResolvedProvenanceController({
+		requestProvenance: function () { return (presentations.length === 0 ? blocked : unavailable).promise; },
+		renderRow: function (rowKey, presentation) { presentations.push(presentation); }
+	});
+
+	const blockedLoad = controller.loadRow(resolvedIdentity({ rowKey: 'row-1' }));
+	blocked.resolve(profileStatus({ status: 'blocked', blockers: ['cycle_detected'], factor: '999' }));
+	await blockedLoad;
+	const unavailableLoad = controller.loadRow(resolvedIdentity({ rowKey: 'row-2' }));
+	unavailable.resolve(profileStatus({ status: 'unavailable', blockers: ['reusable_count_scope'], factor: '888' }));
+	await unavailableLoad;
+
+	presentations.forEach(function (presentation)
+	{
+		assert.equal(presentation.factor, null);
+		assert.doesNotMatch(renderedText(presentation), /999|888/);
+	});
+	assert.equal(presentations[0].statusLabel, 'Blocked');
+	assert.equal(presentations[1].statusLabel, 'Unavailable');
+});
+
+test('a failed resolved row read paints bounded recovery copy for that row only', async function ()
+{
+	const failure = deferred();
+	const success = deferred();
+	const fixture = resolvedHarness([failure, success]);
+
+	const failedLoad = fixture.controller.loadRow(resolvedIdentity({ rowKey: 'row-1' }));
+	failure.reject(new Error('SQLSTATE[HY000] /config/data/grocy.db is locked'));
+	await failedLoad;
+	const okLoad = fixture.controller.loadRow(resolvedIdentity({ rowKey: 'row-2' }));
+	success.resolve(nativeStatus());
+	await okLoad;
+
+	assert.deepEqual(fixture.painted, [
+		{ rowKey: 'row-1', kind: 'error', statusLabel: 'Unavailable' },
+		{ rowKey: 'row-2', kind: 'product-override', statusLabel: 'Exact' }
+	]);
+});
+
+test('resolved rows are requested at most once per identity for one load pass', async function ()
+{
+	const answers = [deferred(), deferred()];
+	const fixture = resolvedHarness(answers.slice());
+
+	const loads = fixture.controller.loadRows([
+		resolvedIdentity({ rowKey: 'row-1' }),
+		resolvedIdentity({ rowKey: 'row-2', fromQuId: '1' }),
+		resolvedIdentity({ rowKey: 'row-1' })
+	]);
+	answers[0].resolve(nativeStatus());
+	answers[1].resolve(profileStatus());
+	await loads;
+
+	assert.deepEqual(fixture.requested, ['row-1:4>2', 'row-2:1>2']);
+});
+
+test('an unavailable result names a correction category only when its reason maps to a closed one', function ()
+{
+	const scoped = productStatus.describeProductConversionStatus(profileStatus({
+		status: 'unavailable', blockers: ['reusable_count_scope'], factor: null, approximate: null, winner_source: null,
+		source_name: null, source_version: null, source_status: null, source_item_id: null, profile_key: null,
+		taxonomy_leaf: null, dimension: null, inactive_revision_id: null
+	}));
+	assert.match(detailValues(scoped), /Correction needed=Package and count conversions stay on the product\./);
+
+	const unclassified = productStatus.describeProductConversionStatus(profileStatus({
+		status: 'unavailable', blockers: ['explicit_taxonomy_required'], factor: null, approximate: null, winner_source: null,
+		source_name: null, source_version: null, source_status: null, source_item_id: null, profile_key: null,
+		taxonomy_leaf: null, dimension: null, inactive_revision_id: null
+	}));
+	// The headline already explains this case; a generic correction sentence would mislead.
+	assert.doesNotMatch(detailValues(unclassified), /Correction needed/);
+
+	const blockedUnknown = productStatus.describeProductConversionStatus(profileStatus({
+		status: 'blocked', blockers: ['unmapped_future_code'], factor: null, approximate: null, winner_source: null,
+		source_name: null, source_version: null, source_status: null, source_item_id: null, profile_key: null,
+		taxonomy_leaf: null, dimension: null, inactive_revision_id: null
+	}));
+	// A blocker always states a correction state, even when its code is not yet mapped.
+	assert.match(detailValues(blockedUnknown), /Correction needed=Review this conversion in the native conversion form\./);
+});

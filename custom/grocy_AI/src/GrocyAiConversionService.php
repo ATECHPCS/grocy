@@ -749,6 +749,16 @@ class GrocyAiConversionService
 
 	private function UnitKey(string $name): ?string
 	{
+		return self::UnitKeyForName($name);
+	}
+
+	/**
+	 * Single owner of the Grocy quantity-unit-name to reusable catalog-key mapping.
+	 * Inspection callers outside this service must use this predicate rather than
+	 * restating the table, so the two cannot drift.
+	 */
+	public static function UnitKeyForName(string $name): ?string
+	{
 		$normalized = strtolower(trim($name));
 		$normalized = str_replace(['-', '_'], ' ', $normalized);
 		$normalized = (string)preg_replace('/\s+/', ' ', $normalized);

@@ -787,6 +787,13 @@ check($moduleVersion !== '', 'The portable module version is defined');
 check($hasAssetVersion, 'The product form defines one grocy_AI asset version token');
 check(($assetVersionMatch[1] ?? null) === $moduleVersion, 'The grocy_AI asset token matches the portable module version');
 check(substr_count($productFormTemplate, '{{ $grocyAiAssetVersion }}') === 4, 'All custom product-form assets use the grocy_AI token');
+$resolvedTemplate = file_get_contents($repoRoot . '/views/quantityunitconversionsresolved.blade.php');
+$resolvedAssetMatch = [];
+$hasResolvedAssetVersion = preg_match('/\$grocyAiAssetVersion = \'([^\']+)\'/', $resolvedTemplate, $resolvedAssetMatch) === 1;
+check($hasResolvedAssetVersion, 'The resolved-conversions view defines one grocy_AI asset version token');
+check(($resolvedAssetMatch[1] ?? null) === $moduleVersion, 'The resolved-conversions asset token matches the portable module version');
+check(substr_count($resolvedTemplate, '{{ $grocyAiAssetVersion }}') === 2, 'All custom resolved-conversions assets use the grocy_AI token');
+check(!str_contains($resolvedTemplate, 'conversion-explanations.js?v=\', true) }}{{ $version }}'), 'Resolved-conversions custom JavaScript is independent from the Grocy core version');
 check(!str_contains($productFormTemplate, 'grocy-ai.css?v=\', true) }}{{ $version }}'), 'Custom CSS is independent from the Grocy core version');
 check(!str_contains($productFormTemplate, 'product-enrichment.js?v=\', true) }}{{ $version }}'), 'Custom JavaScript is independent from the Grocy core version');
 

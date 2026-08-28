@@ -282,6 +282,97 @@ class GrocyAiApiController extends BaseApiController
 		}
 	}
 
+	public function ResolvedConversionProvenance(Request $request, Response $response, array $args): Response
+	{
+		User::CheckPermission($request, User::PERMISSION_MASTER_DATA_EDIT);
+		$query = $request->getQueryParams();
+		$productId = $query['product_id'] ?? null;
+		$fromQuId = $query['from_qu_id'] ?? null;
+		$toQuId = $query['to_qu_id'] ?? null;
+		if (!is_string($productId) || preg_match('/^[1-9][0-9]{0,9}$/D', $productId) !== 1
+			|| !is_string($fromQuId) || preg_match('/^[1-9][0-9]{0,9}$/D', $fromQuId) !== 1
+			|| !is_string($toQuId) || preg_match('/^[1-9][0-9]{0,9}$/D', $toQuId) !== 1)
+		{
+			return $this->GenericErrorResponse($response, 'Invalid resolved conversion request', 400);
+		}
+
+		try
+		{
+			$database = DatabaseService::GetInstance()->GetDbConnectionRaw();
+			$product = $database->prepare('SELECT 1 FROM products WHERE id = ?');
+			$product->execute([(int)$productId]);
+			if ($product->fetchColumn() === false)
+			{
+				return $this->GenericErrorResponse($response, 'Product unavailable', 404);
+			}
+
+			$units = $database->prepare('SELECT id, name FROM quantity_units WHERE id IN (?, ?)');
+			$units->execute([(int)$fromQuId, (int)$toQuId]);
+			$names = [];
+			foreach ($units->fetchAll(\PDO::FETCH_ASSOC) as $unit)
+			{
+				$names[(int)$unit['id']] = (string)$unit['name'];
+			}
+			if (!isset($names[(int)$fromQuId], $names[(int)$toQuId]))
+			{
+				return $this->GenericErrorResponse($response, 'Quantity unit unavailable', 404);
+			}
+
+			$fromUnitKey = GrocyAiConversionService::UnitKeyForName($names[(int)$fromQuId]);
+			$toUnitKey = GrocyAiConversionService::UnitKeyForName($names[(int)$toQuId]);
+			if ($fromUnitKey === null || $toUnitKey === null)
+			{
+				// Package and count relationships stay product- or barcode-bound. They are reported
+				// as an eligibility outcome rather than resolved, so no factor can be borrowed.
+				return $this->ApiResponse($response, self::CountScopeInspectionDto());
+			}
+
+			$status = (new GrocyAiConversionService($database, false))->InspectConversionResolution(
+				(int)$productId,
+				$fromUnitKey,
+				$toUnitKey
+			);
+			$keys = [
+				'status', 'blockers', 'factor', 'dimension', 'approximate', 'winner_source', 'source_name', 'source_version',
+				'source_status', 'source_item_id', 'profile_key', 'taxonomy_leaf', 'precedence', 'inactive_revision_id'
+			];
+			if (array_keys($status) !== $keys || !in_array($status['status'], ['product_native', 'inactive', 'unavailable', 'blocked'], true))
+			{
+				throw new \RuntimeException('resolved_provenance_contract_invalid');
+			}
+			if ($status['status'] !== 'product_native')
+			{
+				$status['factor'] = null;
+			}
+
+			return $this->ApiResponse($response, $status);
+		}
+		catch (\Throwable)
+		{
+			return $this->GenericErrorResponse($response, 'Resolved conversion provenance unavailable', 503);
+		}
+	}
+
+	private static function CountScopeInspectionDto(): array
+	{
+		return [
+			'status' => 'unavailable',
+			'blockers' => ['reusable_count_scope'],
+			'factor' => null,
+			'dimension' => null,
+			'approximate' => null,
+			'winner_source' => null,
+			'source_name' => null,
+			'source_version' => null,
+			'source_status' => null,
+			'source_item_id' => null,
+			'profile_key' => null,
+			'taxonomy_leaf' => null,
+			'precedence' => 'product_override>food_profile>universal',
+			'inactive_revision_id' => null
+		];
+	}
+
 	public function FetchImage(Request $request, Response $response, array $args): Response
 	{
 		User::CheckPermission($request, User::PERMISSION_MASTER_DATA_EDIT);

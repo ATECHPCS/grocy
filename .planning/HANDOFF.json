@@ -4,7 +4,7 @@
   "phase": "04",
   "phase_name": "reusable-conversion-model",
   "phase_dir": ".planning/phases/04-reusable-conversion-model",
-  "plan": "04-06",
+  "plan": "04-07",
   "task": 1,
   "total_tasks": 20,
   "status": "paused",
@@ -44,14 +44,15 @@
       "name": "04-09 product conversion provenance UI and zero-write browser proof",
       "status": "done",
       "commit": "6c7c5a59"
+    },
+    {
+      "id": 7,
+      "name": "04-06 resolved-conversion provenance read and native-table source/status",
+      "status": "done",
+      "commit": "pending"
     }
   ],
   "remaining_tasks": [
-    {
-      "id": 7,
-      "name": "04-06 resolved-conversion provenance",
-      "status": "not_started"
-    },
     {
       "id": 8,
       "name": "04-07 read-only coverage diagnostics",
@@ -84,6 +85,11 @@
   ],
   "decisions": [
     {
+      "decision": "The resolved-provenance endpoint accepts only three validated integers and returns exactly one existing resolver result; a package or count pair is an eligibility outcome (reusable_count_scope), never a resolved factor.",
+      "rationale": "Keeps the browser from selecting units, factors, or destinations and prevents a count pair from borrowing a reusable rule.",
+      "phase": "04"
+    },
+    {
       "decision": "04-09 executes before 04-06. 04-06-PLAN.md declares depends_on [04-09] and reads 04-09-SUMMARY.md; the roadmap places 04-09 in Wave 6 and 04-06 in Wave 7. The previous handoff ordering was stale.",
       "rationale": "The plan dependency graph and roadmap agree against the stale handoff.",
       "phase": "04"
@@ -100,6 +106,6 @@
     }
   ],
   "uncommitted_files": [],
-  "next_action": "Read 04-06-PLAN.md and confirm its bounded resolved-provenance design with the user, then implement tests first. 04-09 is complete and its summary records the interfaces 04-06 may reuse.",
-  "context_notes": "Phase 4 Plans 01-05 and 09 are implemented. Remaining: 04-06, 04-07, 04-08 (autonomous:false), 04-10. Toolchain on this machine: PHP 8.5.10 with composer packages installed, Playwright 1.62.1 with Chromium+WebKit. Do not deploy or touch household data."
+  "next_action": "Read 04-07-PLAN.md and implement the strictly read-only conversion coverage diagnostics, tests first. 04-06 is complete; its summary records the inspection reads 04-07 must reuse.",
+  "context_notes": "Phase 4 Plans 01-06 and 09 are implemented. Remaining: 04-07, 04-08 (autonomous:false), 04-10. Toolchain: PHP 8.5.10 with composer packages installed, Playwright 1.62.1 with Chromium+WebKit. Do not deploy or touch household data."
 }

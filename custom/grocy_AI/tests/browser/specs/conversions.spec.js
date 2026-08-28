@@ -393,3 +393,155 @@ test('@conv04 a failed product status read preserves the native conversion table
 	await page.locator('#fixture-save-product-conversion').click();
 	await expect(page.locator('#fixture-conversion-outcome')).toHaveText('Conversion saved');
 });
+
+async function openResolved(page)
+{
+	await page.goto('/fixtures/quantityunitconversionsresolved.html');
+	await expect(page.locator('tr[data-grocy-ai-resolved-row="resolved-0"] [data-grocy-ai-resolved-status]')).not.toBeEmpty();
+	await expect(page.locator('tr[data-grocy-ai-resolved-row="resolved-3"] [data-grocy-ai-resolved-status]')).not.toBeEmpty();
+}
+
+function resolvedRow(page, index)
+{
+	return page.locator('tr[data-grocy-ai-resolved-row="resolved-' + index + '"]');
+}
+
+test('@conv04 the resolved table shows a deterministic source and status per row without any factor for blocked or unavailable results', async ({ page }) =>
+{
+	const pageErrors = [];
+	page.on('pageerror', function (error) { pageErrors.push(error.message); });
+	await resetConversionCounts(page);
+	await openResolved(page);
+
+	await expect(resolvedRow(page, 0).locator('[data-grocy-ai-resolved-source]')).toHaveText('Product override');
+	await expect(resolvedRow(page, 0).locator('[data-grocy-ai-resolved-status]')).toContainText('Exact');
+
+	await expect(resolvedRow(page, 1).locator('[data-grocy-ai-resolved-source]')).toContainText('Approximate profile: water-like-beverage · USDA FoodData Central FDC-2024-10');
+	await expect(resolvedRow(page, 1).locator('[data-grocy-ai-resolved-status]')).toContainText('Approximate');
+
+	await expect(resolvedRow(page, 2).locator('[data-grocy-ai-resolved-status]')).toContainText('Blocked');
+	await expect(resolvedRow(page, 3).locator('[data-grocy-ai-resolved-status]')).toContainText('Unavailable');
+
+	for (const index of [2, 3])
+	{
+		await resolvedRow(page, index).locator('[data-grocy-ai-resolved-disclosure] > summary').click();
+		await expect(resolvedRow(page, index).locator('[data-grocy-ai-resolved-details]')).not.toContainText('Full precision factor');
+	}
+	await expect(resolvedRow(page, 2).locator('[data-grocy-ai-resolved-details]')).not.toContainText('same_rank_collision');
+	await expect(resolvedRow(page, 3).locator('[data-grocy-ai-resolved-details]')).toContainText('Package and count conversions stay on the product.');
+
+	const counts = await conversionCounts(page);
+	expect(counts.resolvedProvenance).toBe(4);
+	expectNoReusableMutation(counts);
+	expect(counts.nativeProductPost).toBe(0);
+	expect(counts.nativeProductPut).toBe(0);
+	expect(pageErrors).toEqual([]);
+});
+
+test('@conv04 resolved details stay collapsed until an explicit 44px keyboard-operable disclosure', async ({ page }) =>
+{
+	await resetConversionCounts(page);
+	await openResolved(page);
+
+	const details = resolvedRow(page, 0).locator('[data-grocy-ai-resolved-details]');
+	await expect(details).not.toBeVisible();
+
+	const control = resolvedRow(page, 0).locator('[data-grocy-ai-resolved-disclosure] > summary');
+	const box = await control.boundingBox();
+	expect(box.height).toBeGreaterThanOrEqual(44);
+	await expect(control).toHaveText('Show conversion details');
+	// The accessible name identifies which pair the details belong to.
+	await expect(control).toHaveAttribute('aria-label', 'Show conversion details ml → g');
+
+	await control.focus();
+	await control.press('Enter');
+	await expect(details).toContainText('Full precision factor');
+	await expect(details).toContainText('1.01');
+	await expect(details).toContainText('Precedence');
+});
+
+test('@conv04 enrichment preserves the native quantity-unit filter, transpose, and row rendering', async ({ page }) =>
+{
+	await resetConversionCounts(page);
+	await openResolved(page);
+
+	const state = await page.evaluate(function () { return window.__fixtureTable; });
+	// Enrichment invalidates each painted row from the DOM and redraws exactly once.
+	expect(state.invalidatedRows.sort()).toEqual(['resolved-0:dom', 'resolved-1:dom', 'resolved-2:dom', 'resolved-3:dom']);
+	expect(state.transposed.length).toBe(0);
+
+	await page.locator('#quantity-unit-filter').selectOption('1');
+	await expect(resolvedRow(page, 1)).toBeVisible();
+	await expect(resolvedRow(page, 0)).toBeHidden();
+	await expect(resolvedRow(page, 3)).toBeHidden();
+	const filtered = await page.evaluate(function () { return window.__fixtureTable; });
+	expect(filtered.transposed).toEqual([1, 2]);
+	expect(filtered.columnSearch).toBe('cup');
+	// The native row content is untouched by enrichment.
+	await expect(resolvedRow(page, 1).locator('td').nth(3)).toHaveText('237');
+	await expect(resolvedRow(page, 1).locator('td').nth(4)).toContainText('This means 1 cup is the same as 237 g');
+
+	await page.locator('#clear-filter-button').click();
+	await expect(resolvedRow(page, 0)).toBeVisible();
+	await expect(resolvedRow(page, 3)).toBeVisible();
+	const cleared = await page.evaluate(function () { return window.__fixtureTable; });
+	expect(cleared.columnSearch).toBe('');
+	expect(await page.locator('#quantity-unit-filter').inputValue()).toBe('all');
+});
+
+test('@conv04 a failed resolved provenance read preserves the native table and its filter', async ({ page }) =>
+{
+	await resetConversionCounts(page);
+	await page.route('**/api/grocy-ai/conversions/resolved-provenance*', function (route)
+	{
+		return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error_message: 'SQLSTATE[HY000] /config/data/grocy.db is locked' }) });
+	});
+
+	await page.goto('/fixtures/quantityunitconversionsresolved.html');
+	await expect(resolvedRow(page, 0).locator('[data-grocy-ai-resolved-source]')).toHaveText('The conversion status could not be loaded. Try again. Nothing was changed.');
+	await expect(resolvedRow(page, 0).locator('[data-grocy-ai-resolved-status]')).toContainText('Unavailable');
+	await expect(page.locator('#qu-conversions-resolved-table')).not.toContainText('SQLSTATE');
+	await expect(page.locator('#qu-conversions-resolved-table')).not.toContainText('grocy.db');
+	await expect(resolvedRow(page, 0).locator('[data-grocy-ai-resolved-details]')).not.toBeVisible();
+
+	await expect(resolvedRow(page, 0).locator('td').nth(3)).toHaveText('1.01');
+	await page.locator('#quantity-unit-filter').selectOption('4');
+	await expect(resolvedRow(page, 0)).toBeVisible();
+	await expect(resolvedRow(page, 1)).toBeHidden();
+});
+
+test('@conv04 the resolved source and status stay reachable at 320px without horizontal overflow', async ({ page }) =>
+{
+	await resetConversionCounts(page);
+	await page.setViewportSize({ width: 320, height: 720 });
+	await openResolved(page);
+
+	await expect(resolvedRow(page, 0).locator('[data-grocy-ai-resolved-source]')).toBeVisible();
+	await expect(resolvedRow(page, 0).locator('[data-grocy-ai-resolved-status]')).toBeVisible();
+	await expect(resolvedRow(page, 0).locator('[data-grocy-ai-resolved-disclosure] > summary')).toBeVisible();
+	// The secondary prose column moves out of the way instead of forcing horizontal scrolling.
+	await expect(resolvedRow(page, 0).locator('.grocy-ai-resolved-prose-column')).toBeHidden();
+
+	// Neither the rounded factor nor its prose is lost: both move into the expanded region.
+	await expect(resolvedRow(page, 0).locator('.grocy-ai-resolved-factor-column')).toBeHidden();
+	await resolvedRow(page, 0).locator('[data-grocy-ai-resolved-disclosure] > summary').click();
+	const details = resolvedRow(page, 0).locator('[data-grocy-ai-resolved-details]');
+	await expect(details).toContainText('Rounded factor');
+	await expect(details).toContainText('1.01');
+	await expect(details).toContainText('This means 1 ml is the same as 1.01 g');
+
+	// The table scrolls inside its own native Bootstrap container; the page itself does not.
+	const overflow = await page.evaluate(function ()
+	{
+		return {
+			document: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+			body: document.body.scrollWidth - document.body.clientWidth
+		};
+	});
+	expect(overflow.document).toBeLessThanOrEqual(0);
+	expect(overflow.body).toBeLessThanOrEqual(0);
+
+	// Inspection only: the resolved rows own no control other than their disclosures.
+	expect(await page.locator('#qu-conversions-resolved-table tbody button, #qu-conversions-resolved-table tbody input, #qu-conversions-resolved-table tbody select, #qu-conversions-resolved-table tbody a').count()).toBe(0);
+	expectNoReusableMutation(await conversionCounts(page));
+});
