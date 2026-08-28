@@ -236,3 +236,160 @@ test('@conv04 native rejection preserves entered values and exposes no invented 
 	await expect(page.locator('#qu-conversion-validation-status')).not.toContainText('NIST');
 	await expect(page.locator('body')).not.toContainText('cache active');
 });
+
+async function resetConversionCounts(page)
+{
+	const response = await page.request.post('/__fixture/reset-conversion-counts');
+	expect(response.status()).toBe(204);
+}
+
+async function conversionCounts(page)
+{
+	const response = await page.request.get('/__fixture/conversion-counts');
+	expect(response.status()).toBe(200);
+	return response.json();
+}
+
+function expectNoReusableMutation(counts)
+{
+	expect(counts.nativeUniversalPost).toBe(0);
+	expect(counts.nativeUniversalPut).toBe(0);
+	expect(counts.activation).toBe(0);
+	expect(counts.projection).toBe(0);
+	expect(counts.cache).toBe(0);
+	expect(counts.unknownApi).toBe(0);
+}
+
+async function openProduct(page, productId)
+{
+	await page.goto('/fixtures/productform.html?product=' + productId);
+	await expect(page.locator('[data-grocy-ai-conversion-summary]')).not.toBeEmpty();
+}
+
+test('@conv04 product conversion status reads make zero reusable mutation, activation, projection, or cache calls', async ({ page }) =>
+{
+	const pageErrors = [];
+	page.on('pageerror', function (error) { pageErrors.push(error.message); });
+	await resetConversionCounts(page);
+
+	await openProduct(page, '91');
+	await expect(page.locator('[data-grocy-ai-conversion-summary]')).toContainText('Product override');
+	await expect(page.locator('[data-grocy-ai-conversion-badge]')).toHaveText('Exact');
+
+	// The same read must stay inert after the ruleset is activated out of band.
+	expect((await page.request.post('/__fixture/activate-ruleset')).status()).toBe(204);
+	await openProduct(page, '92');
+	await expect(page.locator('[data-grocy-ai-conversion-badge]')).toHaveText('Approximate');
+
+	const counts = await conversionCounts(page);
+	expect(counts.status).toBe(2);
+	expect(counts.rulesetActivated).toBe(true);
+	expect(counts.nativeProductPost).toBe(0);
+	expect(counts.nativeProductPut).toBe(0);
+	expectNoReusableMutation(counts);
+	expect(pageErrors).toEqual([]);
+});
+
+test('@conv04 an inactive profile shows source and version but no usable factor and never claims to be active', async ({ page }) =>
+{
+	await resetConversionCounts(page);
+	await openProduct(page, '92');
+
+	const summary = page.locator('[data-grocy-ai-conversion-summary]');
+	await expect(summary).toContainText('Approximate profile: whole-milk · USDA FoodData Central FDC-2024-10');
+	await expect(summary).toContainText('Reusable conversion profiles are inactive until both branch checks pass.');
+	await expect(page.locator('[data-grocy-ai-conversion-badge]')).toHaveText('Approximate');
+
+	await page.locator('[data-grocy-ai-conversion-disclosure] > summary').click();
+	const details = page.locator('[data-grocy-ai-conversion-details]');
+	await expect(details).toContainText('Source version');
+	await expect(details).not.toContainText('Full precision factor');
+	await expect(page.locator('#grocy-ai-product-conversion-status')).not.toContainText('244');
+
+	expectNoReusableMutation(await conversionCounts(page));
+});
+
+test('@conv04 a native product conversion discloses its full precision factor only after an explicit disclosure', async ({ page }) =>
+{
+	await resetConversionCounts(page);
+	await openProduct(page, '91');
+
+	const disclosure = page.locator('[data-grocy-ai-conversion-disclosure]');
+	await expect(disclosure).toBeVisible();
+	await expect(page.locator('[data-grocy-ai-conversion-details]')).not.toBeVisible();
+
+	const control = disclosure.locator('summary');
+	const box = await control.boundingBox();
+	expect(box.height).toBeGreaterThanOrEqual(44);
+	await control.focus();
+	await control.press('Enter');
+
+	await expect(page.locator('[data-grocy-ai-conversion-details]')).toContainText('Full precision factor');
+	await expect(page.locator('[data-grocy-ai-conversion-details]')).toContainText('236.588');
+});
+
+test('@conv04 blocked and unavailable product status stay non-actionable and free of any factor at 320px', async ({ page }) =>
+{
+	await resetConversionCounts(page);
+	await page.setViewportSize({ width: 320, height: 720 });
+
+	await openProduct(page, '94');
+	const status = page.locator('#grocy-ai-product-conversion-status');
+	await expect(page.locator('[data-grocy-ai-conversion-badge]')).toHaveText('Blocked');
+	await expect(page.locator('[data-grocy-ai-conversion-summary]')).toHaveAttribute('role', 'alert');
+	await page.locator('[data-grocy-ai-conversion-disclosure] > summary').click();
+	await expect(page.locator('[data-grocy-ai-conversion-details]')).toContainText('Correction needed');
+	await expect(page.locator('[data-grocy-ai-conversion-details]')).toContainText('More than one conversion competes for this pair.');
+	await expect(status).not.toContainText('same_rank_collision');
+	// Read-only: the status region owns no control other than its disclosure.
+	expect(await status.locator('button, input, select, a').count()).toBe(0);
+	expect(await status.evaluate(function (node) { return node.scrollWidth - node.clientWidth; })).toBeLessThanOrEqual(0);
+
+	await openProduct(page, '93');
+	await expect(page.locator('[data-grocy-ai-conversion-summary]')).toContainText('No estimate is available until this product has an explicit food classification.');
+	await expect(page.locator('[data-grocy-ai-conversion-badge]')).toHaveText('Unavailable');
+	expect(await status.locator('button, input, select, a').count()).toBe(0);
+
+	expectNoReusableMutation(await conversionCounts(page));
+});
+
+test('@conv04 normal product-scoped package and measured-density saves still reach only the native Grocy routes', async ({ page }) =>
+{
+	await resetConversionCounts(page);
+	await openProduct(page, '91');
+
+	await page.locator('#fixture-save-product-conversion').click();
+	await expect(page.locator('#fixture-conversion-outcome')).toHaveText('Conversion saved');
+	await page.locator('#fixture-save-product-density').click();
+	await expect(page.locator('#fixture-conversion-outcome')).toHaveText('Conversion saved');
+
+	const counts = await conversionCounts(page);
+	expect(counts.nativeProductPost).toBe(1);
+	expect(counts.nativeProductPut).toBe(1);
+	expectNoReusableMutation(counts);
+
+	// The status read did not rewrite the existing product conversion row.
+	await expect(page.locator('#qu-conversion-row-4020')).toContainText('Package');
+	await expect(page.locator('#qu-conversion-row-4020')).toContainText('6');
+});
+
+test('@conv04 a failed product status read preserves the native conversion table and shows bounded recovery copy', async ({ page }) =>
+{
+	await resetConversionCounts(page);
+	await page.route('**/api/grocy-ai/products/*/conversion-status*', function (route)
+	{
+		return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error_message: 'SQLSTATE[HY000] /config/data/grocy.db is locked' }) });
+	});
+
+	await page.goto('/fixtures/productform.html?product=91');
+	const status = page.locator('#grocy-ai-product-conversion-status');
+	await expect(status).toContainText('The conversion status could not be loaded. Try again. Nothing was changed.');
+	await expect(status).not.toContainText('SQLSTATE');
+	await expect(status).not.toContainText('grocy.db');
+	await expect(page.locator('[data-grocy-ai-conversion-details]')).not.toBeVisible();
+
+	await expect(page.locator('#qu-conversions-table-products')).toBeVisible();
+	await expect(page.locator('#qu-conversion-row-4020')).toContainText('Package');
+	await page.locator('#fixture-save-product-conversion').click();
+	await expect(page.locator('#fixture-conversion-outcome')).toHaveText('Conversion saved');
+});

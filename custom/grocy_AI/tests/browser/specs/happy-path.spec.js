@@ -14,6 +14,7 @@ test('@smoke harness serves only the fixture and real phase-owned assets', async
 	const fixtureResponse = await request.get('/fixtures/productform.html');
 	const scriptResponse = await request.get('/assets/product-enrichment.js');
 	const taxonomyScriptResponse = await request.get('/assets/product-taxonomy.js');
+	const conversionScriptResponse = await request.get('/assets/conversion-explanations.js');
 	const styleResponse = await request.get('/assets/grocy-ai.css');
 	const arbitraryResponse = await request.get('/package.json');
 	const traversalResponse = await request.get('/assets/%2e%2e/package.json');
@@ -23,6 +24,8 @@ test('@smoke harness serves only the fixture and real phase-owned assets', async
 	expect(await scriptResponse.text()).toContain("'use strict'");
 	expect(taxonomyScriptResponse.status()).toBe(200);
 	expect(await taxonomyScriptResponse.text()).toContain("'use strict'");
+	expect(conversionScriptResponse.status()).toBe(200);
+	expect(await conversionScriptResponse.text()).toContain("'use strict'");
 	expect(styleResponse.status()).toBe(200);
 	expect(await styleResponse.text()).toContain('.grocy-ai-card');
 	expect(arbitraryResponse.status()).toBe(404);
@@ -35,7 +38,7 @@ test('@smoke harness serves only the fixture and real phase-owned assets', async
 	});
 	await page.goto('/fixtures/productform.html');
 	expect(await page.locator('#grocy-ai-product-enrichment').isVisible()).toBe(true);
-	expect(loadedAssets).toHaveLength(3);
+	expect(loadedAssets).toHaveLength(4);
 	expect(loadedAssets.every(function (entry) { return entry[1] === 200; })).toBe(true);
 	const versions = await page.locator('html').evaluate(function (element)
 	{
@@ -48,7 +51,7 @@ test('@smoke harness serves only the fixture and real phase-owned assets', async
 	expect(loadedAssets.map(function (entry)
 	{
 		return new URL(entry[0]).searchParams.get('v');
-	})).toEqual([versions.module, versions.module, versions.module]);
+	})).toEqual([versions.module, versions.module, versions.module, versions.module]);
 	expect(await page.evaluate(function () { return window.__fixtureAdapterVersion; })).toBe('jquery-compatible-fixture-1.0.0');
 });
 

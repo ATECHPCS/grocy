@@ -14,6 +14,65 @@ const pngBytes = Buffer.concat([
 	Buffer.from('89504e470d0a1a0a', 'hex'),
 	Buffer.alloc(2492, 0x78)
 ]);
+const conversionCounts = {
+	status: 0,
+	nativeProductPost: 0,
+	nativeProductPut: 0,
+	nativeUniversalPost: 0,
+	nativeUniversalPut: 0,
+	activation: 0,
+	projection: 0,
+	cache: 0,
+	unknownApi: 0
+};
+const conversionState = { rulesetActivated: false };
+
+function conversionStatusEnvelope(productId)
+{
+	const base = {
+		status: 'unavailable',
+		blockers: ['profile_unavailable'],
+		factor: null,
+		dimension: null,
+		approximate: null,
+		winner_source: null,
+		source_name: null,
+		source_version: null,
+		source_status: null,
+		source_item_id: null,
+		profile_key: null,
+		taxonomy_leaf: null,
+		precedence: 'product_override>food_profile>universal',
+		inactive_revision_id: null
+	};
+	if (productId === '91')
+	{
+		return Object.assign(base, {
+			status: 'product_native', blockers: [], factor: '236.588', dimension: 'product_scoped',
+			approximate: false, winner_source: 'product_override', source_name: 'Grocy native product conversion',
+			source_status: 'native'
+		});
+	}
+	if (productId === '92')
+	{
+		return Object.assign(base, {
+			status: 'inactive', blockers: [], factor: null, dimension: 'volume', approximate: true,
+			winner_source: 'food_profile', source_name: 'USDA FoodData Central', source_version: 'FDC-2024-10',
+			source_status: 'inactive', source_item_id: '171265', profile_key: 'whole-milk', taxonomy_leaf: 'dairy-eggs',
+			inactive_revision_id: 'conversion-profile-v1'
+		});
+	}
+	if (productId === '93')
+	{
+		return Object.assign(base, { blockers: ['explicit_taxonomy_required'] });
+	}
+	if (productId === '94')
+	{
+		return Object.assign(base, { status: 'blocked', blockers: ['same_rank_collision'] });
+	}
+	return base;
+}
+
 const mediaCapabilities = new Map([
 	['thumbnail/thumbnail_front_capability_0001', 'thumbnail'],
 	['full/full_front_capability_0000000001', 'full'],
@@ -41,6 +100,10 @@ const allowlistedFiles = new Map([
 	}],
 	['/assets/product-taxonomy.js', {
 		path: resolve(repositoryRoot, 'public/custom/grocy_AI/product-taxonomy.js'),
+		contentType: 'text/javascript; charset=utf-8'
+	}],
+	['/assets/conversion-explanations.js', {
+		path: resolve(repositoryRoot, 'public/custom/grocy_AI/conversion-explanations.js'),
 		contentType: 'text/javascript; charset=utf-8'
 	}],
 	['/assets/grocy-ai.css', {
@@ -117,6 +180,102 @@ const server = createServer(async function (request, response)
 		response.end();
 		return;
 	}
+	if (pathname === '/__fixture/conversion-counts')
+	{
+		response.writeHead(200, {
+			'Content-Type': 'application/json; charset=utf-8',
+			'Cache-Control': 'no-store'
+		});
+		response.end(JSON.stringify(Object.assign({ rulesetActivated: conversionState.rulesetActivated }, conversionCounts)));
+		return;
+	}
+	if (pathname === '/__fixture/reset-conversion-counts' && request.method === 'POST')
+	{
+		Object.keys(conversionCounts).forEach(function (key) { conversionCounts[key] = 0; });
+		conversionState.rulesetActivated = false;
+		response.writeHead(204, { 'Cache-Control': 'no-store' });
+		response.end();
+		return;
+	}
+	// Test-only activation of the reusable ruleset. It is deliberately outside /api so that a
+	// product-page request can never reach it; the product UI must still make zero activation calls.
+	if (pathname === '/__fixture/activate-ruleset' && request.method === 'POST')
+	{
+		conversionState.rulesetActivated = true;
+		response.writeHead(204, { 'Cache-Control': 'no-store' });
+		response.end();
+		return;
+	}
+
+	const productStatusMatch = /^\/api\/grocy-ai\/products\/([1-9][0-9]{0,9})\/conversion-status$/.exec(pathname);
+	if (productStatusMatch)
+	{
+		if (request.method !== 'GET')
+		{
+			conversionCounts.unknownApi++;
+			sendText(response, 405, 'Method not allowed');
+			return;
+		}
+		conversionCounts.status++;
+		response.writeHead(200, {
+			'Content-Type': 'application/json; charset=utf-8',
+			'Cache-Control': 'no-store'
+		});
+		response.end(JSON.stringify(conversionStatusEnvelope(productStatusMatch[1])));
+		return;
+	}
+
+	if (pathname === '/api/objects/quantity_unit_conversions' || pathname.startsWith('/api/objects/quantity_unit_conversions/'))
+	{
+		const scoped = (request.headers['x-fixture-conversion-scope'] || '') === 'product';
+		if (request.method === 'POST')
+		{
+			conversionCounts[scoped ? 'nativeProductPost' : 'nativeUniversalPost']++;
+		}
+		else if (request.method === 'PUT')
+		{
+			conversionCounts[scoped ? 'nativeProductPut' : 'nativeUniversalPut']++;
+		}
+		else
+		{
+			conversionCounts.unknownApi++;
+			sendText(response, 405, 'Method not allowed');
+			return;
+		}
+		// Only a product-scoped native save is modelled as succeeding. A generic reusable-universal
+		// write is rejected here so no browser fixture can imply that the bypass works.
+		if (!scoped)
+		{
+			sendText(response, 400, 'Reusable universal conversions are rejected before native work');
+			return;
+		}
+		response.writeHead(200, {
+			'Content-Type': 'application/json; charset=utf-8',
+			'Cache-Control': 'no-store'
+		});
+		response.end(JSON.stringify({ created_object_id: 4021 }));
+		return;
+	}
+
+	if (pathname.startsWith('/api/grocy-ai/conversions/activate'))
+	{
+		conversionCounts.activation++;
+		sendText(response, 403, 'Forbidden');
+		return;
+	}
+	if (pathname.startsWith('/api/grocy-ai/conversions/project'))
+	{
+		conversionCounts.projection++;
+		sendText(response, 403, 'Forbidden');
+		return;
+	}
+	if (pathname.startsWith('/api/system/db-changed-time') || pathname.includes('quantity_unit_conversions_resolved'))
+	{
+		conversionCounts.cache++;
+		sendText(response, 403, 'Forbidden');
+		return;
+	}
+
 	if (pathname.startsWith('/api/grocy-ai/images/'))
 	{
 		const capabilityPath = pathname.slice('/api/grocy-ai/images/'.length);
@@ -141,6 +300,12 @@ const server = createServer(async function (request, response)
 	const allowed = allowlistedFiles.get(pathname);
 	if (!allowed)
 	{
+		// Default-deny counter for unclassified conversion, activation, projection, and cache surfaces.
+		// Unrelated fixture reads (for example the Phase 3 taxonomy panel) are not conversion traffic.
+		if (/^\/api\/.*(quantity_unit_conversion|\/conversions\/|activate|project|cache)/.test(pathname))
+		{
+			conversionCounts.unknownApi++;
+		}
 		sendText(response, 404, 'Not found');
 		return;
 	}

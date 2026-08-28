@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "timestamp": "2026-08-28T12:43:26.459Z",
+  "timestamp": "2026-08-28T00:00:00.000Z",
   "phase": "04",
   "phase_name": "reusable-conversion-model",
   "phase_dir": ".planning/phases/04-reusable-conversion-model",
@@ -9,23 +9,97 @@
   "total_tasks": 20,
   "status": "paused",
   "completed_tasks": [
-    {"id": 1, "name": "04-01 disposable dual-branch cache/consumer characterization", "status": "done", "commit": "55732d65"},
-    {"id": 2, "name": "04-02 inactive catalog and native save enforcement", "status": "done", "commit": "6ee4ba7b"},
-    {"id": 3, "name": "04-03 inactive sourced profiles and deterministic resolver", "status": "done", "commit": "7570a5c6"},
-    {"id": 4, "name": "04-04 native conversion-form validation/status", "status": "done", "commit": "bd9c249d"},
-    {"id": 5, "name": "04-05 product status API", "status": "done", "commit": "951fc9f8"}
+    {
+      "id": 1,
+      "name": "04-01 disposable dual-branch cache/consumer characterization",
+      "status": "done",
+      "commit": "55732d65"
+    },
+    {
+      "id": 2,
+      "name": "04-02 inactive catalog and native save enforcement",
+      "status": "done",
+      "commit": "6ee4ba7b"
+    },
+    {
+      "id": 3,
+      "name": "04-03 inactive sourced profiles and deterministic resolver",
+      "status": "done",
+      "commit": "7570a5c6"
+    },
+    {
+      "id": 4,
+      "name": "04-04 native conversion-form validation/status",
+      "status": "done",
+      "commit": "bd9c249d"
+    },
+    {
+      "id": 5,
+      "name": "04-05 product status API",
+      "status": "done",
+      "commit": "951fc9f8"
+    },
+    {
+      "id": 6,
+      "name": "04-09 product conversion provenance UI and zero-write browser proof",
+      "status": "done",
+      "commit": "pending"
+    }
   ],
   "remaining_tasks": [
-    {"id": 6, "name": "04-06 resolved-conversion provenance", "status": "not_started"},
-    {"id": 7, "name": "04-07 read-only coverage diagnostics", "status": "not_started"},
-    {"id": 8, "name": "04-08 evidence-gated activation and release parity", "status": "not_started"},
-    {"id": 9, "name": "04-09 product provenance UI/browser proof", "status": "not_started"},
-    {"id": 10, "name": "04-10 maintainer-only evidence-gated promotion command", "status": "not_started"}
+    {
+      "id": 7,
+      "name": "04-06 resolved-conversion provenance",
+      "status": "not_started"
+    },
+    {
+      "id": 8,
+      "name": "04-07 read-only coverage diagnostics",
+      "status": "not_started"
+    },
+    {
+      "id": 9,
+      "name": "04-08 evidence-gated activation and release parity",
+      "status": "not_started"
+    },
+    {
+      "id": 10,
+      "name": "04-10 maintainer-only evidence-gated promotion command",
+      "status": "not_started"
+    }
   ],
-  "blockers": [{"description": "The existing ATECHPCS/grocy remote cannot be authenticated from this machine; GitHub CLI reports no login.", "type": "human_action", "workaround": "Authenticate GitHub (gh auth login) or configure the repository's existing Git credentials, then push codex/phase4-characterization."}],
-  "human_actions_pending": [{"action": "Authenticate to GitHub and push the branch to the private ATECHPCS repository.", "context": "origin already targets https://github.com/ATECHPCS/grocy.git, but gh is unauthenticated on this machine.", "blocking": false}],
-  "decisions": [{"decision": "No reusable projection has been selected; reusable profiles and rules remain inactive until immutable dual-branch evidence passes.", "rationale": "Characterization establishes native behavior but does not prove a safe reusable projection.", "phase": "04"}, {"decision": "Proceed next with 04-06 only after its existing bounded design is explicitly approved.", "rationale": "It adds read-only resolved-conversion provenance while retaining the native table and no-write boundary.", "phase": "04"}],
+  "blockers": [
+    {
+      "description": "Five browser specs (@mob01, @mob08 320px, @enr05 320px, barcode-handoff @enr02, contract-review @enr05) fail on both engines and already failed at end-of-Phase-3 commit ccade631. Root cause is the fixture's negative-margin .row on #grocy-ai-product-enrichment overflowing the 16px-padded body by exactly 16px at 320px.",
+      "type": "defect",
+      "workaround": "Out of scope for Plan 04-09. Needs a quick task; it contradicts the Phase 1/Phase 2 mobile completion records."
+    }
+  ],
+  "human_actions_pending": [
+    {
+      "action": "Authenticate to GitHub and push codex/phase4-characterization to the private ATECHPCS remote.",
+      "context": "origin already targets https://github.com/ATECHPCS/grocy.git; gh is unauthenticated on this machine.",
+      "blocking": false
+    }
+  ],
+  "decisions": [
+    {
+      "decision": "04-09 executes before 04-06. 04-06-PLAN.md declares depends_on [04-09] and reads 04-09-SUMMARY.md; the roadmap places 04-09 in Wave 6 and 04-06 in Wave 7. The previous handoff ordering was stale.",
+      "rationale": "The plan dependency graph and roadmap agree against the stale handoff.",
+      "phase": "04"
+    },
+    {
+      "decision": "No reusable projection has been selected; reusable profiles and rules remain inactive until immutable dual-branch evidence passes.",
+      "rationale": "Characterization establishes native behavior but does not prove a safe reusable projection.",
+      "phase": "04"
+    },
+    {
+      "decision": "Proceed next with 04-06 only after its existing bounded design is explicitly approved.",
+      "rationale": "It adds read-only resolved-conversion provenance while retaining the native table and no-write boundary.",
+      "phase": "04"
+    }
+  ],
   "uncommitted_files": [],
-  "next_action": "Run $gsd-resume-work. Read 04-06-PLAN.md and request/confirm approval for its bounded provenance design, then implement tests first.",
-  "context_notes": "The branch is clean. Phase 4 has implemented Plans 01–05 in commits through 951fc9f8, although only 01 and 05 currently have SUMMARY files. Do not deploy or touch household data."
+  "next_action": "Read 04-06-PLAN.md and confirm its bounded resolved-provenance design with the user, then implement tests first. 04-09 is complete and its summary records the interfaces 04-06 may reuse.",
+  "context_notes": "Phase 4 Plans 01-05 and 09 are implemented. Remaining: 04-06, 04-07, 04-08 (autonomous:false), 04-10. Toolchain on this machine: PHP 8.5.10 with composer packages installed, Playwright 1.62.1 with Chromium+WebKit. Do not deploy or touch household data."
 }

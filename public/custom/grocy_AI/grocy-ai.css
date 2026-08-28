@@ -449,6 +449,85 @@ details.grocy-ai-diagnostics:not([open]) > .grocy-ai-diagnostic-body {
 	border-color: #6c757d;
 }
 
+.grocy-ai-conversion-status {
+	border: 1px solid #dee2e6;
+	border-left: 4px solid var(--primary);
+	padding: 16px;
+	margin-bottom: 16px;
+}
+
+.grocy-ai-conversion-heading {
+	font-size: 20px;
+	font-weight: 500;
+	line-height: 1.2;
+	margin: 0 0 8px;
+}
+
+.grocy-ai-conversion-heading > small {
+	font-size: 14px;
+	font-weight: 400;
+	margin-left: 8px;
+}
+
+.grocy-ai-conversion-summary {
+	font-size: 16px;
+	line-height: 1.5;
+	overflow-wrap: anywhere;
+	margin-bottom: 8px;
+}
+
+.grocy-ai-conversion-summary > p {
+	font-size: 16px;
+	margin: 8px 0 0;
+}
+
+.grocy-ai-conversion-badge:empty {
+	display: none;
+}
+
+.grocy-ai-conversion-disclosure > summary {
+	display: block;
+	min-height: 44px;
+	padding: 8px 0;
+	font-size: 16px;
+	color: var(--primary);
+	cursor: pointer;
+}
+
+.grocy-ai-conversion-disclosure > summary:focus,
+.grocy-ai-conversion-status:focus {
+	outline: 2px solid var(--primary);
+	outline-offset: 2px;
+}
+
+.grocy-ai-conversion-details {
+	background: #f8f9fa;
+	border: 1px solid #dee2e6;
+	padding: 16px;
+	margin: 0;
+	font-size: 14px;
+	font-variant-numeric: tabular-nums;
+	overflow-wrap: anywhere;
+}
+
+.grocy-ai-conversion-details > dt {
+	font-weight: 500;
+}
+
+.grocy-ai-conversion-details > dd {
+	margin: 0 0 8px;
+}
+
+.night-mode .grocy-ai-conversion-details {
+	background: inherit;
+	border-color: #6c757d;
+}
+
+.night-mode .grocy-ai-conversion-status {
+	border-color: #6c757d;
+	border-left-color: var(--primary);
+}
+
 @media (max-width: 575.98px) {
 	.grocy-ai-actions .btn {
 		flex: 1 1 100%;
@@ -490,6 +569,14 @@ details.grocy-ai-diagnostics:not([open]) > .grocy-ai-diagnostic-body {
 
 	#grocy-ai-taxonomy-assign,
 	#grocy-ai-taxonomy-unclassified {
+		width: 100%;
+	}
+
+	.grocy-ai-conversion-status {
+		padding: 8px;
+	}
+
+	.grocy-ai-conversion-disclosure > summary {
 		width: 100%;
 	}
 }

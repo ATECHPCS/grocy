@@ -1,5 +1,5 @@
 <!doctype html>
-	<html lang="en" data-core-version="4.6.0" data-grocy-ai-module-version="2.4.2">
+	<html lang="en" data-core-version="4.6.0" data-grocy-ai-module-version="2.5.0">
 <head>
 	<meta charset="utf-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1">
@@ -40,7 +40,7 @@
 		.save-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 		@media (min-width: 992px) { .product-form-grid { grid-template-columns: 1fr 1fr; } }
 	</style>
-	<link rel="stylesheet" href="/assets/grocy-ai.css?v=2.4.2">
+	<link rel="stylesheet" href="/assets/grocy-ai.css?v=2.5.0">
 </head>
 <body>
 	<main class="product-form-grid">
@@ -230,6 +230,36 @@
 						<button class="btn btn-outline-primary" type="button" id="grocy-ai-taxonomy-unclassified">Leave Unclassified</button>
 					</div>
 				</div>
+			</section>
+
+			<section class="grocy-ai-conversion-section mt-3" aria-labelledby="grocy-ai-conversion-section-heading">
+				<h4 id="grocy-ai-conversion-section-heading">Product specific QU conversions</h4>
+				<div class="grocy-ai-conversion-status" id="grocy-ai-product-conversion-status"
+					data-product-id="91"
+					data-from-unit-key="cup"
+					data-to-unit-key="g"
+					data-form-revision="product-91-r1">
+					<h5 class="grocy-ai-conversion-heading">Reusable conversion status <small class="text-muted">1 cup &rarr; g</small></h5>
+					<div class="grocy-ai-conversion-summary" role="status" aria-live="polite" data-grocy-ai-conversion-summary></div>
+					<span class="grocy-ai-conversion-badge" data-grocy-ai-conversion-badge></span>
+					<details class="grocy-ai-conversion-disclosure" data-grocy-ai-conversion-disclosure hidden>
+						<summary>Show conversion details</summary>
+						<dl class="grocy-ai-conversion-details" data-grocy-ai-conversion-details></dl>
+					</details>
+				</div>
+				<table id="qu-conversions-table-products">
+					<thead>
+						<tr><th>Quantity unit from</th><th>Quantity unit to</th><th>Factor</th></tr>
+					</thead>
+					<tbody>
+						<tr id="qu-conversion-row-4020"><td>Package</td><td>Piece</td><td>6</td></tr>
+					</tbody>
+				</table>
+				<div class="grocy-ai-actions">
+					<button class="btn btn-success" type="button" id="fixture-save-product-conversion">Save package conversion</button>
+					<button class="btn btn-success" type="button" id="fixture-save-product-density">Save measured density</button>
+				</div>
+				<div id="fixture-conversion-outcome" role="status" aria-live="polite"></div>
 			</section>
 
 			<div class="form-group mt-3">
@@ -603,7 +633,49 @@
 		});
 	})();
 	</script>
-	<script src="/assets/product-enrichment.js?v=2.4.2"></script>
-	<script src="/assets/product-taxonomy.js?v=2.4.2"></script>
+	<script>
+	(function ()
+	{
+		// The fixture selects a deterministic server-side status envelope by product identity only.
+		var root = document.getElementById('grocy-ai-product-conversion-status');
+		var requested = new URL(window.location.href).searchParams.get('product');
+		if (/^[1-9][0-9]{0,9}$/.test(requested || ''))
+		{
+			root.setAttribute('data-product-id', requested);
+			root.setAttribute('data-form-revision', 'product-' + requested + '-r1');
+		}
+
+		function nativeSave(method, url, scope, body)
+		{
+			var outcome = document.getElementById('fixture-conversion-outcome');
+			var xhr = new XMLHttpRequest();
+			xhr.open(method, url);
+			xhr.setRequestHeader('Content-Type', 'application/json');
+			xhr.setRequestHeader('X-Fixture-Conversion-Scope', scope);
+			xhr.onload = function ()
+			{
+				outcome.textContent = xhr.status >= 200 && xhr.status < 300
+					? 'Conversion saved'
+					: 'Conversion was not saved';
+			};
+			xhr.onerror = function () { outcome.textContent = 'Conversion was not saved'; };
+			xhr.send(JSON.stringify(body));
+		}
+
+		document.getElementById('fixture-save-product-conversion').addEventListener('click', function ()
+		{
+			nativeSave('POST', '/api/objects/quantity_unit_conversions', 'product',
+				{ product_id: Number(root.getAttribute('data-product-id')), from_qu_id: 2, to_qu_id: 1, factor: 6 });
+		});
+		document.getElementById('fixture-save-product-density').addEventListener('click', function ()
+		{
+			nativeSave('PUT', '/api/objects/quantity_unit_conversions/4020', 'product',
+				{ product_id: Number(root.getAttribute('data-product-id')), from_qu_id: 3, to_qu_id: 4, factor: 1.03 });
+		});
+	})();
+	</script>
+	<script src="/assets/product-enrichment.js?v=2.5.0"></script>
+	<script src="/assets/product-taxonomy.js?v=2.5.0"></script>
+	<script src="/assets/conversion-explanations.js?v=2.5.0"></script>
 </body>
 </html>

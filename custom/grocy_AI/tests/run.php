@@ -242,7 +242,7 @@ function runBladeGroup(): never
 	$assetMatch = [];
 	if (preg_match('/\$grocyAiAssetVersion = \'([^\']+)\'/', $template, $assetMatch) !== 1
 		|| ($assetMatch[1] ?? '') !== $moduleVersion
-		|| substr_count($template, '{{ $grocyAiAssetVersion }}') !== 3)
+		|| substr_count($template, '{{ $grocyAiAssetVersion }}') !== 4)
 	{
 		expectedRed('EXPECTED_RED: blade.integrated_acceptance', 'The CSS and JavaScript asset token is not synchronized with module-version.json');
 	}
@@ -786,7 +786,7 @@ function expectException(callable $callback, string $exceptionClass, string $mes
 check($moduleVersion !== '', 'The portable module version is defined');
 check($hasAssetVersion, 'The product form defines one grocy_AI asset version token');
 check(($assetVersionMatch[1] ?? null) === $moduleVersion, 'The grocy_AI asset token matches the portable module version');
-check(substr_count($productFormTemplate, '{{ $grocyAiAssetVersion }}') === 3, 'All custom product-form assets use the grocy_AI token');
+check(substr_count($productFormTemplate, '{{ $grocyAiAssetVersion }}') === 4, 'All custom product-form assets use the grocy_AI token');
 check(!str_contains($productFormTemplate, 'grocy-ai.css?v=\', true) }}{{ $version }}'), 'Custom CSS is independent from the Grocy core version');
 check(!str_contains($productFormTemplate, 'product-enrichment.js?v=\', true) }}{{ $version }}'), 'Custom JavaScript is independent from the Grocy core version');
 
