@@ -55,7 +55,7 @@
       "id": 8,
       "name": "04-07 read-only conversion coverage diagnostics, page, and CLI",
       "status": "done",
-      "commit": "pending"
+      "commit": "f955563f"
     }
   ],
   "remaining_tasks": [
