@@ -543,6 +543,58 @@ details.grocy-ai-diagnostics:not([open]) > .grocy-ai-diagnostic-body {
 }
 
 
+.grocy-ai-coverage-summary {
+	font-size: 16px;
+	line-height: 1.5;
+	margin-bottom: 24px;
+	overflow-wrap: anywhere;
+}
+
+.grocy-ai-coverage-section {
+	margin-bottom: 24px;
+}
+
+.grocy-ai-coverage-section > h3 {
+	font-size: 20px;
+	font-weight: 500;
+	line-height: 1.2;
+	margin: 0 0 8px;
+}
+
+.grocy-ai-coverage-section > h3:focus {
+	outline: 2px solid var(--primary);
+	outline-offset: 2px;
+}
+
+.grocy-ai-coverage-list {
+	margin: 0;
+	font-size: 14px;
+	font-variant-numeric: tabular-nums;
+	overflow-wrap: anywhere;
+}
+
+.grocy-ai-coverage-list > dt {
+	font-weight: 500;
+}
+
+.grocy-ai-coverage-list > dd {
+	margin: 0 0 8px;
+}
+
+#grocy-ai-coverage-refresh {
+	min-height: 44px;
+}
+
+#grocy-ai-coverage-refresh:focus {
+	outline: 2px solid var(--primary);
+	outline-offset: 2px;
+}
+
+.night-mode .grocy-ai-coverage-summary {
+	border-color: #6c757d;
+}
+
+
 @media (max-width: 575.98px) {
 	.grocy-ai-actions .btn {
 		flex: 1 1 100%;
@@ -599,6 +651,9 @@ details.grocy-ai-diagnostics:not([open]) > .grocy-ai-diagnostic-body {
 	}
 
 	.grocy-ai-conversion-disclosure > summary {
+		width: 100%;
+	}
+	#grocy-ai-coverage-refresh {
 		width: 100%;
 	}
 }

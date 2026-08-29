@@ -7,6 +7,12 @@ use PDO;
 class GrocyAiConversionService
 {
 	private const RELATIVE_TOLERANCE = 0.000000000001;
+	// Redundancy is a maintainer-facing observation about a hand-entered override, so it uses a
+	// looser tolerance than the exact reciprocal checks that block a rule.
+	private const COVERAGE_REDUNDANCY_TOLERANCE = 0.0001;
+	private const PROTECTED_CONSUMER_CATEGORIES = [
+		'stock', 'recipe', 'purchase', 'consumption', 'price', 'transfer', 'meal_plan', 'quantity_display'
+	];
 	private const SOURCED_PROFILE_RECORDS = [
 		'water-like-beverage' => ['leaf-beverages', 'cup', 'g', '237', '174158', '1 cup = 237 g'],
 		'whole-milk' => ['leaf-dairy-eggs', 'cup', 'g', '244', '171265', '1 cup = 244 g'],
@@ -228,6 +234,210 @@ class GrocyAiConversionService
 		}
 
 		return $this->InspectionUnavailable((string)($profile['blockers'][0] ?? 'conversion_unavailable'));
+	}
+
+	/**
+	 * Read-only maintainer diagnostics. It reports current evidence only: it never bootstraps
+	 * module schema, activates a revision, projects a rule, or touches a native or product row.
+	 */
+	public function ValidateConversionCoverage(): array
+	{
+		$report = [
+			'ruleset_version' => GrocyAiConversionMigration::VERSION,
+			'source_version' => GrocyAiConversionMigration::SOURCE_VERSION,
+			'profile_source_version' => GrocyAiConversionMigration::PROFILE_SOURCE_VERSION,
+			'gate' => [
+				'state' => 'inactive',
+				'main_branch_evidence' => 'absent',
+				'stable_branch_evidence' => 'absent',
+				'selected_projection' => 'none'
+			],
+			'counts' => [
+				'catalog_units' => 0,
+				'universal_rules' => 0,
+				'profiles' => 0,
+				'covered_pairs' => 0,
+				'missing_paths' => 0,
+				'unavailable_profiles' => 0,
+				'redundant_product_overrides' => 0,
+				'blockers' => 0
+			],
+			'blockers' => [],
+			'effective_sources' => [],
+			'protected_behavior' => []
+		];
+		foreach (self::PROTECTED_CONSUMER_CATEGORIES as $category)
+		{
+			$report['protected_behavior'][] = ['category' => $category, 'state' => 'unverified'];
+		}
+
+		if (!$this->ModuleRelationAvailable('grocy_ai_conversion_catalog_units')
+			|| !$this->ModuleRelationAvailable('grocy_ai_conversion_rules')
+			|| !$this->ModuleRelationAvailable('grocy_ai_conversion_revisions'))
+		{
+			// An unavailable or stale module schema is reported as an inactive gate with no
+			// invented blockers rather than being bootstrapped into existence.
+			$report['effective_sources'] = $this->CoverageEffectiveSources(0, 0, 0);
+			return $report;
+		}
+
+		$catalog = $this->Catalog();
+		$report['counts']['catalog_units'] = count($catalog);
+
+		$rules = $this->Db->prepare('SELECT from_unit_key, to_unit_key, factor, source_version FROM grocy_ai_conversion_rules WHERE revision_id = ?');
+		$rules->execute([GrocyAiConversionMigration::INACTIVE_REVISION_ID]);
+		$ruleRows = $rules->fetchAll(PDO::FETCH_ASSOC);
+		$report['counts']['universal_rules'] = count($ruleRows);
+
+		$profileCount = 0;
+		if ($this->ModuleRelationAvailable('grocy_ai_conversion_profiles'))
+		{
+			$profiles = $this->Db->prepare('SELECT COUNT(*) FROM grocy_ai_conversion_profiles WHERE revision_id = ?');
+			$profiles->execute([GrocyAiConversionMigration::INACTIVE_PROFILE_REVISION_ID]);
+			$profileCount = (int)$profiles->fetchColumn();
+		}
+		$report['counts']['profiles'] = $profileCount;
+
+		$ruled = [];
+		foreach ($ruleRows as $row)
+		{
+			$ruled[(string)$row['from_unit_key'] . '>' . (string)$row['to_unit_key']] = true;
+		}
+		foreach ($catalog as $fromKey => $from)
+		{
+			foreach ($catalog as $toKey => $to)
+			{
+				if ($fromKey === $toKey || $from['dimension'] !== $to['dimension'])
+				{
+					continue;
+				}
+				if (isset($ruled[$fromKey . '>' . $toKey]) || isset($ruled[$toKey . '>' . $fromKey]))
+				{
+					$report['counts']['covered_pairs']++;
+				}
+				else
+				{
+					$report['counts']['missing_paths']++;
+				}
+			}
+		}
+
+		$report['counts']['unavailable_profiles'] = $this->CoverageUnavailableProfiles();
+		$report['counts']['redundant_product_overrides'] = $this->CoverageRedundantProductOverrides($catalog);
+
+		$blockers = [];
+		$universalBlocker = $this->ValidateInspectionUniversalGraph($catalog);
+		if ($universalBlocker !== null)
+		{
+			$blockers[] = $this->CoverageBlockerCategory($universalBlocker);
+		}
+		$tallied = [];
+		foreach ($blockers as $category)
+		{
+			$tallied[$category] = ($tallied[$category] ?? 0) + 1;
+		}
+		ksort($tallied);
+		foreach ($tallied as $category => $count)
+		{
+			$report['blockers'][] = ['category' => $category, 'count' => $count];
+		}
+		$report['counts']['blockers'] = count($blockers);
+
+		if ($report['counts']['blockers'] > 0)
+		{
+			$report['gate']['state'] = 'blocked';
+		}
+
+		$report['effective_sources'] = $this->CoverageEffectiveSources(
+			$report['counts']['redundant_product_overrides'],
+			$profileCount,
+			count($ruleRows)
+		);
+
+		return $report;
+	}
+
+	private function CoverageEffectiveSources(int $productOverrides, int $profiles, int $universalRules): array
+	{
+		return [
+			['source' => 'product_override', 'count' => $productOverrides],
+			['source' => 'food_profile', 'count' => $profiles],
+			['source' => 'universal', 'count' => $universalRules]
+		];
+	}
+
+	private function CoverageBlockerCategory(string $blocker): string
+	{
+		return [
+			'malformed_factor' => 'malformed_factor',
+			'tolerance_drift' => 'reciprocal_inconsistency',
+			'reciprocal_inconsistency' => 'reciprocal_inconsistency',
+			'reciprocal_mismatch' => 'reciprocal_inconsistency',
+			'factor_tolerance' => 'reciprocal_inconsistency',
+			'dimension_mismatch' => 'dimension_mismatch',
+			'mass_volume' => 'dimension_mismatch',
+			'same_rank_collision' => 'competing_path',
+			'competing_path' => 'competing_path',
+			'competing_paths' => 'competing_path',
+			'cycle_detected' => 'cycle_detected'
+		][$blocker] ?? 'provenance_mismatch';
+	}
+
+	private function CoverageUnavailableProfiles(): int
+	{
+		if (!$this->ModuleRelationAvailable('grocy_ai_conversion_profiles')
+			|| !$this->ModuleRelationAvailable('grocy_ai_taxonomy_nodes'))
+		{
+			return 0;
+		}
+		$leaves = $this->Db->prepare('SELECT id, slug FROM grocy_ai_taxonomy_nodes WHERE version = ? AND parent_id IS NOT NULL AND depth = 2 ORDER BY id');
+		$leaves->execute([GrocyAiTaxonomyMigration::VERSION]);
+		$profile = $this->Db->prepare('SELECT COUNT(*) FROM grocy_ai_conversion_profiles WHERE revision_id = ? AND taxonomy_leaf_id = ?');
+		$unavailable = 0;
+		foreach ($leaves->fetchAll(PDO::FETCH_ASSOC) as $leaf)
+		{
+			if (preg_match('/baby|pet|frozen|preserved/i', (string)$leaf['slug']) === 1)
+			{
+				continue;
+			}
+			$profile->execute([GrocyAiConversionMigration::INACTIVE_PROFILE_REVISION_ID, (string)$leaf['id']]);
+			if ((int)$profile->fetchColumn() === 0)
+			{
+				$unavailable++;
+			}
+		}
+		return $unavailable;
+	}
+
+	private function CoverageRedundantProductOverrides(array $catalog): int
+	{
+		$rows = $this->Db->query('SELECT conversion.factor, from_unit.name AS from_name, to_unit.name AS to_name FROM quantity_unit_conversions AS conversion INNER JOIN quantity_units AS from_unit ON from_unit.id = conversion.from_qu_id INNER JOIN quantity_units AS to_unit ON to_unit.id = conversion.to_qu_id WHERE conversion.product_id IS NOT NULL')->fetchAll(PDO::FETCH_ASSOC);
+		$redundant = 0;
+		foreach ($rows as $row)
+		{
+			$from = $catalog[(string)self::UnitKeyForName((string)$row['from_name'])] ?? null;
+			$to = $catalog[(string)self::UnitKeyForName((string)$row['to_name'])] ?? null;
+			$factor = $this->Factor($row['factor']);
+			if ($from === null || $to === null || $factor === null || $factor <= 0
+				|| $from['dimension'] !== $to['dimension']
+				|| $from['metric_factor'] === null || $to['metric_factor'] === null || $to['metric_factor'] <= 0)
+			{
+				continue;
+			}
+			// The override restates a factor the universal catalog already derives.
+			if ($this->RelativeDifference($factor, $from['metric_factor'] / $to['metric_factor']) <= self::COVERAGE_REDUNDANCY_TOLERANCE)
+			{
+				$redundant++;
+			}
+		}
+		return $redundant;
+	}
+
+	private function ModuleRelationAvailable(string $relation): bool
+	{
+		$statement = $this->Db->prepare('SELECT 1 FROM sqlite_master WHERE name = ? LIMIT 1');
+		$statement->execute([$relation]);
+		return $statement->fetchColumn() !== false;
 	}
 
 	private function ValidateInspectionUniversalGraph(array $catalog): ?string

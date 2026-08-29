@@ -1798,3 +1798,293 @@ SQL);
 	}
 	conversionAssertSame($unauthorizedBefore, conversionProductStatusSnapshot($pdo), 'unauthorized resolved provenance request must mutate no lifecycle, native, cache, taxonomy, or product state');
 }
+
+function conversionCoveragePdo(): PDO
+{
+	$pdo = conversionResolutionGraphPdo();
+	$pdo->exec(<<<'SQL'
+CREATE TABLE user_permissions_resolved (id INTEGER NOT NULL PRIMARY KEY, user_id INTEGER NOT NULL, permission_name TEXT NOT NULL);
+INSERT INTO user_permissions_resolved (id, user_id, permission_name) VALUES (1, 1, 'MASTER_DATA_EDIT');
+INSERT INTO quantity_units (id, name) VALUES (5, 'Piece'), (6, 'Package'), (7, 'kg'), (8, 'lb');
+SQL);
+	return $pdo;
+}
+
+function conversionCoverageSnapshot(PDO $pdo): array
+{
+	return [
+		'sqlite_master' => $pdo->query("SELECT type, name FROM sqlite_master ORDER BY type, name")->fetchAll(PDO::FETCH_ASSOC),
+		'products' => $pdo->query('SELECT * FROM products ORDER BY id')->fetchAll(PDO::FETCH_ASSOC),
+		'native_conversions' => $pdo->query('SELECT * FROM quantity_unit_conversions ORDER BY id')->fetchAll(PDO::FETCH_ASSOC),
+		'cache' => $pdo->query('SELECT * FROM cache__quantity_unit_conversions_resolved ORDER BY product_id, from_qu_id, to_qu_id')->fetchAll(PDO::FETCH_ASSOC),
+		'rules' => $pdo->query('SELECT * FROM grocy_ai_conversion_rules ORDER BY id')->fetchAll(PDO::FETCH_ASSOC),
+		'profiles' => $pdo->query('SELECT * FROM grocy_ai_conversion_profiles ORDER BY profile_key')->fetchAll(PDO::FETCH_ASSOC),
+		'revisions' => $pdo->query('SELECT * FROM grocy_ai_conversion_revisions ORDER BY id')->fetchAll(PDO::FETCH_ASSOC),
+		'classifications' => $pdo->query('SELECT * FROM grocy_ai_taxonomy_classifications ORDER BY product_id')->fetchAll(PDO::FETCH_ASSOC),
+		'total_changes' => (int)$pdo->query('SELECT total_changes()')->fetchColumn()
+	];
+}
+
+function conversionCoverageReadOnly(PDO $pdo, callable $callback): mixed
+{
+	$before = conversionCoverageSnapshot($pdo);
+	$pdo->exec('PRAGMA query_only = ON');
+	try
+	{
+		$result = $callback();
+	}
+	finally
+	{
+		$pdo->exec('PRAGMA query_only = OFF');
+	}
+	conversionAssertSame($before, conversionCoverageSnapshot($pdo), 'coverage diagnostics must not bootstrap schema, activate, project, or mutate module, native, cache, taxonomy, or product state');
+	return $result;
+}
+
+function conversionCoverageAssertRedacted(array $report): void
+{
+	$encoded = json_encode($report, JSON_THROW_ON_ERROR);
+	foreach (['Explicit water', 'Provider only', 'Unprofiled produce', 'Explicit whole milk', 'SELECT ', 'INSERT INTO', 'FROM grocy', 'sqlite:', 'http', 'grocy.db', 'Exception'] as $forbidden)
+	{
+		if (stripos($encoded, $forbidden) !== false)
+		{
+			throw new RuntimeException('coverage report leaked ' . $forbidden);
+		}
+	}
+}
+
+function conversionCoverageContract(): void
+{
+	conversionProductStatusRuntime();
+	if (!method_exists(GrocyAiConversionService::class, 'ValidateConversionCoverage'))
+	{
+		expectedRed('EXPECTED_RED: conversion-coverage', 'The read-only conversion coverage report is not implemented');
+	}
+	if (is_file(dirname(__DIR__) . '/src/GrocyAiConversionController.php'))
+	{
+		require_once dirname(__DIR__) . '/src/GrocyAiConversionController.php';
+	}
+	if (!class_exists('GrocyAI\Controllers\GrocyAiConversionController'))
+	{
+		expectedRed('EXPECTED_RED: conversion-coverage', 'The MASTER_DATA_EDIT conversion coverage controller is not implemented');
+	}
+
+	$pdo = conversionCoveragePdo();
+	conversionNativeSaveHookInstallDatabase($pdo);
+	$report = conversionCoverageReadOnly($pdo, static fn(): array => (new GrocyAiConversionService($pdo, false))->ValidateConversionCoverage());
+
+	$expectedKeys = [
+		'ruleset_version', 'source_version', 'profile_source_version', 'gate', 'counts', 'blockers',
+		'effective_sources', 'protected_behavior'
+	];
+	conversionAssertSame($expectedKeys, array_keys($report), 'coverage report must expose only the fixed redacted report keys');
+	conversionAssertSame(GrocyAiConversionMigration::VERSION, $report['ruleset_version'], 'coverage report must name the module ruleset version');
+	conversionAssertSame(['state', 'main_branch_evidence', 'stable_branch_evidence', 'selected_projection'], array_keys($report['gate']), 'coverage gate must expose only its fixed keys');
+	conversionAssertSame('inactive', $report['gate']['state'], 'coverage gate must remain inactive while no dual-branch activation evidence exists');
+	conversionAssertSame('absent', $report['gate']['main_branch_evidence'], 'absent main-branch evidence must be reported as absent');
+	conversionAssertSame('absent', $report['gate']['stable_branch_evidence'], 'absent stable-branch evidence must be reported as absent');
+	conversionAssertSame('none', $report['gate']['selected_projection'], 'no reusable projection may be reported as selected');
+
+	conversionAssertSame([
+		'catalog_units', 'universal_rules', 'profiles', 'covered_pairs', 'missing_paths',
+		'unavailable_profiles', 'redundant_product_overrides', 'blockers'
+	], array_keys($report['counts']), 'coverage counts must expose only the fixed aggregate keys');
+	conversionAssertSame(14, $report['counts']['catalog_units'], 'coverage must count the seeded catalog units');
+	conversionAssertSame(12, $report['counts']['universal_rules'], 'coverage must count the seeded universal rules');
+	conversionAssertSame(3, $report['counts']['profiles'], 'coverage must count the seeded sourced profiles');
+	conversionAssertSame(0, $report['counts']['blockers'], 'a clean seeded ruleset must report no blockers');
+	conversionAssertSame([], $report['blockers'], 'a clean seeded ruleset must report an empty blocker list');
+	foreach (['covered_pairs', 'missing_paths', 'unavailable_profiles', 'redundant_product_overrides'] as $countKey)
+	{
+		if (!is_int($report['counts'][$countKey]) || $report['counts'][$countKey] < 0)
+		{
+			throw new RuntimeException('coverage count ' . $countKey . ' must be a non-negative integer');
+		}
+	}
+
+	$protectedCategories = array_column($report['protected_behavior'], 'category');
+	conversionAssertSame(
+		['stock', 'recipe', 'purchase', 'consumption', 'price', 'transfer', 'meal_plan', 'quantity_display'],
+		$protectedCategories,
+		'coverage must report every protected consumer category in its fixed order'
+	);
+	foreach ($report['protected_behavior'] as $entry)
+	{
+		conversionAssertSame(['category', 'state'], array_keys($entry), 'each protected-behaviour entry must expose only its fixed keys');
+		conversionAssertSame('unverified', $entry['state'], 'protected behaviour must stay unverified until dual-branch release evidence exists');
+	}
+	conversionCoverageAssertRedacted($report);
+
+	// A redundant product override that merely restates a universal rule is counted, never removed.
+	$redundant = conversionCoveragePdo();
+	$redundant->exec("INSERT INTO quantity_unit_conversions (id, product_id, from_qu_id, to_qu_id, factor) VALUES (601, 1, 7, 8, 2.2046226218)");
+	$redundantBefore = conversionCoverageSnapshot($redundant);
+	$redundantReport = conversionCoverageReadOnly($redundant, static fn(): array => (new GrocyAiConversionService($redundant, false))->ValidateConversionCoverage());
+	conversionAssertSame(1, $redundantReport['counts']['redundant_product_overrides'], 'a product override equal to a universal rule must be reported as redundant');
+	conversionAssertSame($redundantBefore['native_conversions'], conversionCoverageSnapshot($redundant)['native_conversions'], 'a redundant product override must never be removed or replaced by diagnostics');
+
+	// Blocking issues are reported as closed categories with counts, never as raw rows.
+	$blocked = conversionCoveragePdo();
+	$blocked->exec("UPDATE grocy_ai_conversion_catalog_units SET metric_factor = '0' WHERE unit_key = 'lb'");
+	$blockedReport = conversionCoverageReadOnly($blocked, static fn(): array => (new GrocyAiConversionService($blocked, false))->ValidateConversionCoverage());
+	conversionAssertSame('blocked', $blockedReport['gate']['state'], 'any blocker must move the coverage gate to blocked');
+	if ($blockedReport['counts']['blockers'] < 1)
+	{
+		throw new RuntimeException('a malformed catalog factor must be reported as at least one blocker');
+	}
+	foreach ($blockedReport['blockers'] as $blocker)
+	{
+		conversionAssertSame(['category', 'count'], array_keys($blocker), 'each blocker entry must expose only its fixed keys');
+		if (!in_array($blocker['category'], ['malformed_factor', 'provenance_mismatch', 'dimension_mismatch', 'competing_path', 'cycle_detected', 'reciprocal_inconsistency'], true))
+		{
+			throw new RuntimeException('coverage blockers must use closed categories');
+		}
+	}
+	conversionCoverageAssertRedacted($blockedReport);
+
+	// Stale or incomplete module schema fails closed to an inactive, blocked-free report.
+	$missing = new PDO('sqlite::memory:');
+	$missing->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+	$missing->exec('CREATE TABLE quantity_units (id INTEGER NOT NULL PRIMARY KEY, name TEXT NOT NULL UNIQUE)');
+	$missingReport = (new GrocyAiConversionService($missing, false))->ValidateConversionCoverage();
+	conversionAssertSame('inactive', $missingReport['gate']['state'], 'an unavailable module schema must keep the gate inactive');
+	conversionAssertSame(0, $missingReport['counts']['catalog_units'], 'an unavailable module schema must report zero catalog units');
+	conversionAssertSame([], $missingReport['blockers'], 'an unavailable module schema must not invent blockers');
+	conversionAssertSame([], $missing->query("SELECT name FROM sqlite_master WHERE name LIKE 'grocy_ai_conversion%'")->fetchAll(PDO::FETCH_ASSOC), 'the coverage report must never bootstrap module schema');
+
+	conversionCoverageAssertRouteRegistered();
+	conversionCoverageAssertPermission($pdo);
+}
+
+function conversionCoverageAssertRouteRegistered(): void
+{
+	$container = new DI\Container();
+	$app = Slim\Factory\AppFactory::createFromContainer($container);
+	require dirname(__DIR__) . '/routes.php';
+	$page = [];
+	$api = [];
+	foreach ($app->getRouteCollector()->getRoutes() as $route)
+	{
+		if ($route->getPattern() === '/grocyai/conversioncoverage')
+		{
+			$page[] = $route->getMethods();
+		}
+		if ($route->getPattern() === '/api/grocy-ai/conversions/coverage')
+		{
+			$api[] = $route->getMethods();
+		}
+	}
+	conversionAssertSame([['GET']], $page, 'the conversion coverage page must be registered exactly once as GET');
+	conversionAssertSame([['GET']], $api, 'the conversion coverage refresh read must be registered exactly once as GET');
+}
+
+function conversionCoverageAssertPermission(PDO $pdo): void
+{
+	$controller = (new ReflectionClass(GrocyAI\Controllers\Api\GrocyAiApiController::class))->newInstanceWithoutConstructor();
+	$request = (new Slim\Psr7\Factory\ServerRequestFactory())->createServerRequest('GET', '/api/grocy-ai/conversions/coverage');
+	$before = conversionCoverageSnapshot($pdo);
+	$pdo->exec("DELETE FROM user_permissions_resolved WHERE permission_name = 'MASTER_DATA_EDIT'");
+	try
+	{
+		$controller->ConversionCoverage($request, conversionNativeSaveHookResponse(), []);
+		throw new RuntimeException('conversion_coverage_permission_not_checked');
+	}
+	catch (Grocy\Controllers\Users\PermissionMissingException $ex)
+	{
+		conversionAssertSame('Permission missing: MASTER_DATA_EDIT', $ex->getMessage(), 'unauthorized coverage failure must disclose no SQL, evidence, or household detail');
+	}
+	finally
+	{
+		$pdo->exec("INSERT OR IGNORE INTO user_permissions_resolved (id, user_id, permission_name) VALUES (1, 1, 'MASTER_DATA_EDIT')");
+	}
+	conversionAssertSame($before['sqlite_master'], conversionCoverageSnapshot($pdo)['sqlite_master'], 'an unauthorized coverage request must not bootstrap module schema');
+}
+
+function conversionReadOnlyCliContract(): void
+{
+	$script = dirname(__DIR__) . '/bin/validate-conversion-rules.php';
+	if (!is_file($script))
+	{
+		expectedRed('EXPECTED_RED: conversion-readonly-cli', 'The read-only conversion rule validation command is not implemented');
+	}
+
+	$php = PHP_BINARY;
+	$run = static function (array $env) use ($php, $script): array
+	{
+		$descriptors = [1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
+		$process = proc_open([$php, $script], $descriptors, $pipes, dirname(__DIR__, 3), $env);
+		$stdout = stream_get_contents($pipes[1]);
+		$stderr = stream_get_contents($pipes[2]);
+		fclose($pipes[1]);
+		fclose($pipes[2]);
+		return ['code' => proc_close($process), 'stdout' => (string)$stdout, 'stderr' => (string)$stderr];
+	};
+
+	foreach ([[], ['GROCY_DATAPATH' => ''], ['GROCY_DATAPATH' => 'relative/data'], ['GROCY_DATAPATH' => './data']] as $env)
+	{
+		$result = $run($env);
+		conversionAssertSame(2, $result['code'], 'the command must refuse a missing or relative data path');
+		conversionAssertSame('', $result['stdout'], 'a refused data path must produce no report');
+		conversionAssertSame("GROCY_DATAPATH must be an absolute configured Grocy data path\n", $result['stderr'], 'a refused data path must emit only its fixed message');
+	}
+
+	$emptyDirectory = sys_get_temp_dir() . '/grocy-ai-conversion-cli-' . bin2hex(random_bytes(6));
+	mkdir($emptyDirectory, 0700);
+	$missing = $run(['GROCY_DATAPATH' => $emptyDirectory]);
+	conversionAssertSame(2, $missing['code'], 'the command must refuse an unavailable configured database');
+	conversionAssertSame("Configured Grocy database is unavailable\n", $missing['stderr'], 'an unavailable database must emit only its fixed message');
+	rmdir($emptyDirectory);
+
+	$dataPath = sys_get_temp_dir() . '/grocy-ai-conversion-cli-' . bin2hex(random_bytes(6));
+	mkdir($dataPath, 0700);
+	$databasePath = $dataPath . '/grocy.db';
+	$seed = new PDO('sqlite:' . $databasePath);
+	$seed->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+	$seed->exec(<<<'SQL'
+CREATE TABLE quantity_units (id INTEGER NOT NULL PRIMARY KEY, name TEXT NOT NULL UNIQUE);
+CREATE TABLE quantity_unit_conversions (id INTEGER NOT NULL PRIMARY KEY, product_id INTEGER NULL, from_qu_id INTEGER NOT NULL, to_qu_id INTEGER NOT NULL, factor REAL NOT NULL);
+CREATE TABLE product_groups (id INTEGER NOT NULL PRIMARY KEY, name TEXT NOT NULL, active INTEGER NOT NULL);
+CREATE TABLE products (id INTEGER NOT NULL PRIMARY KEY, product_group_id INTEGER NULL, name TEXT NOT NULL);
+INSERT INTO quantity_units (id, name) VALUES (1, 'cup'), (2, 'g');
+INSERT INTO products (id, product_group_id, name) VALUES (1, NULL, 'Household secret product name');
+SQL);
+	GrocyAiConversionMigration::Bootstrap($seed);
+	$seed = null;
+	$fingerprint = hash_file('sha256', $databasePath);
+	$schemaBefore = (new PDO('sqlite:' . $databasePath))->query("SELECT type, name FROM sqlite_master ORDER BY type, name")->fetchAll(PDO::FETCH_ASSOC);
+
+	$result = $run(['GROCY_DATAPATH' => $dataPath]);
+	conversionAssertSame(0, $result['code'], 'a configured database must produce a successful report');
+	conversionAssertSame('', $result['stderr'], 'a successful report must emit nothing on stderr');
+	$report = json_decode(trim($result['stdout']), true, 512, JSON_THROW_ON_ERROR);
+	conversionAssertSame(
+		['ruleset_version', 'source_version', 'profile_source_version', 'gate', 'counts', 'blockers', 'effective_sources', 'protected_behavior'],
+		array_keys($report),
+		'the command must emit exactly the redacted coverage report'
+	);
+	conversionAssertSame('inactive', $report['gate']['state'], 'the command must report the inactive gate');
+	conversionCoverageAssertRedacted($report);
+	if (str_contains($result['stdout'], 'Household secret product name'))
+	{
+		throw new RuntimeException('the command leaked a household product name');
+	}
+
+	conversionAssertSame($fingerprint, hash_file('sha256', $databasePath), 'the command must not write to the configured Grocy database');
+	conversionAssertSame($schemaBefore, (new PDO('sqlite:' . $databasePath))->query("SELECT type, name FROM sqlite_master ORDER BY type, name")->fetchAll(PDO::FETCH_ASSOC), 'the command must not bootstrap or migrate the configured Grocy database');
+	unlink($databasePath);
+	rmdir($dataPath);
+}
+
+function runConversionCoverage(): never
+{
+	conversionCoverageContract();
+	fwrite(STDOUT, "Conversion coverage tests passed\n");
+	exit(0);
+}
+
+function runConversionReadOnlyCli(): never
+{
+	conversionReadOnlyCliContract();
+	fwrite(STDOUT, "Conversion read-only CLI tests passed\n");
+	exit(0);
+}

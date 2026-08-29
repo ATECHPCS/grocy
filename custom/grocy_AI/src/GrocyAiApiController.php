@@ -353,6 +353,23 @@ class GrocyAiApiController extends BaseApiController
 		}
 	}
 
+	public function ConversionCoverage(Request $request, Response $response, array $args): Response
+	{
+		User::CheckPermission($request, User::PERMISSION_MASTER_DATA_EDIT);
+
+		try
+		{
+			$report = (new GrocyAiConversionService(DatabaseService::GetInstance()->GetDbConnectionRaw(), false))
+				->ValidateConversionCoverage();
+
+			return $this->ApiResponse($response, $report);
+		}
+		catch (\Throwable)
+		{
+			return $this->GenericErrorResponse($response, 'Conversion coverage unavailable', 503);
+		}
+	}
+
 	private static function CountScopeInspectionDto(): array
 	{
 		return [

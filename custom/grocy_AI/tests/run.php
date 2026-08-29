@@ -662,6 +662,16 @@ if (($argv[1] ?? null) === 'conversion-product-status')
 	runConversionProductStatus();
 }
 
+if (($argv[1] ?? null) === 'conversion-coverage')
+{
+	runConversionCoverage();
+}
+
+if (($argv[1] ?? null) === 'conversion-readonly-cli')
+{
+	runConversionReadOnlyCli();
+}
+
 if (($argv[1] ?? null) === 'conversion-native-save-hook')
 {
 	runConversionNativeSaveHook();
@@ -794,6 +804,14 @@ check($hasResolvedAssetVersion, 'The resolved-conversions view defines one grocy
 check(($resolvedAssetMatch[1] ?? null) === $moduleVersion, 'The resolved-conversions asset token matches the portable module version');
 check(substr_count($resolvedTemplate, '{{ $grocyAiAssetVersion }}') === 2, 'All custom resolved-conversions assets use the grocy_AI token');
 check(!str_contains($resolvedTemplate, 'conversion-explanations.js?v=\', true) }}{{ $version }}'), 'Resolved-conversions custom JavaScript is independent from the Grocy core version');
+$coverageTemplate = file_get_contents($repoRoot . '/views/grocyai_conversioncoverage.blade.php');
+$coverageAssetMatch = [];
+$hasCoverageAssetVersion = preg_match('/\$grocyAiAssetVersion = \'([^\']+)\'/', $coverageTemplate, $coverageAssetMatch) === 1;
+check($hasCoverageAssetVersion, 'The conversion coverage view defines one grocy_AI asset version token');
+check(($coverageAssetMatch[1] ?? null) === $moduleVersion, 'The conversion coverage asset token matches the portable module version');
+check(substr_count($coverageTemplate, '{{ $grocyAiAssetVersion }}') === 2, 'All custom conversion coverage assets use the grocy_AI token');
+check(str_contains($coverageTemplate, 'permission-MASTER_DATA_EDIT'), 'The conversion coverage report is scoped to MASTER_DATA_EDIT');
+check(!preg_match('/\b(POST|PUT|DELETE)\b/', $coverageTemplate), 'The conversion coverage view declares no write action');
 check(!str_contains($productFormTemplate, 'grocy-ai.css?v=\', true) }}{{ $version }}'), 'Custom CSS is independent from the Grocy core version');
 check(!str_contains($productFormTemplate, 'product-enrichment.js?v=\', true) }}{{ $version }}'), 'Custom JavaScript is independent from the Grocy core version');
 

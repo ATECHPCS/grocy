@@ -4,7 +4,7 @@
   "phase": "04",
   "phase_name": "reusable-conversion-model",
   "phase_dir": ".planning/phases/04-reusable-conversion-model",
-  "plan": "04-07",
+  "plan": "04-08",
   "task": 1,
   "total_tasks": 20,
   "status": "paused",
@@ -50,14 +50,15 @@
       "name": "04-06 resolved-conversion provenance read and native-table source/status",
       "status": "done",
       "commit": "ab287a7a"
+    },
+    {
+      "id": 8,
+      "name": "04-07 read-only conversion coverage diagnostics, page, and CLI",
+      "status": "done",
+      "commit": "pending"
     }
   ],
   "remaining_tasks": [
-    {
-      "id": 8,
-      "name": "04-07 read-only coverage diagnostics",
-      "status": "not_started"
-    },
     {
       "id": 9,
       "name": "04-08 evidence-gated activation and release parity",
@@ -78,12 +79,22 @@
   ],
   "human_actions_pending": [
     {
+      "action": "Review and approve Plan 04-08 before it runs.",
+      "context": "04-08-PLAN.md is autonomous: false. It owns the sole ActivateVerifiedRuleset transaction, the dual-branch evidence relation, portable-files.txt catch-up, and README/CUSTOMIZATIONS updates.",
+      "blocking": true
+    },
+    {
       "action": "Authenticate to GitHub and push codex/phase4-characterization to the private ATECHPCS remote.",
       "context": "origin already targets https://github.com/ATECHPCS/grocy.git; gh is unauthenticated on this machine.",
       "blocking": false
     }
   ],
   "decisions": [
+    {
+      "decision": "Coverage diagnostics report the gate as inactive and every protected consumer as unverified until dual-branch activation evidence exists in the database; 04-CHARACTERIZATION.md is not treated as live evidence.",
+      "rationale": "D-12 requires diagnostics to show inactive or blocked until dual-branch release evidence succeeds.",
+      "phase": "04"
+    },
     {
       "decision": "The resolved-provenance endpoint accepts only three validated integers and returns exactly one existing resolver result; a package or count pair is an eligibility outcome (reusable_count_scope), never a resolved factor.",
       "rationale": "Keeps the browser from selecting units, factors, or destinations and prevents a count pair from borrowing a reusable rule.",
@@ -106,6 +117,6 @@
     }
   ],
   "uncommitted_files": [],
-  "next_action": "Read 04-07-PLAN.md and implement the strictly read-only conversion coverage diagnostics, tests first. 04-06 is complete; its summary records the inspection reads 04-07 must reuse.",
-  "context_notes": "Phase 4 Plans 01-06 and 09 are implemented. Remaining: 04-07, 04-08 (autonomous:false), 04-10. Toolchain: PHP 8.5.10 with composer packages installed, Playwright 1.62.1 with Chromium+WebKit. Do not deploy or touch household data."
+  "next_action": "Plan 04-08 is autonomous: false. Confirm its activation-gate design with the user before implementing. It must also add the five missing paths to portable-files.txt and update README/CUSTOMIZATIONS.",
+  "context_notes": "Phase 4 Plans 01-07 and 09 are implemented. Remaining: 04-08 (autonomous:false, needs the user) and 04-10. portable-files.txt is missing five module files added by 04-06/04-07/04-09. Toolchain: PHP 8.5.10 with composer packages installed, Playwright 1.62.1 with Chromium+WebKit. Do not deploy or touch household data."
 }

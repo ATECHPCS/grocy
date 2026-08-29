@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Phase 4 Plan 04-06 complete
+stopped_at: Phase 4 Plan 04-07 complete
 last_updated: "2026-08-28T00:00:00.000Z"
-last_activity: 2026-08-28 -- Phase 4 Plan 04-06 complete
+last_activity: 2026-08-28 -- Phase 4 Plan 04-07 complete
 progress:
   total_phases: 7
   completed_phases: 2
   total_plans: 44
-  completed_plans: 41
+  completed_plans: 42
   percent: 33
 ---
 
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-08-20)
 ## Current Position
 
 Phase: 4
-Plan: 04-06 complete; 04-07 next
+Plan: 04-07 complete; 04-08 next (autonomous: false)
 Status: Executing
 Last activity: 2026-08-23 -- Phase 4 planning complete
 
@@ -132,6 +132,8 @@ Recent decisions affecting current work:
 
 - [Phase 04]: `GrocyAiConversionService::UnitKeyForName` is the single owner of the Grocy-unit-name to catalog-key mapping; inspection callers must not restate it.
 
+- [Phase 04]: `portable-files.txt` is missing five module files added by Plans 04-06, 04-07, and 04-09; Plan 04-08 must add them before parity can be trusted.
+
 ### Pending Todos
 
 None yet.
@@ -175,5 +177,5 @@ Items acknowledged for v2 after the preview/audit model is proven:
 ## Session Continuity
 
 Last session: 2026-08-28
-Stopped at: Phase 4 Plan 04-06 complete
-Resume file: .planning/phases/04-reusable-conversion-model/04-07-PLAN.md
+Stopped at: Phase 4 Plan 04-07 complete
+Resume file: .planning/phases/04-reusable-conversion-model/04-08-PLAN.md

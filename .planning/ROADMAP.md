@@ -260,7 +260,7 @@ Plans:
 
 **Wave 8** *(blocked on Wave 7 completion)*
 
-- [ ] 04-07-PLAN.md — Add strictly read-only coverage diagnostics.
+- [x] 04-07-PLAN.md — Add strictly read-only coverage diagnostics.
 
 **Wave 9** *(blocked on Wave 8 completion)*
 
@@ -338,7 +338,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7. Dual-bra
 | 1. Safety Baseline & Mobile Diagnostics | 9/10 | In Progress|  |
 | 2. Enrichment Contract, Barcode Handoff & Secure Media | 17/20 | In Progress|  |
 | 3. Food Taxonomy & Categorization Pilot | 3/3 plans + gap closure | Complete | 2026-08-20 |
-| 4. Reusable Conversion Model | 7/10 | In Progress | - |
+| 4. Reusable Conversion Model | 8/10 | In Progress | - |
 | 5. Bulk Maintenance & Recovery Engine | 0/TBD | Not started | - |
 | 6. Inventory Categorization & Conversion Cleanup | 0/TBD | Not started | - |
 | 7. Upstream & Stable Release Sustainment | 0/TBD | Not started | - |
