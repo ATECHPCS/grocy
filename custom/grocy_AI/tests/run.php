@@ -687,6 +687,11 @@ if (($argv[1] ?? null) === 'conversion-post-activation-bypass')
 	runConversionPostActivationBypass();
 }
 
+if (($argv[1] ?? null) === 'conversion-activation-command')
+{
+	runConversionActivationCommand();
+}
+
 if (($argv[1] ?? null) === '--list')
 {
 	foreach ([

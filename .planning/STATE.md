@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Phase 4 Plan 04-08 complete (Task 3 approved)
+stopped_at: Phase 4 complete
 last_updated: "2026-08-29T00:00:00.000Z"
-last_activity: 2026-08-29 -- Phase 4 Plan 04-08 complete; 04-10 next
+last_activity: 2026-08-29 -- Phase 4 complete (04-10 shipped)
 progress:
   total_phases: 7
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 44
-  completed_plans: 43
-  percent: 33
+  completed_plans: 44
+  percent: 43
 ---
 
 # Project State
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-08-20)
 
 **Core value:** Adding and maintaining real household food inventory must be fast, accurate, and dependable from a phone without surrendering control of the data to automatic guesses.
-**Current focus:** Phase 4 — reusable conversion model
+**Current focus:** Phase 4 complete; Phase 5 — bulk maintenance & recovery engine is next
 
 ## Current Position
 
-Phase: 4
-Plan: 04-08 complete (human checkpoint approved 2026-08-29); 04-10 next (autonomous: true, has user_setup)
-Status: Executing
-Last activity: 2026-08-29 -- Phase 4 Plan 04-08 evidence-gated activation approved
+Phase: 4 complete; Phase 5 (Bulk Maintenance & Recovery Engine) not started
+Plan: all Phase 4 plans shipped (04-01 through 04-10)
+Status: Phase complete
+Last activity: 2026-08-29 -- Phase 4 Plan 04-10 maintainer promotion command shipped
 
 Progress: [████░░░░░░] 43%
 
@@ -150,7 +150,11 @@ None yet.
 
 - [Phase 1]: Actual supported phone/browser versions and acceptable LAN latency thresholds require recorded physical-device measurement.
 - [Phase 2]: Companion provider concurrency, timeout, cache, authentication, and secure-media behavior require direct inspection during planning.
-- [Phase 4]: Final conversion projection is intentionally unresolved until the mandatory dual-branch characterization spike.
+- [Phase 4]: Final conversion projection remains unselected. `04-CHARACTERIZATION.md` records no projection, so `ActivateVerifiedRuleset` fails closed with `selected_projection_absent` in production. Selecting one requires exercising a named candidate against current immutable dual-branch evidence, then updating both the document and the pinned `CHARACTERIZATION_FACTS_SHA256` constant.
+
+- [Phase 4]: Deployment still needs `/etc/komodo/grocy/maintainer-auth` created (0600, 64-hex) and `GROCY_AI_MAINTAINER_AUTH_FILE` set before the promotion command can be used there.
+
+- [Phase 4]: Phase 4 module files are not yet mirrored to `atech-release`, and `release-gate.sh` Phase 2 modes still hardcode a 12-path portable count against a 36-path manifest. Both belong to the Phase 4 stable mirroring work.
 - [Phase 6]: Cleanup planning requires a scrubbed production-shaped snapshot to confirm conversion and inventory edge cases.
 - [Phase 2]: Goal verification found three blocking contract gaps: reject duplicate suggestion fields, bind media provenance to evidence class, and bound/depth-limit companion JSON before recursive parsing. — Plan 02 gap closure before phase completion.
 
@@ -171,6 +175,7 @@ None yet.
 | Phase 02 P20 | resumed checkpoint | 2 tasks | 1 deployment-evidence record |
 | Phase 02 P21 | resumed checkpoint | 2 tasks | 2 provenance gates + live certification |
 | Phase 04 P08 | 2 tasks + checkpoint | 8 files | activation gate + release parity |
+| Phase 04 P10 | 2 tasks | 8 files | maintainer promotion command |
 
 ## Deferred Items
 
@@ -185,5 +190,5 @@ Items acknowledged for v2 after the preview/audit model is proven:
 ## Session Continuity
 
 Last session: 2026-08-29
-Stopped at: Phase 4 Plan 04-08 complete; 04-10 not started
-Resume file: .planning/phases/04-reusable-conversion-model/04-10-PLAN.md
+Stopped at: Phase 4 complete
+Resume file: .planning/ROADMAP.md (Phase 5: Bulk Maintenance & Recovery Engine)

@@ -221,6 +221,104 @@ projected rule is rejected as `reusable_scope_inactive`; a tampered factor is re
 Valid product-scoped package/count and measured-density requests keep their normal Grocy Save
 behavior, and existing product conversion rows are never replaced or removed.
 
+### Promoting a revision (the only operational path)
+
+`custom/grocy_AI/bin/activate-verified-conversion-ruleset.php` is the sole operational way to make a
+reusable rule effective. There is **no browser control, no HTTP route, and no API path** — the
+release gate fails if one appears, or if a second command ever calls `ActivateVerifiedRuleset`.
+
+#### One-time deployment setup
+
+Create the maintainer secret outside the repository and outside `GROCY_DATAPATH`, readable only by
+its owner. On this deployment it lives on the existing persistent Komodo mount:
+
+```sh
+umask 077
+openssl rand -hex 32 > /etc/komodo/grocy/maintainer-auth
+chmod 600 /etc/komodo/grocy/maintainer-auth
+```
+
+Then set `GROCY_AI_MAINTAINER_AUTH_FILE=/etc/komodo/grocy/maintainer-auth` in the deployment
+configuration. The path must be absolute; the file must be a readable regular file, must not sit at
+or below `GROCY_DATAPATH`, must not be group- or world-accessible, and must contain exactly one
+64-character hex secret. Never commit the file, the secret, or the path into Git.
+
+#### Invocation
+
+```sh
+php custom/grocy_AI/bin/activate-verified-conversion-ruleset.php \
+  --revision <named-inactive-revision> \
+  --main-proof-artifact <40-hex-main-commit> \
+  --stable-proof-artifact <40-hex-stable-commit>
+```
+
+The command reads the secret from standard input, so present it deliberately — for example by
+pasting it at the prompt. Never pass it as an argument or an environment variable.
+
+The argument schema is closed and exact: those three options, each exactly once, in any order, with
+no positional arguments. `--revision` accepts one lowercase identifier the module owns (for example
+`universal-kg-g`); the two proof artifacts accept one 40-hex immutable commit each and must equal
+the revisions the current characterization names. **No option accepts SQL, a cache key, an adapter
+name, a factor, or a filesystem path.** Everything else — the selected adapter, the factors, the
+projection, and every cache effect — is resolved inside `ActivateVerifiedRuleset` from the current
+immutable ledger.
+
+Standard input is a deliberate-action check, not a second secret: an operator who can read the auth
+file can also supply its contents. Its value is that promotion cannot happen from the web tier, and
+cannot happen by a script that merely inherits the process's file access without being written to do
+so on purpose.
+
+#### Output
+
+Success prints one redacted JSON line and nothing on stderr:
+
+```json
+{"status":"active","result_code":"promoted","revision":"universal-kg-g",
+ "selected_adapter":"universal_native_rows_v1","main_proof_reference":"1f0c2a9b7d34",
+ "stable_proof_reference":"84be0d61c2af","evidence_reference":"c3d9017ab5e2"}
+```
+
+The three references are 12-character digests, never the complete identifiers. The command never
+prints the secret, a full commit, a configured path, a factor, SQL, a cache row, a source URL, a
+household value, or a raw exception.
+
+A refusal prints one redacted JSON line on **stderr** and nothing on stdout:
+
+```json
+{"status":"refused","reason":"immutable_proof_mismatch"}
+```
+
+#### Exit codes
+
+| Code | Meaning | Bounded reasons |
+|---|---|---|
+| `0` | Promoted | — |
+| `1` | Internal failure; nothing was written | `promotion_unavailable` |
+| `2` | Configuration or argument refused before any database work | `cli_only`, `arguments_invalid`, `datapath_unconfigured`, `database_unavailable`, `maintainer_auth_unconfigured`, `maintainer_auth_unavailable` |
+| `3` | Maintainer not authenticated | `maintainer_unauthorized` |
+| `4` | Evidence or revision refused | `immutable_proof_mismatch`, `revision_not_promotable`, `activation_refused` |
+
+Every non-zero exit leaves active revisions, native universal rows, the projection output, the
+resolved cache, and the evidence ledger exactly as they were.
+
+#### Retrying after a refusal
+
+1. `activation_refused` with the current characterization is the normal state: the document records
+   no selected projection, so nothing is promotable yet. Nothing to retry.
+2. `immutable_proof_mismatch` means the characterization has moved. Re-read
+   `04-CHARACTERIZATION.md`, confirm the two revisions it now names, and re-run with those.
+3. `revision_not_promotable` means the name is unknown or already active. Check
+   `bin/validate-conversion-rules.php` output for the current gate state.
+4. `characterization_facts_mismatch` (surfaced as `activation_refused`) means the document no longer
+   matches the facts pinned in `GrocyAiConversionService`. Refresh the evidence properly: re-run the
+   dual-branch characterization, update the document and the pinned constant together, and re-run
+   `release-gate.sh conversions`, which re-derives the facts from the two immutable git revisions.
+5. Never work around a refusal by editing the characterization document alone. The pinned facts
+   constant exists precisely so that editing the document is not enough to widen the gate.
+
+Promote one revision at a time. Each promotion records its own evidence row bound to the revisions
+it activated.
+
 ### Cleanup boundary
 
 Activation adds evidence and rows. It never drops a table, trigger, or index, never removes a
@@ -261,8 +359,10 @@ cd /Users/ian/Documents/Repos/grocy-mcp
 
 `release-gate.sh conversions` proves the Phase 4 portable manifest, the immutable main/stable
 revisions and their byte-equal characterized migrations, the cache/trigger adapter contract, the
-eight protected-consumer proofs, the evidence-ledger and single-activation-statement contract, and
-the full conversion suite. It resolves the stable side from `GROCY_AI_STABLE_REPO` when a separate
+eight protected-consumer proofs, the evidence-ledger and single-activation-statement contract, the
+sole-promotion-command contract (CLI-only, one delegate call, no SQL, no relation names, no generic
+option, no HTTP route or API path, no second command, no committed secret or secret path), and the
+full conversion suite. It resolves the stable side from `GROCY_AI_STABLE_REPO` when a separate
 stable checkout exists and otherwise from the same repository, and honours `GROCY_AI_PHP` when the
 required PHP is not the default `php`.
 

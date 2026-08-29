@@ -264,11 +264,11 @@ Plans:
 
 **Wave 9** *(blocked on Wave 8 completion)*
 
-- [ ] 04-08-PLAN.md — Gate the sole reusable activation/projection transaction on immutable dual-branch proof.
+- [x] 04-08-PLAN.md — Gate the sole reusable activation/projection transaction on immutable dual-branch proof.
 
 **Wave 10** *(blocked on Wave 9 completion)*
 
-- [ ] 04-10-PLAN.md — Add the maintainer-only, evidence-gated command as the sole operational promotion path.
+- [x] 04-10-PLAN.md — Add the maintainer-only, evidence-gated command as the sole operational promotion path.
 
 **Cross-cutting constraints:**
 

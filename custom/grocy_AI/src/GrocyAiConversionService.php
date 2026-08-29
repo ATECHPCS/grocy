@@ -7,6 +7,17 @@ use PDO;
 class GrocyAiConversionService
 {
 	private const RELATIVE_TOLERANCE = 0.000000000001;
+	/**
+	 * The pinned checksum of every immutable Plan 01 fact: both branch revisions, the characterized
+	 * migration hashes, the cache objects, the cache key schema, the query-plan checksum, and all
+	 * eight protected-consumer outputs. The selected projection is deliberately excluded — it is the
+	 * one field the gate exists to let change.
+	 *
+	 * A characterization document that disagrees with this constant cannot activate anything, so
+	 * editing the document is not enough to widen the gate: the constant must change too, and the
+	 * release gate re-derives the document's facts from the two immutable git revisions.
+	 */
+	private const CHARACTERIZATION_FACTS_SHA256 = '92e23d21fa9caa3c96e9b28cbade9ef6f38c9797393196b51293225a1be3c0e1';
 	// Redundancy is a maintainer-facing observation about a hand-entered override, so it uses a
 	// looser tolerance than the exact reciprocal checks that block a rule.
 	private const COVERAGE_REDUNDANCY_TOLERANCE = 0.0001;
@@ -147,6 +158,10 @@ class GrocyAiConversionService
 		{
 			return $this->ActivationResult('inactive', ['characterization_unreadable']);
 		}
+		if (!hash_equals(self::CHARACTERIZATION_FACTS_SHA256, $this->CharacterizationFactsHash($characterization)))
+		{
+			return $this->ActivationResult('inactive', ['characterization_facts_mismatch']);
+		}
 		if (!is_string($bundle['characterization_sha256'] ?? null) || hash('sha256', $document) !== (string)$bundle['characterization_sha256'])
 		{
 			return $this->ActivationResult('inactive', ['characterization_stale']);
@@ -236,6 +251,89 @@ class GrocyAiConversionService
 			'activated_revision_ids' => $revisionIds,
 			'selected_adapter' => $documentAdapter,
 			'projected_universal_rows' => $projected
+		];
+	}
+
+	/**
+	 * The two immutable branch revisions the current characterization names, for a caller that must
+	 * assert which evidence it reviewed. Returns null when the document is unavailable or
+	 * unparseable, so the caller defers the real refusal to `ActivateVerifiedRuleset`.
+	 *
+	 * @return array{main: string, stable: string}|null
+	 */
+	public function ImmutableProofArtifacts(string $characterizationPath): ?array
+	{
+		$document = is_file($characterizationPath) ? file_get_contents($characterizationPath) : false;
+		if (!is_string($document) || $document === '')
+		{
+			return null;
+		}
+		$characterization = $this->ParseCharacterization($document);
+		if ($characterization === null)
+		{
+			return null;
+		}
+		return ['main' => $characterization['main_commit'], 'stable' => $characterization['stable_commit']];
+	}
+
+	/**
+	 * Whether a named revision is one this module owns and could still be promoted. It is a bounded
+	 * pre-check for a caller's error reporting only; `ActivateVerifiedRuleset` re-proves everything.
+	 */
+	public function RevisionIsPromotable(string $revisionId): bool
+	{
+		if (preg_match('/^[a-z][a-z0-9_-]{0,63}$/D', $revisionId) !== 1
+			|| !$this->ModuleRelationAvailable('grocy_ai_conversion_rule_revisions'))
+		{
+			return false;
+		}
+		$statement = $this->Db->prepare("SELECT 1 FROM grocy_ai_conversion_rule_revisions WHERE id = ? AND status = 'inactive'");
+		$statement->execute([$revisionId]);
+		return $statement->fetchColumn() !== false;
+	}
+
+	/**
+	 * Builds the activation bundle from the current characterization document so no caller has to
+	 * restate — or can substitute — an adapter, factor, cache key, or protected-consumer proof.
+	 * `ActivateVerifiedRuleset` re-reads the same document independently and re-proves every field,
+	 * so a document changed between the two reads still fails closed.
+	 */
+	public function ActivationBundleFromCharacterization(string $characterizationPath, array $revisionIds): array
+	{
+		$document = is_file($characterizationPath) ? file_get_contents($characterizationPath) : false;
+		if (!is_string($document) || $document === '')
+		{
+			return ['characterization_path' => $characterizationPath, 'revision_ids' => $revisionIds];
+		}
+		$characterization = $this->ParseCharacterization($document);
+		if ($characterization === null)
+		{
+			return ['characterization_path' => $characterizationPath, 'revision_ids' => $revisionIds];
+		}
+
+		$protectedOutputs = [];
+		foreach ($characterization['protected_outputs'] as $category => $proof)
+		{
+			$protectedOutputs[] = [
+				'category' => $category,
+				'main' => $proof['value'],
+				'stable' => $proof['value'],
+				'path' => $proof['path']
+			];
+		}
+
+		return [
+			'characterization_path' => $characterizationPath,
+			'characterization_sha256' => hash('sha256', $document),
+			'main_commit' => $characterization['main_commit'],
+			'stable_commit' => $characterization['stable_commit'],
+			'migration_hashes' => $characterization['migration_hashes'],
+			'cache_objects' => $characterization['cache_objects'],
+			'cache_key_schema' => $characterization['cache_key_schema'],
+			'query_plan_sha256' => $characterization['query_plan_sha256'],
+			'selected_adapter' => $characterization['selected_adapter'],
+			'protected_outputs' => $protectedOutputs,
+			'revision_ids' => $revisionIds
 		];
 	}
 
@@ -567,6 +665,16 @@ class GrocyAiConversionService
 		}
 		sort($normalized, SORT_STRING);
 		return $this->CanonicalJson($normalized);
+	}
+
+	/**
+	 * The checksum of the immutable facts only. Excluding the selected projection is what lets a
+	 * maintainer record a chosen adapter without being able to restate any characterized fact.
+	 */
+	private function CharacterizationFactsHash(array $characterization): string
+	{
+		unset($characterization['selected_adapter']);
+		return hash('sha256', $this->CanonicalJson($characterization));
 	}
 
 	private function EvidenceHash(array $bundle, array $characterization, array $revisionIds): string

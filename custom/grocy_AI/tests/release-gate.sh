@@ -7,10 +7,16 @@ stable_repo=${GROCY_AI_STABLE_REPO:-/Users/ian/Documents/Repos/grocy-atech-relea
 companion_repo=${GROCY_AI_COMPANION_REPO:-/Users/ian/Documents/Repos/grocy-mcp}
 
 # Both maintained branches may live in one checkout (every immutable revision is reachable from it)
-# or in two. Resolve the stable side once so the gate is identical on either layout.
+# or in two. Resolve the stable side once so the gate is identical on either layout: with a separate
+# stable checkout the stable tree is its HEAD, otherwise it is the stable branch in this repository.
+stable_ref=HEAD
 if ! git -C "$stable_repo" rev-parse --git-dir > /dev/null 2>&1; then
 	stable_repo=$main_repo
+	stable_ref=${GROCY_AI_STABLE_REF:-atech-release}
 fi
+
+# The repository requires a specific PHP; the default `php` on a host is not always it.
+php_runner=${GROCY_AI_PHP:-php}
 
 sha256()
 {
@@ -158,14 +164,14 @@ EOF
 	fi
 	pass taxonomy_storage_boundary
 
-	dockerfile=$(git -C "$stable_repo" show HEAD:Dockerfile.atech 2>/dev/null) || fail taxonomy_stable_dockerfile
+	dockerfile=$(git -C "$stable_repo" show "${stable_ref}:Dockerfile.atech" 2>/dev/null) || fail taxonomy_stable_dockerfile
 	printf '%s\n' "$dockerfile" | grep -Fqx 'COPY custom/grocy_AI /app/www/custom/grocy_AI' || fail taxonomy_stable_module_overlay
 	printf '%s\n' "$dockerfile" | grep -Fqx 'COPY public/custom/grocy_AI /app/www/public/custom/grocy_AI' || fail taxonomy_stable_asset_overlay
 	pass taxonomy_stable_overlay
 
-	run_quiet taxonomy_validation php "$main_repo/custom/grocy_AI/tests/run.php" taxonomy-validation
-	run_quiet taxonomy_production_paths php "$main_repo/custom/grocy_AI/tests/run.php" taxonomy-production-paths
-	run_quiet taxonomy_service_lint php -l "$main_repo/custom/grocy_AI/src/GrocyAiTaxonomyService.php"
+	run_quiet taxonomy_validation "$php_runner" "$main_repo/custom/grocy_AI/tests/run.php" taxonomy-validation
+	run_quiet taxonomy_production_paths "$php_runner" "$main_repo/custom/grocy_AI/tests/run.php" taxonomy-production-paths
+	run_quiet taxonomy_service_lint "$php_runner" -l "$main_repo/custom/grocy_AI/src/GrocyAiTaxonomyService.php"
 
 	echo "RELEASE_GATE: PASS (taxonomy)"
 }
@@ -179,6 +185,7 @@ conversions_release_gate()
 
 	# Every Phase 4 module artifact must be a declared portable file that actually exists.
 	required_portable_paths=$(printf '%s\n' \
+		'custom/grocy_AI/bin/activate-verified-conversion-ruleset.php' \
 		'custom/grocy_AI/bin/validate-conversion-rules.php' \
 		'custom/grocy_AI/src/GrocyAiConversionController.php' \
 		'custom/grocy_AI/src/GrocyAiConversionMigration.php' \
@@ -284,7 +291,39 @@ EOF
 	fi
 	pass conversions_activation_ledger_contract
 
-	php_runner=${GROCY_AI_PHP:-php}
+	# The promotion command is the sole operational path, and it must stay a thin delegate.
+	command_source="$main_repo/custom/grocy_AI/bin/activate-verified-conversion-ruleset.php"
+	[ -f "$command_source" ] || fail conversions_promotion_command_present
+	[ "$(grep -c -- '->ActivateVerifiedRuleset(' "$command_source")" -eq 1 ] || fail conversions_promotion_single_delegate
+	grep -Fq "PHP_SAPI !== 'cli'" "$command_source" || fail conversions_promotion_cli_only
+	if grep -Eq '\b(INSERT|UPDATE|DELETE|REPLACE|CREATE|DROP|ALTER)\b' "$command_source"; then
+		fail conversions_promotion_no_sql
+	fi
+	if grep -Eq 'quantity_unit_conversions|cache__|grocy_ai_conversion_' "$command_source"; then
+		fail conversions_promotion_no_relation_names
+	fi
+	if grep -Eq -- '--(adapter|factor|cache|sql|projection|path)\b' "$command_source"; then
+		fail conversions_promotion_no_generic_option
+	fi
+	# No browser or HTTP surface may reach promotion, and no alternative command may exist.
+	if grep -Eqi 'activate|promot' "$main_repo/custom/grocy_AI/routes.php"; then
+		fail conversions_promotion_no_http_route
+	fi
+	if grep -Eqi 'ActivateVerifiedRuleset|activate-verified' "$main_repo/custom/grocy_AI/src/GrocyAiApiController.php"; then
+		fail conversions_promotion_no_api_path
+	fi
+	alternative_commands=$(find "$main_repo/custom/grocy_AI/bin" -type f -name '*.php' -exec grep -l -- '->ActivateVerifiedRuleset(' {} + | LC_ALL=C sort)
+	[ "$alternative_commands" = "$command_source" ] || fail conversions_promotion_sole_command
+	# The maintainer secret is deployment-owned: no path or secret may be committed.
+	if grep -Eq '/etc/[A-Za-z0-9_/.-]*(auth|secret)' "$command_source"; then
+		fail conversions_promotion_no_committed_secret_path
+	fi
+	if grep -Eq '[0-9a-f]{64}' "$command_source"; then
+		fail conversions_promotion_no_committed_secret
+	fi
+	pass conversions_sole_promotion_command
+
+	run_quiet conversions_activation_command "$php_runner" "$main_repo/custom/grocy_AI/tests/run.php" conversion-activation-command
 	run_quiet conversions_release_gate_cases "$php_runner" "$main_repo/custom/grocy_AI/tests/run.php" conversion-release-gate
 	run_quiet conversions_post_activation_bypass "$php_runner" "$main_repo/custom/grocy_AI/tests/run.php" conversion-post-activation-bypass
 	run_quiet conversions_native_save_hook "$php_runner" "$main_repo/custom/grocy_AI/tests/run.php" conversion-native-save-hook
@@ -294,6 +333,7 @@ EOF
 	run_quiet conversions_coverage "$php_runner" "$main_repo/custom/grocy_AI/tests/run.php" conversion-coverage
 	run_quiet conversions_readonly_cli "$php_runner" "$main_repo/custom/grocy_AI/tests/run.php" conversion-readonly-cli
 	run_quiet conversions_module_suite env GROCY_BLADE_AUTOLOAD="$main_repo/packages/autoload.php" "$php_runner" "$main_repo/custom/grocy_AI/tests/run.php"
+	run_quiet conversions_command_lint "$php_runner" -l "$command_source"
 	run_quiet conversions_migration_lint "$php_runner" -l "$migration_source"
 	run_quiet conversions_service_lint "$php_runner" -l "$service_source"
 	run_quiet conversions_controller_lint "$php_runner" -l "$main_repo/custom/grocy_AI/src/GrocyAiConversionController.php"
@@ -447,11 +487,11 @@ grep -Fq "$selection_summary_call" "$main_repo/views/productform.blade.php" || f
 git -C "$stable_repo" show "${stable_runtime_sha}:views/productform.blade.php" | grep -Fq "$selection_summary_call" || fail stable_selection_summary_localization
 pass selection_summary_localization
 
-run_quiet main_php_contract env GROCY_BLADE_AUTOLOAD="$main_repo/packages/autoload.php" php "$main_repo/custom/grocy_AI/tests/run.php"
-run_quiet main_barcode_handoff php "$main_repo/custom/grocy_AI/tests/barcode-handoff.php"
-run_quiet stable_controller_lint php -l "$stable_repo/custom/grocy_AI/src/GrocyAiApiController.php"
-run_quiet stable_routes_lint php -l "$stable_repo/custom/grocy_AI/routes.php"
-run_quiet stable_migration_lint php -l "$stable_repo/migrations/0256.php"
+run_quiet main_php_contract env GROCY_BLADE_AUTOLOAD="$main_repo/packages/autoload.php" "$php_runner" "$main_repo/custom/grocy_AI/tests/run.php"
+run_quiet main_barcode_handoff "$php_runner" "$main_repo/custom/grocy_AI/tests/barcode-handoff.php"
+run_quiet stable_controller_lint "$php_runner" -l "$stable_repo/custom/grocy_AI/src/GrocyAiApiController.php"
+run_quiet stable_routes_lint "$php_runner" -l "$stable_repo/custom/grocy_AI/routes.php"
+run_quiet stable_migration_lint "$php_runner" -l "$stable_repo/migrations/0256.php"
 run_quiet browser_release npm --prefix "$main_repo/custom/grocy_AI/tests/browser" run test:release
 run_quiet companion_unittest sh -c 'cd "$1" && exec .venv/bin/python -m unittest discover -s tests' sh "$companion_repo"
 

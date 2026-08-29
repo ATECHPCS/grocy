@@ -36,6 +36,14 @@ protected-consumer proof, and it fails closed otherwise. After it writes univers
 characterized `quantity_unit_conversions_INS/UPD/DEL` triggers derive the inverse rows and rebuild
 `cache__quantity_unit_conversions_resolved`; the module issues no cache SQL. The current
 characterization records no selected projection, so activation is unreachable in production today.
+The only operational way to reach that transaction is the CLI command
+`custom/grocy_AI/bin/activate-verified-conversion-ruleset.php`, which authenticates the operator
+against a deployment-owned secret file (`GROCY_AI_MAINTAINER_AUTH_FILE`, here
+`/etc/komodo/grocy/maintainer-auth`) and accepts only a named revision plus the two immutable proof
+artifacts. There is no browser activation toggle, no HTTP route, and no API path to promotion, and
+no command argument accepts SQL, a cache key, an adapter, a factor, or a path. After a promotion the
+generic native universal POST/PUT remains rejected exactly as before, while product-scoped
+package/count and measured-density conversions keep their normal Grocy Save behavior.
 Activation never drops schema objects, removes superseded native rows, or reconciles redundant
 product overrides — all conversion cleanup remains Phase 6 work. Stable differs from the portable
 module bytes only in the documented adapters (controller namespace/base class, route syntax, Blade

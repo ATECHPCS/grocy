@@ -1,4 +1,5 @@
 custom/grocy_AI/README.md
+custom/grocy_AI/bin/activate-verified-conversion-ruleset.php
 custom/grocy_AI/bin/validate-conversion-rules.php
 custom/grocy_AI/bin/validate-inventory-taxonomy.php
 custom/grocy_AI/module-version.json
