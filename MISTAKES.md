@@ -9,7 +9,13 @@ store, not here.
 
 ## Patterns (promote at 3 hits)
 
-*(none yet)*
+- `custom/grocy_AI/tests/release-gate.sh` assumes the maintainer's macOS layout and toolchain:
+  hardcoded `/Users/ian/Documents/Repos/...` repo paths, `shasum -a 256`, a bare `php`, a `HEAD`
+  stable ref, and a literal portable-path count. Each assumption breaks on a single-checkout Linux
+  workspace. → Any new gate work must resolve repos and refs via env override with a same-checkout
+  fallback (`GROCY_AI_STABLE_REPO`, `GROCY_AI_STABLE_REF`), run PHP through `$php_runner`
+  (`GROCY_AI_PHP`), hash through the `sha256()` helper, and derive counts from
+  `portable-files.txt` rather than a literal. (hits: 2)
 
 ## Observations (first sightings)
 
@@ -40,10 +46,3 @@ store, not here.
   another's input against a file, at least one immutable anchor must live outside that file. Fixed by
   pinning `CHARACTERIZATION_FACTS_SHA256` in `GrocyAiConversionService`. (hits: 1)
 
-- 2026-08-29: `custom/grocy_AI/tests/release-gate.sh` was written for the macOS layout — hardcoded
-  `/Users/ian/Documents/Repos/...` paths and `shasum -a 256`. On Linux both fail. Its Phase 2
-  `candidate|predeploy|evidence` modes also hardcode `[ "$portable_count" -eq 12 ]` while
-  `portable-files.txt` now has 35 paths. → New gate subcommands must resolve repos via env override
-  with a same-checkout fallback, use a `sha256sum`/`shasum` helper, and derive counts from the
-  manifest rather than a literal. (hits: 2 — hit again in 04-10: the taxonomy gate read the stable
-  tree from `HEAD` and invoked a bare `php`; both now use `$stable_ref` and `$php_runner`.)
