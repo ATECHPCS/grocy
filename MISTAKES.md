@@ -35,9 +35,15 @@ store, not here.
   universal rows become 2N native rows. → Never assert conversion cache/row counts from reasoning;
   run the fixture and read the actual rows first. (hits: 1)
 
+- 2026-08-29: A CLI that builds its evidence bundle from the same document the service re-reads is
+  self-consistent, so a tampered document promoted successfully. → When one component validates
+  another's input against a file, at least one immutable anchor must live outside that file. Fixed by
+  pinning `CHARACTERIZATION_FACTS_SHA256` in `GrocyAiConversionService`. (hits: 1)
+
 - 2026-08-29: `custom/grocy_AI/tests/release-gate.sh` was written for the macOS layout — hardcoded
   `/Users/ian/Documents/Repos/...` paths and `shasum -a 256`. On Linux both fail. Its Phase 2
   `candidate|predeploy|evidence` modes also hardcode `[ "$portable_count" -eq 12 ]` while
   `portable-files.txt` now has 35 paths. → New gate subcommands must resolve repos via env override
   with a same-checkout fallback, use a `sha256sum`/`shasum` helper, and derive counts from the
-  manifest rather than a literal. (hits: 1)
+  manifest rather than a literal. (hits: 2 — hit again in 04-10: the taxonomy gate read the stable
+  tree from `HEAD` and invoked a bare `php`; both now use `$stable_ref` and `$php_runner`.)

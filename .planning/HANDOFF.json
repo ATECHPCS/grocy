@@ -67,7 +67,7 @@
       "id": 10,
       "name": "04-10 maintainer-only evidence-gated promotion command",
       "status": "done",
-      "commit": null
+      "commit": "726db0a2"
     }
   ],
   "remaining_tasks": [],
