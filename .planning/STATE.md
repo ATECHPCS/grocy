@@ -140,7 +140,7 @@ None yet.
 
 ### Blockers/Concerns
 
-- [Phase 1/Phase 2]: Five browser specs (@mob01, @mob08 320px, @enr05 320px responsive review, barcode-handoff @enr02, contract-review @enr05) fail on both engines and already failed at end-of-Phase-3 commit ccade631. The 320px overflow is exactly 16px from the fixture's negative-margin `.row` on `#grocy-ai-product-enrichment`. This contradicts the Phase 1 and Phase 2 mobile completion records and needs its own quick task.
+- [RESOLVED 2026-08-28 by quick task 260828-4qc]: The five long-standing browser failures were two fixture-only layout divergences from Bootstrap (an auto grid track and an unconstrained file input). The full matrix is now 184/184.
 
 - [Phase 1]: Actual supported phone/browser versions and acceptable LAN latency thresholds require recorded physical-device measurement.
 - [Phase 2]: Companion provider concurrency, timeout, cache, authentication, and secure-media behavior require direct inspection during planning.
@@ -153,6 +153,7 @@ None yet.
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
 | 260813-1bt | Fix Phase 1 GTIN touch target, invalid state, camera recovery, and stable deployment | 2026-08-13 | f3df5049 | [260813-1bt-fix-phase-1-gtin-touch-target-invalid-st](./quick/260813-1bt-fix-phase-1-gtin-touch-target-invalid-st/) |
+| 260828-4qc | Fix the Phase 1/Phase 2 mobile overflow baseline (browser suite 174/10 -> 184/0) | 2026-08-28 | 16843d95 | [260828-4qc-fix-phase-1-2-mobile-overflow-baseline](./quick/260828-4qc-fix-phase-1-2-mobile-overflow-baseline/) |
 | Phase 02 P11 | 10 min | 2 tasks | 10 files |
 | Phase 02 P12 | 20 min | 2 tasks | 4 files |
 | Phase 02 P13 | 35 min | 2 tasks | 6 files |

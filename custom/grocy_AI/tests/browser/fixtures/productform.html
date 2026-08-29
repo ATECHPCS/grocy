@@ -34,11 +34,16 @@
 		.alert-secondary { background: #e2e3e5; color: #383d41; }
 		.alert-success { background: #d4edda; color: #155724; }
 		.alert-danger { background: #f8d7da; color: #721c24; }
-		.product-form-grid { display: grid; gap: 24px; }
+		/* minmax(0, 1fr) mirrors Bootstrap's container: a grid item — notably the enrichment
+		   .row and its -8px margins — must not force its track wider than the viewport. */
+		.product-form-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 24px; }
 		.form-group { margin-bottom: 16px; }
 		.form-group label { display: block; margin-bottom: 4px; }
+		/* Bootstrap's .custom-file-input is width:100%; a bare file input keeps a large
+		   intrinsic width and would otherwise overflow a narrow viewport. */
+		.form-group input[type="file"] { display: block; width: 100%; max-width: 100%; }
 		.save-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-		@media (min-width: 992px) { .product-form-grid { grid-template-columns: 1fr 1fr; } }
+		@media (min-width: 992px) { .product-form-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
 	</style>
 	<link rel="stylesheet" href="/assets/grocy-ai.css?v=2.5.0">
 </head>
