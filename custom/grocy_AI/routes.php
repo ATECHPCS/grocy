@@ -3,6 +3,7 @@
 use Grocy\Middleware\CorsMiddleware;
 use Grocy\Middleware\JsonMiddleware;
 use GrocyAI\Controllers\Api\GrocyAiApiController;
+use GrocyAI\Controllers\GrocyAiConversionController;
 use Slim\Routing\RouteCollectorProxy;
 
 require_once __DIR__ . '/src/GrocyAiDiagnostic.php';
@@ -12,7 +13,10 @@ require_once __DIR__ . '/src/GrocyAiBarcodeService.php';
 require_once __DIR__ . '/src/GrocyAiService.php';
 require_once __DIR__ . '/src/GrocyAiTaxonomyMigration.php';
 require_once __DIR__ . '/src/GrocyAiTaxonomyService.php';
+require_once __DIR__ . '/src/GrocyAiConversionMigration.php';
+require_once __DIR__ . '/src/GrocyAiConversionService.php';
 require_once __DIR__ . '/src/GrocyAiApiController.php';
+require_once __DIR__ . '/src/GrocyAiConversionController.php';
 
 $app->group('/api/grocy-ai', function (RouteCollectorProxy $group)
 {
@@ -21,5 +25,11 @@ $app->group('/api/grocy-ai', function (RouteCollectorProxy $group)
 	$group->get('/products/enrich/upc/{upc}', [GrocyAiApiController::class, 'EnrichByUpc']);
 	$group->get('/products/{productId}/taxonomy', [GrocyAiApiController::class, 'ProductTaxonomy']);
 	$group->put('/products/{productId}/taxonomy', [GrocyAiApiController::class, 'AssignProductTaxonomy']);
+	$group->get('/products/{productId}/conversion-status', [GrocyAiApiController::class, 'ProductConversionStatus']);
+	$group->get('/conversions/validate', [GrocyAiApiController::class, 'ValidateConversion']);
+	$group->get('/conversions/resolved-provenance', [GrocyAiApiController::class, 'ResolvedConversionProvenance']);
+	$group->get('/conversions/coverage', [GrocyAiApiController::class, 'ConversionCoverage']);
 	$group->get('/images/{variant}/{token}', [GrocyAiApiController::class, 'FetchImage']);
 })->add(new CorsMiddleware($container, $app->getResponseFactory()))->add(new JsonMiddleware($container, $app->getResponseFactory()));
+
+$app->get('/grocyai/conversioncoverage', [GrocyAiConversionController::class, 'ConversionCoverage']);

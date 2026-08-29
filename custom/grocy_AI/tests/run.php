@@ -50,6 +50,31 @@ if (is_file($taxonomyTestFile))
 	require_once $taxonomyTestFile;
 }
 
+$conversionMigrationFile = __DIR__ . '/../src/GrocyAiConversionMigration.php';
+if (is_file($conversionMigrationFile))
+{
+	require_once $conversionMigrationFile;
+}
+
+$conversionServiceFile = __DIR__ . '/../src/GrocyAiConversionService.php';
+if (is_file($conversionServiceFile))
+{
+	require_once $conversionServiceFile;
+}
+
+$conversionRulesTestFile = __DIR__ . '/conversions.php';
+if (is_file($conversionRulesTestFile))
+{
+	require_once $conversionRulesTestFile;
+}
+
+if (($argv[1] ?? '') === 'conversion-characterization')
+{
+	require_once __DIR__ . '/conversion-characterization.php';
+	runConversionCharacterizationContract();
+	exit(0);
+}
+
 use GrocyAI\Services\GrocyAiDiagnostic;
 use GrocyAI\Services\GrocyAiContract;
 use GrocyAI\Services\GrocyAiService;
@@ -217,7 +242,7 @@ function runBladeGroup(): never
 	$assetMatch = [];
 	if (preg_match('/\$grocyAiAssetVersion = \'([^\']+)\'/', $template, $assetMatch) !== 1
 		|| ($assetMatch[1] ?? '') !== $moduleVersion
-		|| substr_count($template, '{{ $grocyAiAssetVersion }}') !== 3)
+		|| substr_count($template, '{{ $grocyAiAssetVersion }}') !== 4)
 	{
 		expectedRed('EXPECTED_RED: blade.integrated_acceptance', 'The CSS and JavaScript asset token is not synchronized with module-version.json');
 	}
@@ -622,6 +647,36 @@ if (($argv[1] ?? null) === 'taxonomy-production-paths')
 	runTaxonomyProductionPaths();
 }
 
+if (($argv[1] ?? null) === 'conversion-rules')
+{
+	runConversionRules();
+}
+
+if (($argv[1] ?? null) === 'conversion-resolution')
+{
+	runConversionResolution();
+}
+
+if (($argv[1] ?? null) === 'conversion-product-status')
+{
+	runConversionProductStatus();
+}
+
+if (($argv[1] ?? null) === 'conversion-coverage')
+{
+	runConversionCoverage();
+}
+
+if (($argv[1] ?? null) === 'conversion-readonly-cli')
+{
+	runConversionReadOnlyCli();
+}
+
+if (($argv[1] ?? null) === 'conversion-native-save-hook')
+{
+	runConversionNativeSaveHook();
+}
+
 if (($argv[1] ?? null) === '--list')
 {
 	foreach ([
@@ -741,7 +796,22 @@ function expectException(callable $callback, string $exceptionClass, string $mes
 check($moduleVersion !== '', 'The portable module version is defined');
 check($hasAssetVersion, 'The product form defines one grocy_AI asset version token');
 check(($assetVersionMatch[1] ?? null) === $moduleVersion, 'The grocy_AI asset token matches the portable module version');
-check(substr_count($productFormTemplate, '{{ $grocyAiAssetVersion }}') === 3, 'All custom product-form assets use the grocy_AI token');
+check(substr_count($productFormTemplate, '{{ $grocyAiAssetVersion }}') === 4, 'All custom product-form assets use the grocy_AI token');
+$resolvedTemplate = file_get_contents($repoRoot . '/views/quantityunitconversionsresolved.blade.php');
+$resolvedAssetMatch = [];
+$hasResolvedAssetVersion = preg_match('/\$grocyAiAssetVersion = \'([^\']+)\'/', $resolvedTemplate, $resolvedAssetMatch) === 1;
+check($hasResolvedAssetVersion, 'The resolved-conversions view defines one grocy_AI asset version token');
+check(($resolvedAssetMatch[1] ?? null) === $moduleVersion, 'The resolved-conversions asset token matches the portable module version');
+check(substr_count($resolvedTemplate, '{{ $grocyAiAssetVersion }}') === 2, 'All custom resolved-conversions assets use the grocy_AI token');
+check(!str_contains($resolvedTemplate, 'conversion-explanations.js?v=\', true) }}{{ $version }}'), 'Resolved-conversions custom JavaScript is independent from the Grocy core version');
+$coverageTemplate = file_get_contents($repoRoot . '/views/grocyai_conversioncoverage.blade.php');
+$coverageAssetMatch = [];
+$hasCoverageAssetVersion = preg_match('/\$grocyAiAssetVersion = \'([^\']+)\'/', $coverageTemplate, $coverageAssetMatch) === 1;
+check($hasCoverageAssetVersion, 'The conversion coverage view defines one grocy_AI asset version token');
+check(($coverageAssetMatch[1] ?? null) === $moduleVersion, 'The conversion coverage asset token matches the portable module version');
+check(substr_count($coverageTemplate, '{{ $grocyAiAssetVersion }}') === 2, 'All custom conversion coverage assets use the grocy_AI token');
+check(str_contains($coverageTemplate, 'permission-MASTER_DATA_EDIT'), 'The conversion coverage report is scoped to MASTER_DATA_EDIT');
+check(!preg_match('/\b(POST|PUT|DELETE)\b/', $coverageTemplate), 'The conversion coverage view declares no write action');
 check(!str_contains($productFormTemplate, 'grocy-ai.css?v=\', true) }}{{ $version }}'), 'Custom CSS is independent from the Grocy core version');
 check(!str_contains($productFormTemplate, 'product-enrichment.js?v=\', true) }}{{ $version }}'), 'Custom JavaScript is independent from the Grocy core version');
 

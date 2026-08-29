@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="en" data-core-version="4.6.0" data-grocy-ai-module-version="2.5.0">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>grocy_AI resolved conversions fixture</title>
+	<link rel="stylesheet" href="/assets/grocy-ai.css?v=2.5.0">
+	<style>
+		:root { --primary: #007bff; --success: #28a745; }
+		* { box-sizing: border-box; }
+		body { margin: 0; padding: 16px; font-family: Roboto, sans-serif; color: #212529; }
+		table { border-collapse: collapse; width: 100%; }
+		th, td { padding: 8px; text-align: left; vertical-align: top; border-bottom: 1px solid #dee2e6; }
+		.d-none { display: none !important; }
+		.text-success { color: #155724; }
+		.text-warning { color: #856404; }
+		.text-danger { color: #721c24; }
+		.text-secondary { color: #383d41; }
+		.btn { min-height: 44px; padding: 8px 12px; border: 1px solid transparent; border-radius: 4px; background: #f8f9fa; }
+		.table-responsive { overflow-x: auto; }
+		.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); }
+	</style>
+</head>
+<body>
+	<main>
+		<div id="table-filter-row">
+			<label for="quantity-unit-filter">Quantity unit</label>
+			<select id="quantity-unit-filter">
+				<option value="all">All</option>
+				<option value="1">cup</option>
+				<option value="2">g</option>
+				<option value="3">tbsp</option>
+				<option value="4">ml</option>
+				<option value="5">Piece</option>
+				<option value="6">Package</option>
+			</select>
+			<button id="clear-filter-button" class="btn" type="button">Clear filter</button>
+		</div>
+
+		<div class="table-responsive">
+		<table id="qu-conversions-resolved-table">
+			<thead>
+				<tr>
+					<th></th>
+					<th>Quantity unit from</th>
+					<th>Quantity unit to</th>
+					<th class="grocy-ai-resolved-factor-column">Factor</th>
+					<th class="grocy-ai-resolved-prose-column"></th>
+					<th>Source</th>
+					<th>Status</th>
+					<th></th>
+				</tr>
+			</thead>
+			<tbody class="d-none">
+				<tr data-grocy-ai-resolved-row="resolved-0" data-product-id="1" data-from-qu-id="4" data-to-qu-id="2">
+					<td></td>
+					<td>ml</td>
+					<td>g</td>
+					<td class="grocy-ai-resolved-factor-column" data-grocy-ai-resolved-factor>1.01</td>
+					<td class="grocy-ai-resolved-prose-column" data-grocy-ai-resolved-prose>This means 1 ml is the same as 1.01 g</td>
+					<td class="grocy-ai-resolved-source" data-grocy-ai-resolved-source></td>
+					<td class="grocy-ai-resolved-status" data-grocy-ai-resolved-status></td>
+					<td>
+						<details class="grocy-ai-conversion-disclosure" data-grocy-ai-resolved-disclosure hidden>
+							<summary aria-label="Show conversion details ml &rarr; g">Show conversion details</summary>
+							<dl class="grocy-ai-conversion-details grocy-ai-resolved-details" data-grocy-ai-resolved-details></dl>
+						</details>
+					</td>
+				</tr>
+				<tr data-grocy-ai-resolved-row="resolved-1" data-product-id="1" data-from-qu-id="1" data-to-qu-id="2">
+					<td></td>
+					<td>cup</td>
+					<td>g</td>
+					<td class="grocy-ai-resolved-factor-column" data-grocy-ai-resolved-factor>237</td>
+					<td class="grocy-ai-resolved-prose-column" data-grocy-ai-resolved-prose>This means 1 cup is the same as 237 g</td>
+					<td class="grocy-ai-resolved-source" data-grocy-ai-resolved-source></td>
+					<td class="grocy-ai-resolved-status" data-grocy-ai-resolved-status></td>
+					<td>
+						<details class="grocy-ai-conversion-disclosure" data-grocy-ai-resolved-disclosure hidden>
+							<summary aria-label="Show conversion details cup &rarr; g">Show conversion details</summary>
+							<dl class="grocy-ai-conversion-details grocy-ai-resolved-details" data-grocy-ai-resolved-details></dl>
+						</details>
+					</td>
+				</tr>
+				<tr data-grocy-ai-resolved-row="resolved-2" data-product-id="1" data-from-qu-id="3" data-to-qu-id="2">
+					<td></td>
+					<td>tbsp</td>
+					<td>g</td>
+					<td class="grocy-ai-resolved-factor-column" data-grocy-ai-resolved-factor>13.5</td>
+					<td class="grocy-ai-resolved-prose-column" data-grocy-ai-resolved-prose>This means 1 tbsp is the same as 13.5 g</td>
+					<td class="grocy-ai-resolved-source" data-grocy-ai-resolved-source></td>
+					<td class="grocy-ai-resolved-status" data-grocy-ai-resolved-status></td>
+					<td>
+						<details class="grocy-ai-conversion-disclosure" data-grocy-ai-resolved-disclosure hidden>
+							<summary aria-label="Show conversion details tbsp &rarr; g">Show conversion details</summary>
+							<dl class="grocy-ai-conversion-details grocy-ai-resolved-details" data-grocy-ai-resolved-details></dl>
+						</details>
+					</td>
+				</tr>
+				<tr data-grocy-ai-resolved-row="resolved-3" data-product-id="1" data-from-qu-id="5" data-to-qu-id="6">
+					<td></td>
+					<td>Piece</td>
+					<td>Package</td>
+					<td class="grocy-ai-resolved-factor-column" data-grocy-ai-resolved-factor>6</td>
+					<td class="grocy-ai-resolved-prose-column" data-grocy-ai-resolved-prose>This means 1 Piece is the same as 6 Package</td>
+					<td class="grocy-ai-resolved-source" data-grocy-ai-resolved-source></td>
+					<td class="grocy-ai-resolved-status" data-grocy-ai-resolved-status></td>
+					<td>
+						<details class="grocy-ai-conversion-disclosure" data-grocy-ai-resolved-disclosure hidden>
+							<summary aria-label="Show conversion details Piece &rarr; Package">Show conversion details</summary>
+							<dl class="grocy-ai-conversion-details grocy-ai-resolved-details" data-grocy-ai-resolved-details></dl>
+						</details>
+					</td>
+				</tr>
+			</tbody>
+		</table>
+		</div>
+	</main>
+
+	<script>
+	(function ()
+	{
+		'use strict';
+
+		// Minimal jQuery/DataTables adapter. It models only the semantics the real
+		// public/viewjs/quantityunitconversionsresolved.js depends on, so that script can be
+		// loaded unmodified and its native filter/reorder behaviour is genuinely exercised.
+		function FixtureQuery(target)
+		{
+			if (!(this instanceof FixtureQuery)) return new FixtureQuery(target);
+			if (typeof target === 'string')
+			{
+				this.elements = Array.from(document.querySelectorAll(target.replace(/:selected/g, ':checked')));
+			}
+			else if (target === window || target === document || target instanceof Element)
+			{
+				this.elements = [target];
+			}
+			else
+			{
+				this.elements = [];
+			}
+			this.length = this.elements.length;
+		}
+
+		window.__fixtureTable = {
+			searchTerm: '',
+			columnSearch: '',
+			draws: 0,
+			adjustments: 0,
+			invalidatedRows: [],
+			transposed: []
+		};
+
+		function visibleRows()
+		{
+			return Array.from(document.querySelectorAll('#qu-conversions-resolved-table tbody tr'));
+		}
+
+		function applySearch()
+		{
+			var term = window.__fixtureTable.columnSearch.toLowerCase();
+			visibleRows().forEach(function (row)
+			{
+				var from = row.children[1].textContent.trim().toLowerCase();
+				var to = row.children[2].textContent.trim().toLowerCase();
+				var matches = term === '' || from === term || to === term;
+				row.classList.toggle('d-none', !matches);
+			});
+		}
+
+		var table = {
+			columns: {
+				adjust: function ()
+				{
+					window.__fixtureTable.adjustments++;
+					return { draw: function () { window.__fixtureTable.draws++; applySearch(); return table; } };
+				}
+			},
+			colReorder: {
+				transpose: function (index)
+				{
+					// The native table is not reordered in this fixture, so transpose is identity.
+					window.__fixtureTable.transposed.push(index);
+					return index;
+				}
+			},
+			column: function (indexes)
+			{
+				window.__fixtureTable.lastColumns = indexes;
+				return {
+					search: function (value)
+					{
+						window.__fixtureTable.columnSearch = value;
+						return { draw: function () { window.__fixtureTable.draws++; applySearch(); return table; } };
+					}
+				};
+			},
+			search: function (value)
+			{
+				window.__fixtureTable.searchTerm = value;
+				return { draw: function () { window.__fixtureTable.draws++; applySearch(); return table; } };
+			},
+			row: function (element)
+			{
+				return {
+					invalidate: function (source)
+					{
+						window.__fixtureTable.invalidatedRows.push((element.getAttribute('data-grocy-ai-resolved-row') || '') + ':' + source);
+						return table;
+					}
+				};
+			},
+			draw: function ()
+			{
+				window.__fixtureTable.draws++;
+				applySearch();
+				return table;
+			}
+		};
+
+		FixtureQuery.prototype.DataTable = function () { return table; };
+		FixtureQuery.prototype.removeClass = function (name)
+		{
+			this.elements.forEach(function (element) { element.classList.remove(name); });
+			return this;
+		};
+		FixtureQuery.prototype.on = function (eventName, handler)
+		{
+			this.elements.forEach(function (element) { element.addEventListener(eventName, handler); });
+			return this;
+		};
+		FixtureQuery.prototype.text = function ()
+		{
+			return this.elements[0] ? this.elements[0].textContent : '';
+		};
+		FixtureQuery.prototype.val = function (value)
+		{
+			if (value === undefined) return this.elements[0] ? this.elements[0].value : '';
+			this.elements.forEach(function (element) { element.value = value; });
+			return this;
+		};
+		FixtureQuery.fn = FixtureQuery.prototype;
+		FixtureQuery.fn.dataTable = { defaults: { columnDefs: [] } };
+		window.$ = window.jQuery = FixtureQuery;
+		window.__t = function (value) { return value; };
+		window.__fixtureAdapterVersion = 'jquery-compatible-fixture-1.0.0';
+	})();
+	</script>
+	<script src="/assets/conversion-explanations.js?v=2.5.0"></script>
+	<script src="/assets/quantityunitconversionsresolved.js"></script>
+</body>
+</html>

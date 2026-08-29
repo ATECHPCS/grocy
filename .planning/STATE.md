@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Phase 4 UI-SPEC approved
-last_updated: "2026-08-23T21:53:40.468Z"
-last_activity: 2026-08-23 -- Phase 4 planning complete
+stopped_at: Phase 4 Plan 04-07 complete
+last_updated: "2026-08-28T00:00:00.000Z"
+last_activity: 2026-08-28 -- Phase 4 Plan 04-07 complete
 progress:
   total_phases: 7
   completed_phases: 2
   total_plans: 44
-  completed_plans: 34
-  percent: 29
+  completed_plans: 42
+  percent: 33
 ---
 
 # Project State
@@ -26,8 +26,8 @@ See: .planning/PROJECT.md (updated 2026-08-20)
 ## Current Position
 
 Phase: 4
-Plan: Not started
-Status: Ready to execute
+Plan: 04-07 complete; 04-08 next (autonomous: false)
+Status: Executing
 Last activity: 2026-08-23 -- Phase 4 planning complete
 
 Progress: [████░░░░░░] 43%
@@ -126,11 +126,21 @@ Recent decisions affecting current work:
 
  - [Phase 02]: Keep stable portable commit c222fb760b2dcd9da843c49a03fc7c6f6d6c97c8 immutable and defer Blade/migration integration replay until its Plan 02-19 adapter child exists. — Exact 12/12 parity and portable GTIN coverage passed without allowing adapter scope into the portable candidate.
 
+- [Phase 04]: Execute 04-09 before 04-06. 04-06-PLAN.md declares depends_on [04-09] and the roadmap places 04-09 in Wave 6; the previous handoff ordering was stale.
+- [Phase 04]: Only a `product_native` conversion status may carry a factor, and the browser redacts it a second time so a tampered inactive/unavailable/blocked response cannot present a usable number.
+- [Phase 04]: Blocker codes map to closed correction-category sentences and are never rendered raw.
+
+- [Phase 04]: `GrocyAiConversionService::UnitKeyForName` is the single owner of the Grocy-unit-name to catalog-key mapping; inspection callers must not restate it.
+
+- [Phase 04]: `portable-files.txt` is missing five module files added by Plans 04-06, 04-07, and 04-09; Plan 04-08 must add them before parity can be trusted.
+
 ### Pending Todos
 
 None yet.
 
 ### Blockers/Concerns
+
+- [Phase 1/Phase 2]: Five browser specs (@mob01, @mob08 320px, @enr05 320px responsive review, barcode-handoff @enr02, contract-review @enr05) fail on both engines and already failed at end-of-Phase-3 commit ccade631. The 320px overflow is exactly 16px from the fixture's negative-margin `.row` on `#grocy-ai-product-enrichment`. This contradicts the Phase 1 and Phase 2 mobile completion records and needs its own quick task.
 
 - [Phase 1]: Actual supported phone/browser versions and acceptable LAN latency thresholds require recorded physical-device measurement.
 - [Phase 2]: Companion provider concurrency, timeout, cache, authentication, and secure-media behavior require direct inspection during planning.
@@ -166,6 +176,6 @@ Items acknowledged for v2 after the preview/audit model is proven:
 
 ## Session Continuity
 
-Last session: 2026-08-21T18:35:45.659Z
-Stopped at: Phase 4 UI-SPEC approved
-Resume file: .planning/phases/04-reusable-conversion-model/04-UI-SPEC.md
+Last session: 2026-08-28
+Stopped at: Phase 4 Plan 04-07 complete
+Resume file: .planning/phases/04-reusable-conversion-model/04-08-PLAN.md

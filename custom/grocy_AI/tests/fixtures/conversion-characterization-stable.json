@@ -1,0 +1,7 @@
+{
+  "branch": "stable",
+  "expected_commit": "6605ae6c2034c6679381de185cc567d80d38db79",
+  "native_default": { "from_qu_id": 2, "to_qu_id": 1, "factor": 0.001 },
+  "product_override": { "product_id": 1, "from_qu_id": 3, "to_qu_id": 1, "factor": 0.5 },
+  "protected_categories": ["stock", "recipe", "purchase", "consumption", "price", "transfer", "meal-plan", "quantity-display"]
+}
