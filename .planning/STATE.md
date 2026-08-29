@@ -153,7 +153,7 @@ None yet.
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
 | 260813-1bt | Fix Phase 1 GTIN touch target, invalid state, camera recovery, and stable deployment | 2026-08-13 | f3df5049 | [260813-1bt-fix-phase-1-gtin-touch-target-invalid-st](./quick/260813-1bt-fix-phase-1-gtin-touch-target-invalid-st/) |
-| 260828-4qc | Fix the Phase 1/Phase 2 mobile overflow baseline (browser suite 174/10 -> 184/0) | 2026-08-28 | pending | [260828-4qc-fix-phase-1-2-mobile-overflow-baseline](./quick/260828-4qc-fix-phase-1-2-mobile-overflow-baseline/) |
+| 260828-4qc | Fix the Phase 1/Phase 2 mobile overflow baseline (browser suite 174/10 -> 184/0) | 2026-08-28 | 16843d95 | [260828-4qc-fix-phase-1-2-mobile-overflow-baseline](./quick/260828-4qc-fix-phase-1-2-mobile-overflow-baseline/) |
 | Phase 02 P11 | 10 min | 2 tasks | 10 files |
 | Phase 02 P12 | 20 min | 2 tasks | 4 files |
 | Phase 02 P13 | 35 min | 2 tasks | 6 files |
