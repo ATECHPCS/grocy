@@ -61,7 +61,7 @@
       "id": 9,
       "name": "04-08 evidence-gated activation and release parity (tasks 1-2; Task 3 checkpoint pending)",
       "status": "awaiting_human_verification",
-      "commit": null
+      "commit": "f8505f57"
     }
   ],
   "remaining_tasks": [
