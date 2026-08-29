@@ -4,10 +4,10 @@
   "phase": "04",
   "phase_name": "reusable-conversion-model",
   "phase_dir": ".planning/phases/04-reusable-conversion-model",
-  "plan": "04-08",
-  "task": 3,
+  "plan": "04-10",
+  "task": 1,
   "total_tasks": 20,
-  "status": "paused",
+  "status": "ready",
   "completed_tasks": [
     {
       "id": 1,
@@ -59,8 +59,8 @@
     },
     {
       "id": 9,
-      "name": "04-08 evidence-gated activation and release parity (tasks 1-2; Task 3 checkpoint pending)",
-      "status": "awaiting_human_verification",
+      "name": "04-08 evidence-gated activation and release parity",
+      "status": "done",
       "commit": "f8505f57"
     }
   ],
@@ -74,12 +74,17 @@
   "blockers": [],
   "human_actions_pending": [
     {
-      "action": "Plan 04-08 Task 3: confirm the evidence-gated reusable activation and normal product-scoped native saves on both maintained branches.",
-      "context": "All automated checks are green: release-gate.sh conversions PASS, 122 PHP checks, 184/184 browser, 36 @conv04, 36 node DOM tests. Follow how-to-verify in 04-08-PLAN.md. Resume signal: \"approved\" or describe the issue.",
+      "action": "Decide the GROCY_AI_MAINTAINER_AUTH_FILE secret path before Plan 04-10 runs.",
+      "context": "04-10-PLAN.md user_setup requires an absolute path to a maintainer-readable secret file outside the repository and outside GROCY_DATAPATH. It must never enter Git or a command-line argument.",
       "blocking": true
     }
   ],
   "decisions": [
+    {
+      "decision": "Plan 04-08 Task 3 human verification was approved on 2026-08-29; the evidence-gated reusable activation and normal product-scoped native save behavior are confirmed.",
+      "rationale": "All automated gates were green and the maintainer confirmed the fail-closed gate on the conversion coverage and native conversion screens.",
+      "phase": "04"
+    },
     {
       "decision": "GrocyAiConversionService::ActivateVerifiedRuleset() is the sole authority that may activate a reusable revision or create the universal native rows a projection needs. It re-reads 04-CHARACTERIZATION.md in one transaction and requires the supplied bundle to equal it in every field.",
       "rationale": "D-12/D-15: no reusable rule may change the effective cache without current immutable dual-branch evidence, and the document must not be recomputed or guessed by a request.",
@@ -137,6 +142,6 @@
     }
   ],
   "uncommitted_files": [],
-  "next_action": "Plan 04-08 Task 3 is a blocking human-verify checkpoint. After approval, proceed to 04-10 (maintainer-only evidence-gated promotion command) which supplies the evidence bundle to ActivateVerifiedRuleset().",
-  "context_notes": "Phase 4 Plans 01-09 implemented. 04-08 tasks 1-2 complete on codex/phase4-characterization: ActivateVerifiedRuleset + evidence ledger + conversions release gate + portable manifest catch-up + docs. All automated gates green (release-gate conversions PASS, 122 PHP checks, 184/184 browser, 36 @conv04). Run PHP with php8.5 on this Linux box (default php is 8.4; composer requires 8.5.*). release-gate.sh conversions honours GROCY_AI_PHP and GROCY_AI_STABLE_REPO. Do not deploy or touch household data."
+  "next_action": "Plan 04-10 (maintainer-only evidence-gated promotion command) is next. It is autonomous: true but blocked on the GROCY_AI_MAINTAINER_AUTH_FILE user_setup decision.",
+  "context_notes": "Phase 4 Plans 01-09 complete; 04-08 approved at its human checkpoint (commits f8505f57, ca7c9295). Only 04-10 remains in Phase 4. Run PHP as php8.5 (default php is 8.4; composer requires 8.5.*). release-gate.sh conversions honours GROCY_AI_PHP and GROCY_AI_STABLE_REPO. Repo-specific traps are in MISTAKES.md. Do not deploy or touch household data."
 }

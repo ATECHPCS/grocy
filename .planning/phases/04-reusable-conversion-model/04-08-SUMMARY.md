@@ -130,8 +130,19 @@ before and after activation.**
   immutable commits and does not run in the single-checkout Linux workspace. It is unchanged by this
   plan and is not part of the 04-08 verification set.
 
+## Human verification (Task 3)
+
+**Approved 2026-08-29.** The user confirmed the evidence-gated reusable activation and normal
+product-scoped native save behavior. Checkpoint re-verification at approval time:
+
+- `php custom/grocy_AI/tests/run.php conversion-release-gate` — passed.
+- `npm --prefix custom/grocy_AI/tests/browser test -- --grep @conv04` — 36 passed.
+
+Plan 04-08 is complete.
+
 ## Next step
 
-Task 3 is a blocking human-verify checkpoint: confirm the fail-closed reusable gate and normal
-product-scoped save behavior on both maintained branches, then Plan 04-10 adds the maintainer-only
-CLI that supplies an evidence bundle to `ActivateVerifiedRuleset()`.
+Plan 04-10 adds the maintainer-only CLI that supplies an evidence bundle to
+`ActivateVerifiedRuleset()`. It is `autonomous: true` but carries a `user_setup` prerequisite: a
+deployment-owned `GROCY_AI_MAINTAINER_AUTH_FILE` secret path outside the repository and the Grocy
+data path.
