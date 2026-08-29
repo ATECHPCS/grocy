@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Phase 4 Plan 04-07 complete
-last_updated: "2026-08-28T00:00:00.000Z"
-last_activity: 2026-08-28 -- Phase 4 Plan 04-07 complete
+stopped_at: Phase 4 Plan 04-08 tasks 1-2 complete; Task 3 human checkpoint pending
+last_updated: "2026-08-29T00:00:00.000Z"
+last_activity: 2026-08-29 -- Phase 4 Plan 04-08 tasks 1-2 complete
 progress:
   total_phases: 7
   completed_phases: 2
   total_plans: 44
-  completed_plans: 42
+  completed_plans: 43
   percent: 33
 ---
 
@@ -26,9 +26,9 @@ See: .planning/PROJECT.md (updated 2026-08-20)
 ## Current Position
 
 Phase: 4
-Plan: 04-07 complete; 04-08 next (autonomous: false)
-Status: Executing
-Last activity: 2026-08-23 -- Phase 4 planning complete
+Plan: 04-08 tasks 1-2 complete; Task 3 is a blocking human-verify checkpoint
+Status: Executing (paused at checkpoint)
+Last activity: 2026-08-29 -- Phase 4 Plan 04-08 evidence-gated activation implemented
 
 Progress: [████░░░░░░] 43%
 
@@ -132,7 +132,13 @@ Recent decisions affecting current work:
 
 - [Phase 04]: `GrocyAiConversionService::UnitKeyForName` is the single owner of the Grocy-unit-name to catalog-key mapping; inspection callers must not restate it.
 
-- [Phase 04]: `portable-files.txt` is missing five module files added by Plans 04-06, 04-07, and 04-09; Plan 04-08 must add them before parity can be trusted.
+- [Phase 04]: `portable-files.txt` is missing five module files added by Plans 04-06, 04-07, and 04-09; Plan 04-08 must add them before parity can be trusted. — RESOLVED by 04-08: the manifest now lists 35 paths including all 15 Phase 4 artifacts.
+
+- [Phase 04]: `GrocyAiConversionService::ActivateVerifiedRuleset()` is the sole authority allowed to activate a reusable revision or create the universal native rows a projection needs; `04-CHARACTERIZATION.md` on disk is the only evidence authority and a bundle that disagrees with it is stale by construction.
+
+- [Phase 04]: The generic native pre-save hook returns the fixed inactive-revision rejection and writes no module row, because `ValidateNativeConversionBeforeWrite` is shared with the read-only validation GET whose zero-write guarantee is asserted on schema, state, and `total_changes`.
+
+- [Phase 04]: Grocy's `quantity_unit_conversions_INS` trigger derives the inverse of every conversion, and `cache__quantity_unit_conversions_resolved` is product-scoped — a universal rule never yields a `product_id IS NULL` cache row.
 
 ### Pending Todos
 
@@ -164,6 +170,7 @@ None yet.
 | Phase 02 P19 | resumed checkpoint | 2 tasks | 8 stable adapters + manifest |
 | Phase 02 P20 | resumed checkpoint | 2 tasks | 1 deployment-evidence record |
 | Phase 02 P21 | resumed checkpoint | 2 tasks | 2 provenance gates + live certification |
+| Phase 04 P08 | 2 tasks + checkpoint | 8 files | activation gate + release parity |
 
 ## Deferred Items
 
@@ -177,6 +184,6 @@ Items acknowledged for v2 after the preview/audit model is proven:
 
 ## Session Continuity
 
-Last session: 2026-08-28
-Stopped at: Phase 4 Plan 04-07 complete
-Resume file: .planning/phases/04-reusable-conversion-model/04-08-PLAN.md
+Last session: 2026-08-29
+Stopped at: Phase 4 Plan 04-08 Task 3 (blocking human-verify checkpoint)
+Resume file: .planning/phases/04-reusable-conversion-model/04-08-SUMMARY.md

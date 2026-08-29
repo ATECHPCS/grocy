@@ -165,12 +165,87 @@ Frozen and preserved are handling/location concerns, not taxonomy identities. Th
 
 When `packages/autoload.php` is present, the native suite also compiles the complete product form and renders the custom asset-version fixture with Grocy's installed Blade engine. To point the same regression at an exact external Composer runtime, set `GROCY_BLADE_AUTOLOAD` to that runtime's `autoload.php`.
 
+## Reusable conversion model
+
+Grocy keeps owning every durable conversion. The module owns only reusable *candidates* and the
+evidence that would let them become real, and it separates the two with one write authority.
+
+### Ownership
+
+- `grocy_ai_conversion_rule_revisions` owns every reusable universal and profile candidate: its
+  source, source version, precise factor, revision hash, and `inactive`/`active` lifecycle. Bootstrap
+  seeds each candidate `inactive`; nothing else may seed one active.
+- `grocy_ai_conversion_activation_evidence` is the immutable ledger. One row records the exact
+  Plan 01 main and stable revisions, the characterization checksum, the selected adapter, the cache
+  key schema, the query-plan checksum, the pinned migration hashes and cache objects, and a checksum
+  over every protected-consumer proof.
+- Native `quantity_unit_conversions` keeps ownership of normal product-scoped conversions plus the
+  universal rows the activation transaction creates. Nothing else writes universal rows.
+
+### The one activation transaction
+
+`GrocyAiConversionService::ActivateVerifiedRuleset()` is the only operation allowed to transition a
+revision active or to produce a reusable cache effect. In one transaction it re-reads
+`.planning/phases/04-reusable-conversion-model/04-CHARACTERIZATION.md`, requires the supplied bundle
+to equal that document in every field, validates every candidate revision hash and the whole rule
+graph, records the evidence row, activates the named revisions, and only then calls the selected
+adapter. Missing, stale, altered, failed, or unequal evidence returns `inactive` with one bounded
+blocker and leaves module records, native rows, and cache snapshots untouched.
+
+The document currently records **no selected projection**, so activation fails closed with
+`selected_projection_absent` on every real call. That is the intended production state: a projection
+becomes possible only when a named candidate has been exercised against current immutable
+dual-branch evidence and the document records it.
+
+### Native trigger and cache behavior
+
+The one supported adapter, `universal_native_rows_v1`, writes universal `quantity_unit_conversions`
+rows for activated mass and volume rules whose units Grocy already has, and stops there. The module
+issues no cache SQL. Everything downstream is Grocy's own characterized behavior:
+
+- `quantity_unit_conversions_INS` derives the inverse row, so five gate-created rows become ten
+  native universal rows.
+- The same trigger rebuilds `cache__quantity_unit_conversions_resolved` from
+  `quantity_unit_conversions_resolved`. That cache is product-scoped: a universal rule appears as
+  resolved rows for each product, never as a `product_id IS NULL` cache row.
+- Cache rows are keyed by `(product_id, from_qu_id, to_qu_id)` through
+  `ix_cache__quantity_unit_conversions_resolved_performance1` on both maintained branches.
+
+### The generic native boundary stays fail-closed
+
+Before and after any activation, every generic reusable-universal `quantity_unit_conversions`
+POST/PUT is rejected by `GenericEntityApiController` before native trigger or cache work, with a
+bounded `conversion_write_blocked:<reason>` error. A request that exactly restates an already
+projected rule is rejected as `reusable_scope_inactive`; a tampered factor is rejected as
+`factor_tolerance`. A generic PUT aimed at a gate-created universal row is rejected the same way.
+Valid product-scoped package/count and measured-density requests keep their normal Grocy Save
+behavior, and existing product conversion rows are never replaced or removed.
+
+### Cleanup boundary
+
+Activation adds evidence and rows. It never drops a table, trigger, or index, never removes a
+superseded native row, and never reconciles duplicate or redundant product overrides. Coverage
+diagnostics only *count* redundant overrides. All conversion cleanup is Phase 6 work and requires a
+scrubbed production-shaped snapshot.
+
+### Stable-only differences
+
+The Phase 4 module files in `custom/grocy_AI/portable-files.txt` are byte-portable and must be
+mirrored to the stable branch unchanged. Only the documented adapters differ on stable: the
+controller namespace and base class, route registration syntax, the Blade view hooks and their
+`$grocyAiAssetVersion` literals, `custom/grocy_AI/version.json`, and the Docker overlay. The
+conversion release gate proves the immutable dual-branch evidence directly from git, so it runs
+identically whether both maintained branches live in one checkout or two.
+
 ## Deterministic release gates
 
 Run the main-repository contracts from `/Users/ian/Documents/Repos/grocy` on `atech-main`:
 
 ```sh
 php custom/grocy_AI/tests/run.php
+bash custom/grocy_AI/tests/release-gate.sh taxonomy
+bash custom/grocy_AI/tests/release-gate.sh conversions
+npm --prefix custom/grocy_AI/tests/browser test -- --grep @conv04
 npm --prefix custom/grocy_AI/tests/browser test -- --grep '@mob01|@mob02|@mob03|@mob04|@mob05|@mob06|@mob07|@mob08'
 npm --prefix custom/grocy_AI/tests/browser run test:release
 python3 .planning/phases/01-safety-baseline-mobile-diagnostics/evidence/check-phone-timings.py --self-test
@@ -183,6 +258,13 @@ Run the companion contract in its separate repository and working directory:
 cd /Users/ian/Documents/Repos/grocy-mcp
 .venv/bin/python -m unittest tests.test_enrichment tests.test_http_api tests.test_diagnostics
 ```
+
+`release-gate.sh conversions` proves the Phase 4 portable manifest, the immutable main/stable
+revisions and their byte-equal characterized migrations, the cache/trigger adapter contract, the
+eight protected-consumer proofs, the evidence-ledger and single-activation-statement contract, and
+the full conversion suite. It resolves the stable side from `GROCY_AI_STABLE_REPO` when a separate
+stable checkout exists and otherwise from the same repository, and honours `GROCY_AI_PHP` when the
+required PHP is not the default `php`.
 
 The browser release script runs the complete Chromium/WebKit matrix with Playwright retries disabled. It uses only the loopback fixture and deterministic route envelopes; it must not contact the household deployment or external providers.
 

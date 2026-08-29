@@ -28,6 +28,19 @@ The small upstream integration surface is:
 
 Phase 4 adds one feature-gated native conversion safety boundary in `controllers/Api/GenericEntityApiController.php`: line 9 imports the module validator; line 54 validates filtered AddObject input before `createRow()->save()`; line 175 validates filtered EditObject input with the actual object ID before `row->update()`; and lines 329-367 contain the `quantity_unit_conversions`-only fail-closed helper. Product-scoped package/count and measured-density requests continue through Grocy's normal native save and cache triggers. Reusable or invalid requests return only bounded errors before native row/cache mutation; this hook never projects or activates reusable rules.
 
+Reusable conversion rules are owned entirely inside the module and stay inactive by default. One
+transaction, `GrocyAiConversionService::ActivateVerifiedRuleset()`, is the only authority allowed to
+transition a reusable revision active or to create the universal `quantity_unit_conversions` rows a
+projection needs; it requires current immutable main/stable characterization evidence plus every
+protected-consumer proof, and it fails closed otherwise. After it writes universal rows, Grocy's own
+characterized `quantity_unit_conversions_INS/UPD/DEL` triggers derive the inverse rows and rebuild
+`cache__quantity_unit_conversions_resolved`; the module issues no cache SQL. The current
+characterization records no selected projection, so activation is unreachable in production today.
+Activation never drops schema objects, removes superseded native rows, or reconciles redundant
+product overrides — all conversion cleanup remains Phase 6 work. Stable differs from the portable
+module bytes only in the documented adapters (controller namespace/base class, route syntax, Blade
+hooks and their asset-version literals, `custom/grocy_AI/version.json`, and the Docker overlay).
+
 The stable release mirrors the portable module bytes first, then carries one separately reviewable eight-path framework adapter commit. Stable retains its `Grocy\Controllers\BaseApiController` namespace and class-based `JsonMiddleware::class`; the other adapter paths are the feature-gated product-form hook, narrow normal-Save continuation, exact migration, cache marker, customization record, and the Docker overlay that installs both new core adapter files at their runtime paths.
 
 The module implementation and contract are documented in [`custom/grocy_AI/README.md`](custom/grocy_AI/README.md).

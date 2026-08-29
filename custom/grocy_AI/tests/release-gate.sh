@@ -3,8 +3,23 @@
 set -eu
 
 main_repo=$(CDPATH= cd -- "$(dirname -- "$0")/../../../" && pwd)
-stable_repo=/Users/ian/Documents/Repos/grocy-atech-release
-companion_repo=/Users/ian/Documents/Repos/grocy-mcp
+stable_repo=${GROCY_AI_STABLE_REPO:-/Users/ian/Documents/Repos/grocy-atech-release}
+companion_repo=${GROCY_AI_COMPANION_REPO:-/Users/ian/Documents/Repos/grocy-mcp}
+
+# Both maintained branches may live in one checkout (every immutable revision is reachable from it)
+# or in two. Resolve the stable side once so the gate is identical on either layout.
+if ! git -C "$stable_repo" rev-parse --git-dir > /dev/null 2>&1; then
+	stable_repo=$main_repo
+fi
+
+sha256()
+{
+	if command -v sha256sum > /dev/null 2>&1; then
+		sha256sum | awk '{print $1}'
+	else
+		shasum -a 256 | awk '{print $1}'
+	fi
+}
 
 fail()
 {
@@ -155,8 +170,146 @@ EOF
 	echo "RELEASE_GATE: PASS (taxonomy)"
 }
 
+conversions_release_gate()
+{
+	temporary_root=$(mktemp -d "${TMPDIR:-/tmp}/grocy-ai-release-gate.XXXXXX")
+	trap 'rm -rf "$temporary_root"' EXIT HUP INT TERM
+	characterization="$main_repo/.planning/phases/04-reusable-conversion-model/04-CHARACTERIZATION.md"
+	[ -f "$characterization" ] || fail conversions_characterization_present
+
+	# Every Phase 4 module artifact must be a declared portable file that actually exists.
+	required_portable_paths=$(printf '%s\n' \
+		'custom/grocy_AI/bin/validate-conversion-rules.php' \
+		'custom/grocy_AI/src/GrocyAiConversionController.php' \
+		'custom/grocy_AI/src/GrocyAiConversionMigration.php' \
+		'custom/grocy_AI/src/GrocyAiConversionService.php' \
+		'custom/grocy_AI/tests/browser/fixtures/quantityunitconversionform.html' \
+		'custom/grocy_AI/tests/browser/fixtures/quantityunitconversionsresolved.html' \
+		'custom/grocy_AI/tests/browser/specs/conversions.spec.js' \
+		'custom/grocy_AI/tests/conversion-characterization.php' \
+		'custom/grocy_AI/tests/conversions.php' \
+		'custom/grocy_AI/tests/fixtures/conversion-characterization-main.json' \
+		'custom/grocy_AI/tests/fixtures/conversion-characterization-stable.json' \
+		'public/custom/grocy_AI/conversion-coverage.js' \
+		'public/custom/grocy_AI/conversion-coverage.test.js' \
+		'public/custom/grocy_AI/conversion-explanations.js' \
+		'public/custom/grocy_AI/conversion-explanations.test.js')
+	manifest="$main_repo/custom/grocy_AI/portable-files.txt"
+	while IFS= read -r path; do
+		grep -Fqx -- "$path" "$manifest" || fail conversions_portable_manifest
+		[ -f "$main_repo/$path" ] || fail conversions_portable_source
+	done <<EOF
+$required_portable_paths
+EOF
+	manifest_paths=$(sed '/^$/d' "$manifest")
+	manifest_sorted=$(printf '%s\n' "$manifest_paths" | LC_ALL=C sort -u)
+	[ "$manifest_paths" = "$manifest_sorted" ] || fail conversions_portable_manifest_sorted_unique
+	case "$manifest_paths" in
+		/*|*'/../'*|../*|*'/..') fail conversions_portable_manifest_safe_paths ;;
+	esac
+	while IFS= read -r path; do
+		[ -n "$path" ] || continue
+		[ -f "$main_repo/$path" ] || fail conversions_portable_manifest_source
+	done <<EOF
+$manifest_paths
+EOF
+	pass conversions_portable_manifest
+
+	# The immutable dual-branch revisions are read from the characterization document, never guessed.
+	main_sha=$(sed -n 's/^| main | `\([0-9a-f]\{40\}\)` |$/\1/p' "$characterization")
+	stable_sha=$(sed -n 's/^| stable | `\([0-9a-f]\{40\}\)` |$/\1/p' "$characterization")
+	[ "$(printf '%s\n' "$main_sha" | awk 'END { print NR }')" -eq 1 ] || fail conversions_main_revision_single
+	[ "$(printf '%s\n' "$stable_sha" | awk 'END { print NR }')" -eq 1 ] || fail conversions_stable_revision_single
+	[ "$main_sha" != "$stable_sha" ] || fail conversions_distinct_branch_revisions
+	assert_commit "$main_repo" "$main_sha" conversions_main
+	assert_commit "$stable_repo" "$stable_sha" conversions_stable
+
+	# The characterized resolver/cache migrations must be byte-equal on both immutable revisions and
+	# equal to the hash the document recorded. Any drift fails closed.
+	migration_lines=$(sed -n 's/^- `\(migrations\/[0-9]\{4\}\.sql\)` SHA-256: `\([0-9a-f]\{64\}\)` on both branches\.$/\1 \2/p' "$characterization")
+	[ -n "$migration_lines" ] || fail conversions_migration_evidence_present
+	migration_count=0
+	while IFS=' ' read -r migration_path migration_hash; do
+		[ -n "$migration_path" ] || continue
+		git -C "$main_repo" cat-file -e "${main_sha}:${migration_path}" 2>/dev/null || fail conversions_main_migration_blob
+		git -C "$stable_repo" cat-file -e "${stable_sha}:${migration_path}" 2>/dev/null || fail conversions_stable_migration_blob
+		main_hash=$(git -C "$main_repo" show "${main_sha}:${migration_path}" | sha256)
+		stable_hash=$(git -C "$stable_repo" show "${stable_sha}:${migration_path}" | sha256)
+		[ "$main_hash" = "$stable_hash" ] || fail conversions_migration_branch_parity
+		[ "$main_hash" = "$migration_hash" ] || fail conversions_migration_evidence_hash
+		migration_count=$((migration_count + 1))
+	done <<EOF
+$migration_lines
+EOF
+	[ "$migration_count" -ge 2 ] || fail conversions_migration_evidence_count
+	pass conversions_immutable_branch_evidence
+
+	# The characterized trigger/cache adapter contract must still exist in the pinned cache migration.
+	cache_index=$(sed -n 's/^.*`\(ix_cache__[a-z0-9_]*\)` for the cache key `\(([^`]*)\)` on both branches;.*$/\1/p' "$characterization")
+	cache_key=$(sed -n 's/^.*`\(ix_cache__[a-z0-9_]*\)` for the cache key `\(([^`]*)\)` on both branches;.*$/\2/p' "$characterization")
+	[ "$(printf '%s\n' "$cache_index" | awk 'END { print NR }')" -eq 1 ] || fail conversions_cache_index_single
+	[ -n "$cache_key" ] || fail conversions_cache_key_present
+	for branch_repo_sha in "$main_repo:$main_sha" "$stable_repo:$stable_sha"; do
+		branch_repo=${branch_repo_sha%:*}
+		branch_sha=${branch_repo_sha##*:}
+		cache_sql=$(git -C "$branch_repo" show "${branch_sha}:migrations/0225.sql")
+		printf '%s\n' "$cache_sql" | grep -Fq 'CREATE TABLE cache__quantity_unit_conversions_resolved' || fail conversions_cache_table_contract
+		printf '%s\n' "$cache_sql" | grep -Fq "CREATE INDEX $cache_index" || fail conversions_cache_index_contract
+		for trigger in quantity_unit_conversions_INS quantity_unit_conversions_UPD quantity_unit_conversions_DEL; do
+			printf '%s\n' "$cache_sql" | grep -Fq "CREATE TRIGGER $trigger" || fail conversions_cache_trigger_contract
+		done
+	done
+	pass conversions_characterized_cache_adapter
+
+	# The document must prove every protected consumer on both branches before anything may activate.
+	protected_count=$(sed -n 's/^| \([a-z][a-z-]*\) | \([0-9][0-9.]*\) | `\(\/[0-9\/]*\)` |$/\1/p' "$characterization" | LC_ALL=C sort -u | awk 'END { print NR }')
+	[ "$protected_count" -eq 8 ] || fail conversions_protected_consumer_evidence
+	pass conversions_protected_consumer_evidence
+
+	# The activation evidence ledger contract, and the single write authority that owns it.
+	migration_source="$main_repo/custom/grocy_AI/src/GrocyAiConversionMigration.php"
+	service_source="$main_repo/custom/grocy_AI/src/GrocyAiConversionService.php"
+	grep -Fq 'CREATE TABLE IF NOT EXISTS grocy_ai_conversion_activation_evidence' "$migration_source" || fail conversions_evidence_ledger_table
+	grep -Fq 'CREATE TABLE IF NOT EXISTS grocy_ai_conversion_rule_revisions' "$migration_source" || fail conversions_rule_revision_table
+	for column in main_commit stable_commit characterization_sha256 selected_adapter cache_key_schema query_plan_sha256 protected_outputs_sha256 evidence_hash; do
+		grep -Fq "$column" "$migration_source" || fail conversions_evidence_ledger_columns
+	done
+	grep -Fq 'public function ActivateVerifiedRuleset' "$service_source" || fail conversions_activation_authority
+	[ "$(grep -c "UPDATE grocy_ai_conversion_rule_revisions SET status = 'active'" "$service_source")" -eq 1 ] || fail conversions_single_activation_statement
+	if grep -Eq "(INSERT|UPDATE|DELETE|REPLACE)[^;']*cache__quantity_unit_conversions_resolved" "$service_source"; then
+		fail conversions_no_adhoc_cache_sql
+	fi
+	if grep -Eq '\bDROP[[:space:]]+(TABLE|TRIGGER|INDEX)\b' "$service_source"; then
+		fail conversions_no_phase6_cleanup
+	fi
+	pass conversions_activation_ledger_contract
+
+	php_runner=${GROCY_AI_PHP:-php}
+	run_quiet conversions_release_gate_cases "$php_runner" "$main_repo/custom/grocy_AI/tests/run.php" conversion-release-gate
+	run_quiet conversions_post_activation_bypass "$php_runner" "$main_repo/custom/grocy_AI/tests/run.php" conversion-post-activation-bypass
+	run_quiet conversions_native_save_hook "$php_runner" "$main_repo/custom/grocy_AI/tests/run.php" conversion-native-save-hook
+	run_quiet conversions_rules "$php_runner" "$main_repo/custom/grocy_AI/tests/run.php" conversion-rules
+	run_quiet conversions_resolution "$php_runner" "$main_repo/custom/grocy_AI/tests/run.php" conversion-resolution
+	run_quiet conversions_product_status "$php_runner" "$main_repo/custom/grocy_AI/tests/run.php" conversion-product-status
+	run_quiet conversions_coverage "$php_runner" "$main_repo/custom/grocy_AI/tests/run.php" conversion-coverage
+	run_quiet conversions_readonly_cli "$php_runner" "$main_repo/custom/grocy_AI/tests/run.php" conversion-readonly-cli
+	run_quiet conversions_module_suite env GROCY_BLADE_AUTOLOAD="$main_repo/packages/autoload.php" "$php_runner" "$main_repo/custom/grocy_AI/tests/run.php"
+	run_quiet conversions_migration_lint "$php_runner" -l "$migration_source"
+	run_quiet conversions_service_lint "$php_runner" -l "$service_source"
+	run_quiet conversions_controller_lint "$php_runner" -l "$main_repo/custom/grocy_AI/src/GrocyAiConversionController.php"
+	run_quiet conversions_tests_lint "$php_runner" -l "$main_repo/custom/grocy_AI/tests/conversions.php"
+	run_quiet conversions_runner_lint "$php_runner" -l "$main_repo/custom/grocy_AI/tests/run.php"
+
+	echo "RELEASE_GATE: PASS (conversions)"
+}
+
 if [ "$#" -eq 1 ] && [ "$1" = taxonomy ]; then
 	taxonomy_release_gate
+	exit 0
+fi
+
+if [ "$#" -eq 1 ] && [ "$1" = conversions ]; then
+	conversions_release_gate
 	exit 0
 fi
 
@@ -230,8 +383,8 @@ while IFS= read -r path || [ -n "$path" ]; do
 	case "$path" in /*|../*|*'/../'*|*'/..') fail portable_path_safety ;; esac
 	git -C "$main_repo" cat-file -e "${main_sha}:${path}" 2>/dev/null || fail portable_main_blob
 	git -C "$stable_repo" cat-file -e "${stable_portable_sha}:${path}" 2>/dev/null || fail portable_stable_blob
-	main_hash=$(git -C "$main_repo" show "${main_sha}:${path}" | shasum -a 256 | awk '{print $1}')
-	stable_hash=$(git -C "$stable_repo" show "${stable_portable_sha}:${path}" | shasum -a 256 | awk '{print $1}')
+	main_hash=$(git -C "$main_repo" show "${main_sha}:${path}" | sha256)
+	stable_hash=$(git -C "$stable_repo" show "${stable_portable_sha}:${path}" | sha256)
 	[ "$main_hash" = "$stable_hash" ] || fail portable_blob_parity
 	portable_count=$((portable_count + 1))
 done < "$main_repo/custom/grocy_AI/portable-files.txt"
@@ -276,7 +429,7 @@ case "$mode" in
 		;;
 esac
 
-actual_dependency_hash=$(LC_ALL=C sort "$companion_repo/constraints-phase2.txt" | shasum -a 256 | awk '{print $1}')
+actual_dependency_hash=$(LC_ALL=C sort "$companion_repo/constraints-phase2.txt" | sha256)
 [ "$actual_dependency_hash" = "$dependency_hash" ] || fail companion_dependency_constraints
 [ "$(git -C "$companion_repo" diff --name-only "${companion_sha}..HEAD" | wc -l | tr -d ' ')" -eq 0 ] || fail companion_post_candidate_scope
 pass companion_dependencies

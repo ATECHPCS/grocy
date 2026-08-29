@@ -677,6 +677,16 @@ if (($argv[1] ?? null) === 'conversion-native-save-hook')
 	runConversionNativeSaveHook();
 }
 
+if (($argv[1] ?? null) === 'conversion-release-gate')
+{
+	runConversionReleaseGate();
+}
+
+if (($argv[1] ?? null) === 'conversion-post-activation-bypass')
+{
+	runConversionPostActivationBypass();
+}
+
 if (($argv[1] ?? null) === '--list')
 {
 	foreach ([
