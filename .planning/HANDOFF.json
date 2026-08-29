@@ -70,26 +70,20 @@
       "status": "not_started"
     }
   ],
-  "blockers": [
-    {
-      "description": "Five browser specs (@mob01, @mob08 320px, @enr05 320px, barcode-handoff @enr02, contract-review @enr05) fail on both engines and already failed at end-of-Phase-3 commit ccade631. Root cause is the fixture's negative-margin .row on #grocy-ai-product-enrichment overflowing the 16px-padded body by exactly 16px at 320px.",
-      "type": "defect",
-      "workaround": "Out of scope for Plan 04-09. Needs a quick task; it contradicts the Phase 1/Phase 2 mobile completion records."
-    }
-  ],
+  "blockers": [],
   "human_actions_pending": [
     {
       "action": "Review and approve Plan 04-08 before it runs.",
       "context": "04-08-PLAN.md is autonomous: false. It owns the sole ActivateVerifiedRuleset transaction, the dual-branch evidence relation, portable-files.txt catch-up, and README/CUSTOMIZATIONS updates.",
       "blocking": true
-    },
-    {
-      "action": "Authenticate to GitHub and push codex/phase4-characterization to the private ATECHPCS remote.",
-      "context": "origin already targets https://github.com/ATECHPCS/grocy.git; gh is unauthenticated on this machine.",
-      "blocking": false
     }
   ],
   "decisions": [
+    {
+      "decision": "The five long-standing browser failures were fixture-only divergences from Bootstrap, not production defects: an auto grid track let the enrichment .row force its column wider than the viewport, and a bare file input kept its large intrinsic width. Fixed in quick task 260828-4qc; the full matrix is 184/184.",
+      "rationale": "Plan 04-08's release gate requires green deterministic suites, and the failures contradicted the Phase 1 and Phase 2 completion records.",
+      "phase": "04"
+    },
     {
       "decision": "Coverage diagnostics report the gate as inactive and every protected consumer as unverified until dual-branch activation evidence exists in the database; 04-CHARACTERIZATION.md is not treated as live evidence.",
       "rationale": "D-12 requires diagnostics to show inactive or blocked until dual-branch release evidence succeeds.",
@@ -118,5 +112,5 @@
   ],
   "uncommitted_files": [],
   "next_action": "Plan 04-08 is autonomous: false. Confirm its activation-gate design with the user before implementing. It must also add the five missing paths to portable-files.txt and update README/CUSTOMIZATIONS.",
-  "context_notes": "Phase 4 Plans 01-07 and 09 are implemented. Remaining: 04-08 (autonomous:false, needs the user) and 04-10. portable-files.txt is missing five module files added by 04-06/04-07/04-09. Toolchain: PHP 8.5.10 with composer packages installed, Playwright 1.62.1 with Chromium+WebKit. Do not deploy or touch household data."
+  "context_notes": "Phase 4 Plans 01-07 and 09 are implemented and merged into atech-main (merge commit 58689741, PR #2). Remaining: 04-08 (autonomous:false, needs the user) and 04-10. portable-files.txt is missing five module files added by 04-06/04-07/04-09. Browser suite is 184/184 after quick task 260828-4qc. GitHub CLI IS authenticated as ATECHPCS. Toolchain: PHP 8.5.10 with composer packages installed, Playwright 1.62.1 with Chromium+WebKit. Do not deploy or touch household data."
 }
