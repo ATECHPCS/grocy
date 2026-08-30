@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-08-20)
 
 **Core value:** Adding and maintaining real household food inventory must be fast, accurate, and dependable from a phone without surrendering control of the data to automatic guesses.
-**Current focus:** Phase 4 complete; Phase 5 — bulk maintenance & recovery engine is next
+**Current focus:** Phase 5 COMPLETE 2026-08-30 (11 plans shipped + generation surface; each wave adversarially verified); pending only the maintainer human-verify checkpoint. Phase 6 (Inventory Categorization & Conversion Cleanup) is next.
 
 ## Current Position
 
-Phase: 4 complete; Phase 5 (Bulk Maintenance & Recovery Engine) not started
-Plan: all Phase 4 plans shipped (04-01 through 04-10)
-Status: Phase complete
-Last activity: 2026-08-29 -- Phase 4 Plan 04-10 maintainer promotion command shipped
+Phase: 5 (Bulk Maintenance & Recovery Engine) — COMPLETE (pending maintainer human-verify)
+Plan: 05-01 through 05-11 shipped on `codex/phase5-bulk-engine`; generation endpoint/UI added (BULK-01 surface); branch not pushed
+Status: Phase complete; awaiting the 05-11 Task 3 human-verify session, then Phase 6
+Last activity: 2026-08-30 -- Phase 5 executed wave-by-wave with per-wave adversarial verification; bulk release gate PASS, 127 unit checks + 34 JS tests green; CSV formula-injection (CWE-1236) caught and fixed; BULK-01..10 all satisfied
 
 Progress: [████░░░░░░] 43%
 

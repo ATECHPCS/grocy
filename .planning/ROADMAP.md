@@ -291,7 +291,20 @@ Plans:
   4. An approved plan applies once through one short network-free `BEGIN IMMEDIATE` transaction, and repeat application or retry cannot duplicate mutations.
   5. Maintainer can audit exact actors, versions, times, outcomes, and before/after values; user can export a redacted preview and can preview a rollback that refuses to overwrite later manual edits.
 
-**Plans**: TBD
+**Plans**: 11 plans — COMPLETE 2026-08-30 (all shipped on `codex/phase5-bulk-engine`, each adversarially verified; + a generation-surface endpoint/UI added to close the BULK-01 reachability gap). Pending only the maintainer human-verify checkpoint (05-11 Task 3).
+
+- [ ] 05-01-PLAN.md — Lock the bulk engine contract with RED tests (DTOs, typed-op registry, checksum, closed vocab).
+- [ ] 05-02-PLAN.md — Inactive namespaced bulk schema/migration (grocy_ai_bulk_plans/_items/_audit).
+- [ ] 05-03-PLAN.md — Zero-mutation dry-run GeneratePlan with exact counts and checksum.
+- [ ] 05-04-PLAN.md — Closed named-typed-operation registry (taxonomy ops) + AssignProductTaxonomy nesting guard.
+- [ ] 05-05-PLAN.md — Per-item select/reject, selected diff, review UI, service wiring.
+- [ ] 05-06-PLAN.md — Optimistic-concurrency stale/conflicting before-image refusal.
+- [ ] 05-07-PLAN.md — Single BEGIN IMMEDIATE idempotent apply transaction.
+- [ ] 05-08-PLAN.md — Append-only audit ledger (actor, versions, times, before/after).
+- [ ] 05-09-PLAN.md — Guarded rollback preview + execute endpoints.
+- [ ] 05-10-PLAN.md — Redacted JSON/CSV export (non-authoritative on re-import).
+- [ ] 05-11-PLAN.md — Routes, dual-branch parity, bulk release gate, human-verify checkpoint.
+
 **UI hint:** yes
 
 ### Phase 6: Inventory Categorization & Conversion Cleanup
@@ -339,6 +352,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7. Dual-bra
 | 2. Enrichment Contract, Barcode Handoff & Secure Media | 17/20 | In Progress|  |
 | 3. Food Taxonomy & Categorization Pilot | 3/3 plans + gap closure | Complete | 2026-08-20 |
 | 4. Reusable Conversion Model | 8/10 | In Progress | - |
-| 5. Bulk Maintenance & Recovery Engine | 0/TBD | Not started | - |
+| 5. Bulk Maintenance & Recovery Engine | 11/11 | Complete (pending human-verify) | 2026-08-30 |
 | 6. Inventory Categorization & Conversion Cleanup | 0/TBD | Not started | - |
 | 7. Upstream & Stable Release Sustainment | 0/TBD | Not started | - |
