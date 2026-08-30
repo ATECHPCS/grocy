@@ -352,6 +352,41 @@ class GrocyAiBulkService
 	}
 
 	/**
+	 * Read the append-only audit ledger for a stored plan in stable insertion order (D-10/D-13). Read-only:
+	 * it only ever SELECTs and returns every `grocy_ai_bulk_audit` row verbatim (the closed audit key set)
+	 * so a maintainer can reconstruct exactly who previewed and applied the plan and what each item changed
+	 * — actor, event, event timestamp, module version, per-item outcome, and the exact before/after values.
+	 * It exposes no mutation path; the ledger is immutable once written. Fails closed if the plan is unknown.
+	 *
+	 * @return array{plan_id: int, records: array<int, array<string, mixed>>}
+	 */
+	public function ReadPlanAudit(int $planId): array
+	{
+		$plan = $this->LoadPlanHeader($planId);
+		$statement = $this->Db->prepare('SELECT id, plan_id, plan_item_id, actor, event, event_at, module_version, before_json, after_json, outcome FROM grocy_ai_bulk_audit WHERE plan_id = ? ORDER BY id');
+		$statement->execute([$planId]);
+
+		$records = [];
+		foreach ($statement->fetchAll(PDO::FETCH_ASSOC) as $row)
+		{
+			$records[] = [
+				'id' => (int)$row['id'],
+				'plan_id' => (int)$row['plan_id'],
+				'plan_item_id' => $row['plan_item_id'] === null ? null : (int)$row['plan_item_id'],
+				'actor' => (string)$row['actor'],
+				'event' => (string)$row['event'],
+				'event_at' => (string)$row['event_at'],
+				'module_version' => (string)$row['module_version'],
+				'before_json' => $row['before_json'] === null ? null : (string)$row['before_json'],
+				'after_json' => $row['after_json'] === null ? null : (string)$row['after_json'],
+				'outcome' => (string)$row['outcome']
+			];
+		}
+
+		return ['plan_id' => (int)$plan['id'], 'records' => $records];
+	}
+
+	/**
 	 * The complete selected diff over a stored plan (D-04/D-13): every currently selected item, verbatim,
 	 * with rejected items omitted entirely. Read-only. The apply-set count is the number of selected items
 	 * only — 05-06 later subtracts apply-time conflicts. The stored plan checksum is returned unchanged;
@@ -470,6 +505,16 @@ class GrocyAiBulkService
 	private const APPLY_TRANSACTION_FAILED = 'apply_transaction_failed';
 
 	/**
+	 * The closed audit-event vocabulary for the append-only `grocy_ai_bulk_audit` ledger (D-10). Exactly
+	 * two events are ever recorded: the `previewed` fact (who generated/previewed the plan and when —
+	 * reconstructed at apply time from the immutable plan header, never re-derived) and the `applied` fact
+	 * (who applied the plan and when, per item and once at plan scope). Both are INSERT-only; the ledger
+	 * exposes no UPDATE/DELETE/REPLACE path anywhere (D-14).
+	 */
+	public const AUDIT_EVENT_PREVIEWED = 'previewed';
+	public const AUDIT_EVENT_APPLIED = 'applied';
+
+	/**
 	 * Apply an approved plan exactly once through one short `BEGIN IMMEDIATE` transaction (D-08), routing
 	 * every selected, non-conflicted, not-yet-completed item through its registered typed operation
 	 * (D-05/D-06 → `AssignProductTaxonomy`), idempotent via a plan-checksum-bound per-item completion
@@ -523,6 +568,17 @@ class GrocyAiBulkService
 		$this->Db->exec('BEGIN IMMEDIATE');
 		try
 		{
+			// One applied-timestamp value for the whole transaction: the per-item completion stamp and every
+			// audit `event_at` share it, so the ledger's applied timestamp is exactly the item stamp (D-10).
+			$appliedAt = (string)$this->Db->query('SELECT CURRENT_TIMESTAMP')->fetchColumn();
+			$moduleVersion = $this->ModuleVersion();
+
+			// The append-only audit ledger writer (D-10/D-14). It only ever INSERTs; the ledger is never
+			// rewritten or removed anywhere in this service or the migration. Every append here lives inside
+			// THIS BEGIN IMMEDIATE transaction, before its single COMMIT, so a rolled-back apply discards its
+			// audit rows atomically with the mutations they record (no orphaned audit).
+			$auditInsert = $this->Db->prepare('INSERT INTO grocy_ai_bulk_audit (plan_id, plan_item_id, actor, event, event_at, module_version, before_json, after_json, outcome) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
+
 			// TOCTOU-free: recompute the apply set against live reality INSIDE the lock.
 			$conflicts = $this->DetectApplyConflicts($planId);
 			$conflictBySeq = [];
@@ -531,11 +587,11 @@ class GrocyAiBulkService
 				$conflictBySeq[(int)$conflictItem['seq']] = (bool)$conflictItem['conflict'];
 			}
 
-			$selected = $this->Db->prepare('SELECT seq, object_id, operation, proposed_value_json, outcome, applied_at FROM grocy_ai_bulk_plan_items WHERE plan_id = ? AND selected = 1 ORDER BY seq');
+			$selected = $this->Db->prepare('SELECT id, seq, object_id, operation, before_image_json, proposed_value_json, outcome, applied_at FROM grocy_ai_bulk_plan_items WHERE plan_id = ? AND selected = 1 ORDER BY seq');
 			$selected->execute([$planId]);
 
 			$markConflict = $this->Db->prepare("UPDATE grocy_ai_bulk_plan_items SET outcome = 'conflict' WHERE plan_id = ? AND seq = ?");
-			$markApplied = $this->Db->prepare("UPDATE grocy_ai_bulk_plan_items SET outcome = 'applied', applied_at = CURRENT_TIMESTAMP WHERE plan_id = ? AND seq = ?");
+			$markApplied = $this->Db->prepare("UPDATE grocy_ai_bulk_plan_items SET outcome = 'applied', applied_at = ? WHERE plan_id = ? AND seq = ?");
 
 			$applied = 0;
 			$conflicted = 0;
@@ -553,10 +609,12 @@ class GrocyAiBulkService
 					continue;
 				}
 
-				// A freshly drifted item is recorded conflict and never written (optimistic concurrency).
+				// A freshly drifted item is recorded conflict and never written (optimistic concurrency). The
+				// conflict is audited too: before = the reviewed before-image, after = null (nothing written).
 				if (($conflictBySeq[$seq] ?? true) === true)
 				{
 					$markConflict->execute([$planId, $seq]);
+					$auditInsert->execute([$planId, (int)$row['id'], $actor, self::AUDIT_EVENT_APPLIED, $appliedAt, $moduleVersion, (string)$row['before_image_json'], null, 'conflict']);
 					$conflicted++;
 					continue;
 				}
@@ -573,7 +631,11 @@ class GrocyAiBulkService
 				// The delegate joins THIS outer transaction ($joinExistingTransaction = true) and performs
 				// only the native/module upsert — no network, no own BEGIN/COMMIT, no per-item commit.
 				($resolution['delegate'])((int)$row['object_id'], $leafSlug);
-				$markApplied->execute([$planId, $seq]);
+				$markApplied->execute([$appliedAt, $planId, $seq]);
+				// Append the immutable audit row for this applied item: before = the reviewed before-image,
+				// after = the value actually written (the reviewed proposed value). Same transaction, so a
+				// rollback discards it together with the mutation it records.
+				$auditInsert->execute([$planId, (int)$row['id'], $actor, self::AUDIT_EVENT_APPLIED, $appliedAt, $moduleVersion, (string)$row['before_image_json'], (string)$row['proposed_value_json'], 'applied']);
 				$applied++;
 			}
 
@@ -582,6 +644,21 @@ class GrocyAiBulkService
 			if ($finalStatus !== $status)
 			{
 				$this->Db->prepare('UPDATE grocy_ai_bulk_plans SET status = ? WHERE id = ?')->execute([$finalStatus, $planId]);
+			}
+
+			// The plan-level audit events are appended only when this apply did real work (at least one item
+			// applied or conflicted). A wholly idempotent re-apply (every selected item already completed) does
+			// no item work and appends NO audit row at all, preserving the 05-07 zero-write-on-reapply
+			// invariant. Two plan-scope rows make the ledger self-reconstructing without joining the plan
+			// header: the `previewed` event carries the plan's previewed timestamp (its immutable created_at)
+			// and the actor who generated it, and the `applied` event carries this apply's applied timestamp,
+			// actor, confirmed checksum, and final status/outcomes.
+			if ($applied + $conflicted > 0)
+			{
+				$previewedAt = (string)$plan['created_at'];
+				$previewedBy = $plan['created_by'] === null ? '' : (string)$plan['created_by'];
+				$auditInsert->execute([$planId, null, $previewedBy, self::AUDIT_EVENT_PREVIEWED, $previewedAt, $moduleVersion, null, $this->CanonicalJson(['checksum' => $storedChecksum]), 'pending']);
+				$auditInsert->execute([$planId, null, $actor, self::AUDIT_EVENT_APPLIED, $appliedAt, $moduleVersion, $this->CanonicalJson(['status' => $status, 'previewed_at' => $previewedAt]), $this->CanonicalJson(['status' => $finalStatus, 'checksum' => $storedChecksum, 'outcomes' => ['applied' => $applied, 'conflict' => $conflicted, 'skipped' => $skipped]]), 'applied']);
 			}
 
 			// The single commit path. Every completion stamp lands atomically here or not at all.

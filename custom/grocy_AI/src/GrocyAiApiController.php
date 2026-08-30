@@ -524,6 +524,35 @@ class GrocyAiApiController extends BaseApiController
 		}
 	}
 
+	/**
+	 * Read a stored plan's append-only audit ledger (D-10). MASTER_DATA_EDIT-gated, read-only: it returns
+	 * the plan's ordered immutable audit records for reconstruction and declares no edit or delete surface —
+	 * no endpoint can rewrite or remove an audit row. An unknown plan id returns a bounded 404.
+	 */
+	public function BulkPlanAudit(Request $request, Response $response, array $args): Response
+	{
+		User::CheckPermission($request, User::PERMISSION_MASTER_DATA_EDIT);
+		$planId = $args['planId'] ?? null;
+		if (!is_string($planId) || preg_match('/^[1-9][0-9]{0,9}$/D', $planId) !== 1)
+		{
+			return $this->GenericErrorResponse($response, 'Invalid plan', 400);
+		}
+
+		try
+		{
+			$service = new GrocyAiBulkService(DatabaseService::GetInstance()->GetDbConnectionRaw(), false);
+			return $this->ApiResponse($response, $service->ReadPlanAudit((int)$planId));
+		}
+		catch (\InvalidArgumentException)
+		{
+			return $this->GenericErrorResponse($response, 'Invalid plan', 400);
+		}
+		catch (\RuntimeException)
+		{
+			return $this->GenericErrorResponse($response, 'Plan unavailable', 404);
+		}
+	}
+
 	private static function CountScopeInspectionDto(): array
 	{
 		return [

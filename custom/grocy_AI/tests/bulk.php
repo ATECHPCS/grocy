@@ -1367,3 +1367,208 @@ function runBulkApply(): never
 	fwrite(STDOUT, "Bulk apply tests passed\n");
 	exit(0);
 }
+
+const BULK_AUDIT_MARKER = 'EXPECTED_RED: bulk.audit';
+
+/** The number of rows in the append-only audit ledger, read directly for zero-write/rollback proofs. */
+function bulkAuditRowCount(PDO $pdo): int
+{
+	return (int)$pdo->query('SELECT COUNT(*) FROM grocy_ai_bulk_audit')->fetchColumn();
+}
+
+/**
+ * Plan 05-08: the append-only audit ledger (BULK-08/D-10/D-14). Proves that every applied item appends,
+ * inside the same BEGIN IMMEDIATE transaction as the mutation it records, one immutable audit row with the
+ * session-user actor, the plan's previewed timestamp and this apply's applied timestamp, the module
+ * version, the per-item outcome, and the exact before/after values; that a rolled-back apply leaves zero
+ * audit rows; that the ledger is append-only (no UPDATE/DELETE/REPLACE path); that an idempotent re-apply
+ * appends no duplicate rows; and that the MASTER_DATA_EDIT-gated read endpoint reconstructs who
+ * previewed/applied the plan with the session-resolved actor round-tripping verbatim.
+ */
+function runBulkAudit(): never
+{
+	if (!class_exists(GrocyAiBulkService::class)
+		|| !method_exists(GrocyAiBulkService::class, 'ApplyPlan')
+		|| !method_exists(GrocyAiBulkService::class, 'ReadPlanAudit'))
+	{
+		expectedRed(BULK_AUDIT_MARKER, 'ApplyPlan / ReadPlanAudit are not implemented');
+	}
+
+	$expectedAuditKeys = bulkPlanCases()['dto_shapes']['audit'];
+	$moduleVersion = (string)(json_decode((string)file_get_contents(__DIR__ . '/../module-version.json'), true, 512, JSON_THROW_ON_ERROR)['module_version'] ?? '');
+	bulkAssert($moduleVersion === '2.5.0', BULK_AUDIT_MARKER, 'The module version fixture is not 2.5.0');
+
+	// ---- Task 1 Test 1: a successful apply appends one immutable audit row per applied item -----------
+	$pdo = bulkGenerationPdo();
+	$service = new GrocyAiBulkService($pdo);
+	bulkSeedApplyFixture($pdo);
+	// Generate as one actor (the previewer) and apply as a DIFFERENT actor (the session user), so the
+	// ledger's previewed-vs-applied actors are provably distinct and correctly sourced.
+	$generated = $service->GeneratePlan(['actor' => 'previewer-1']);
+	$planId = (int)$generated['id'];
+	$checksum = (string)$generated['checksum'];
+	$previewedAt = (string)$generated['created_at'];
+
+	$result = $service->ApplyPlan($planId, 'applier-9', $checksum);
+	bulkAssert($result['outcomes'] === ['applied' => 2, 'conflict' => 0, 'skipped' => 0], BULK_AUDIT_MARKER, 'The audit fixture apply did not apply the two selected items');
+
+	$audit = $service->ReadPlanAudit($planId);
+	bulkAssert(array_keys($audit) === ['plan_id', 'records'], BULK_AUDIT_MARKER, 'ReadPlanAudit did not return the closed {plan_id, records} shape');
+	bulkAssert($audit['plan_id'] === $planId, BULK_AUDIT_MARKER, 'ReadPlanAudit echoed the wrong plan id');
+	// Two applied item rows + one plan-level previewed row + one plan-level applied row.
+	bulkAssert(count($audit['records']) === 4, BULK_AUDIT_MARKER, 'A clean two-item apply did not append exactly four audit rows');
+	foreach ($audit['records'] as $record)
+	{
+		bulkAssert(array_keys($record) === $expectedAuditKeys, BULK_AUDIT_MARKER, 'An audit record is outside the closed audit key set');
+		bulkAssert((int)$record['plan_id'] === $planId, BULK_AUDIT_MARKER, 'An audit record is not scoped to its plan');
+		bulkAssert((string)$record['module_version'] === $moduleVersion, BULK_AUDIT_MARKER, 'An audit record did not record the current module version');
+		bulkAssert(in_array((string)$record['event'], ['previewed', 'applied'], true), BULK_AUDIT_MARKER, 'An audit record used an event outside the closed vocabulary');
+		bulkAssert(in_array((string)$record['outcome'], ['pending', 'applied', 'conflict', 'skipped', 'rejected', 'rolled_back'], true), BULK_AUDIT_MARKER, 'An audit record used an outcome outside the closed vocabulary');
+	}
+
+	// The ledger is stably ordered by insertion (id ascending).
+	$ids = array_map(static fn(array $r): int => (int)$r['id'], $audit['records']);
+	$sortedIds = $ids;
+	sort($sortedIds);
+	bulkAssert($ids === $sortedIds, BULK_AUDIT_MARKER, 'The audit ledger is not returned in stable id order');
+
+	// Join each item audit row back to the exact stored plan item to verify before/after values verbatim.
+	$items = [];
+	foreach ($pdo->query('SELECT id, object_id, before_image_json, proposed_value_json, applied_at FROM grocy_ai_bulk_plan_items WHERE plan_id = ' . $planId . ' ORDER BY seq')->fetchAll(PDO::FETCH_ASSOC) as $item)
+	{
+		$items[(int)$item['id']] = $item;
+	}
+	$itemRecords = array_values(array_filter($audit['records'], static fn(array $r): bool => $r['plan_item_id'] !== null));
+	bulkAssert(count($itemRecords) === 2, BULK_AUDIT_MARKER, 'A clean two-item apply did not produce exactly two item-scoped audit rows');
+	$auditedByObject = [];
+	foreach ($itemRecords as $record)
+	{
+		$item = $items[(int)$record['plan_item_id']] ?? null;
+		bulkAssert($item !== null, BULK_AUDIT_MARKER, 'An item audit row references an unknown plan item');
+		bulkAssert((string)$record['actor'] === 'applier-9', BULK_AUDIT_MARKER, 'An item audit row did not record the apply session actor');
+		bulkAssert((string)$record['event'] === 'applied' && (string)$record['outcome'] === 'applied', BULK_AUDIT_MARKER, 'An applied item audit row is not an applied event/outcome');
+		// event_at is exactly the item completion stamp — the applied timestamp of this apply.
+		bulkAssert((string)$record['event_at'] === (string)$item['applied_at'], BULK_AUDIT_MARKER, 'An item audit event_at does not equal the item applied_at stamp');
+		// before = the exact reviewed before-image; after = the exact value actually written.
+		bulkAssert((string)$record['before_json'] === (string)$item['before_image_json'], BULK_AUDIT_MARKER, 'An item audit before_json is not the exact reviewed before-image');
+		bulkAssert((string)$record['after_json'] === (string)$item['proposed_value_json'], BULK_AUDIT_MARKER, 'An item audit after_json is not the exact written value');
+		$auditedByObject[(int)$item['object_id']] = $record;
+	}
+	// The exact before/after leaf slugs per product (P1: null -> produce; P2: null -> dairy-eggs).
+	bulkAssert((string)$auditedByObject[1]['before_json'] === '{"leaf_slug":null}' && (string)$auditedByObject[1]['after_json'] === '{"leaf_slug":"produce"}', BULK_AUDIT_MARKER, 'P1 before/after values were not recorded exactly');
+	bulkAssert((string)$auditedByObject[2]['before_json'] === '{"leaf_slug":null}' && (string)$auditedByObject[2]['after_json'] === '{"leaf_slug":"dairy-eggs"}', BULK_AUDIT_MARKER, 'P2 before/after values were not recorded exactly');
+
+	// The plan-level previewed row reconstructs who previewed the plan and when (its immutable created_at),
+	// and the plan-level applied row records this apply's actor and applied timestamp.
+	$previewRecords = array_values(array_filter($audit['records'], static fn(array $r): bool => $r['plan_item_id'] === null && $r['event'] === 'previewed'));
+	$applyRecords = array_values(array_filter($audit['records'], static fn(array $r): bool => $r['plan_item_id'] === null && $r['event'] === 'applied'));
+	bulkAssert(count($previewRecords) === 1 && count($applyRecords) === 1, BULK_AUDIT_MARKER, 'The plan-level previewed/applied events were not each appended exactly once');
+	bulkAssert((string)$previewRecords[0]['actor'] === 'previewer-1', BULK_AUDIT_MARKER, 'The previewed event did not record the generating actor');
+	bulkAssert((string)$previewRecords[0]['event_at'] === $previewedAt, BULK_AUDIT_MARKER, 'The previewed event_at is not the plan previewed (created_at) timestamp');
+	bulkAssert((string)$applyRecords[0]['actor'] === 'applier-9', BULK_AUDIT_MARKER, 'The plan-level applied event did not record the apply session actor');
+	// From the ledger alone the previewed and applied timestamps are both reconstructable and distinct roles.
+	bulkAssert((string)$applyRecords[0]['event_at'] === (string)$auditedByObject[1]['event_at'], BULK_AUDIT_MARKER, 'The plan-level applied timestamp does not match the item applied timestamp');
+
+	// ---- Task 1 Test 2: the audit append is inside the apply transaction — rollback leaves zero rows ---
+	$tPdo = bulkGenerationPdo();
+	$tService = new GrocyAiBulkService($tPdo);
+	bulkSeedApplyFixture($tPdo);
+	$tGen = $tService->GeneratePlan(['actor' => 'previewer-1']);
+	$tPlanId = (int)$tGen['id'];
+	$tChecksum = (string)$tGen['checksum'];
+	bulkAssert(bulkAuditRowCount($tPdo) === 0, BULK_AUDIT_MARKER, 'Generation appended an audit row (audit must be apply-time only)');
+	// Force the second item's write to throw AFTER the first item's write and its audit row have landed,
+	// via the write-path-only fault-injection trigger idiom from 05-07. Reads still succeed, so both items
+	// stay in the apply set and the throw genuinely happens mid-apply after item 1 was written and audited.
+	$tPdo->exec("CREATE TRIGGER bulk_audit_fault BEFORE INSERT ON grocy_ai_taxonomy_classifications WHEN NEW.product_id = 2 BEGIN SELECT RAISE(ABORT, 'fault_injected'); END");
+	$failed = $tService->ApplyPlan($tPlanId, 'applier-9', $tChecksum);
+	bulkAssert($failed['blockers'] === ['apply_transaction_failed'], BULK_AUDIT_MARKER, 'A mid-apply throw did not return the bounded rollback outcome');
+	// The audit rows for the already-written first item are discarded together with its mutation: zero rows.
+	bulkAssert(bulkAuditRowCount($tPdo) === 0, BULK_AUDIT_MARKER, 'A rolled-back apply left audit rows (audit was written outside the transaction/lock)');
+	bulkAssert($tService->ReadPlanAudit($tPlanId)['records'] === [], BULK_AUDIT_MARKER, 'A rolled-back apply left a reconstructable audit trail');
+	// Resume after clearing the fault: the whole set applies and the ledger is written exactly once.
+	$tPdo->exec('DROP TRIGGER bulk_audit_fault');
+	$tService->ApplyPlan($tPlanId, 'applier-9', $tChecksum);
+	bulkAssert(bulkAuditRowCount($tPdo) === 4, BULK_AUDIT_MARKER, 'A resumed apply did not append the audit trail exactly once');
+
+	// ---- Task 2 Test 1: the ledger is append-only — no UPDATE/DELETE/REPLACE path exists --------------
+	$serviceSource = (string)file_get_contents(__DIR__ . '/../src/GrocyAiBulkService.php');
+	$migrationSource = (string)file_get_contents(__DIR__ . '/../src/GrocyAiBulkMigration.php');
+	foreach (['GrocyAiBulkService.php' => $serviceSource, 'GrocyAiBulkMigration.php' => $migrationSource] as $name => $source)
+	{
+		bulkAssert(preg_match_all('/(?:UPDATE|DELETE|REPLACE)[^;\']*grocy_ai_bulk_audit/i', $source) === 0, BULK_AUDIT_MARKER, "{$name} exposes an UPDATE/DELETE/REPLACE path against grocy_ai_bulk_audit (the ledger must be append-only)");
+	}
+	bulkAssert(preg_match_all('/INSERT INTO grocy_ai_bulk_audit/i', $serviceSource) >= 1, BULK_AUDIT_MARKER, 'The service must append to grocy_ai_bulk_audit via INSERT');
+
+	// ---- Task 1 Test 3: an idempotent re-apply appends no duplicate audit rows -----------------------
+	$auditCountAfterFirst = bulkAuditRowCount($pdo);
+	bulkAssert($auditCountAfterFirst === 4, BULK_AUDIT_MARKER, 'The first apply did not leave four audit rows');
+	$second = $service->ApplyPlan($planId, 'applier-9', $checksum);
+	bulkAssert($second['outcomes'] === ['applied' => 0, 'conflict' => 0, 'skipped' => 2], BULK_AUDIT_MARKER, 'The re-apply did not skip both already-completed items');
+	bulkAssert(bulkAuditRowCount($pdo) === 4, BULK_AUDIT_MARKER, 'An idempotent re-apply duplicated audit rows for already-applied items');
+	bulkAssert(count($service->ReadPlanAudit($planId)['records']) === 4, BULK_AUDIT_MARKER, 'An idempotent re-apply grew the reconstructable ledger');
+
+	// ---- Task 2 Tests 2 & 3: the MASTER_DATA_EDIT-gated read endpoint, 404, and actor round-trip ------
+	bulkSelectionRuntime();
+
+	// The audit read route is registered exactly once, GET-only; no edit/delete audit surface exists.
+	$container = new DI\Container();
+	$app = Slim\Factory\AppFactory::createFromContainer($container);
+	require dirname(__DIR__) . '/routes.php';
+	$found = [];
+	$auditRoutes = 0;
+	foreach ($app->getRouteCollector()->getRoutes() as $route)
+	{
+		$found[$route->getPattern()] = $route->getMethods();
+		if (str_contains($route->getPattern(), '/audit'))
+		{
+			$auditRoutes++;
+		}
+	}
+	bulkAssert(($found['/api/grocy-ai/bulk/plans/{planId}/audit'] ?? null) === ['GET'], BULK_AUDIT_MARKER, 'The audit route is not registered exactly as GET');
+	bulkAssert($auditRoutes === 1, BULK_AUDIT_MARKER, 'More than one audit route (or a non-GET audit surface) is registered');
+
+	$apiPdo = bulkGenerationPdo();
+	$apiPdo->exec('CREATE TABLE user_permissions_resolved (id INTEGER NOT NULL PRIMARY KEY, user_id INTEGER NOT NULL, permission_name TEXT NOT NULL)');
+	$apiPdo->exec("INSERT INTO user_permissions_resolved (id, user_id, permission_name) VALUES (1, 1, 'MASTER_DATA_EDIT')");
+	$apiService = new GrocyAiBulkService($apiPdo);
+	bulkSeedApplyFixture($apiPdo);
+	$apiGen = $apiService->GeneratePlan(['actor' => 'previewer-1']);
+	$apiPlanId = (int)$apiGen['id'];
+	// Drive ApplyPlan with a fixed session-resolved actor; assert it round-trips to the ledger verbatim.
+	$apiService->ApplyPlan($apiPlanId, 'session-actor-42', (string)$apiGen['checksum']);
+	bulkInstallDatabase($apiPdo);
+	$controller = (new ReflectionClass(GrocyAI\Controllers\Api\GrocyAiApiController::class))->newInstanceWithoutConstructor();
+
+	// Test 2: an unauthenticated caller is rejected before any read.
+	$apiPdo->exec("DELETE FROM user_permissions_resolved WHERE permission_name = 'MASTER_DATA_EDIT'");
+	try
+	{
+		$controller->BulkPlanAudit(bulkSelectionRequest('GET', '/x'), bulkSelectionResponse(), ['planId' => (string)$apiPlanId]);
+		bulkAssert(false, BULK_AUDIT_MARKER, 'BulkPlanAudit did not enforce MASTER_DATA_EDIT');
+	}
+	catch (Grocy\Controllers\Users\PermissionMissingException)
+	{
+	}
+	$apiPdo->exec("INSERT INTO user_permissions_resolved (id, user_id, permission_name) VALUES (1, 1, 'MASTER_DATA_EDIT')");
+
+	// Test 2/3: an authorized read returns the ordered ledger with the session actor round-tripped verbatim.
+	$okResponse = $controller->BulkPlanAudit(bulkSelectionRequest('GET', '/x'), bulkSelectionResponse(), ['planId' => (string)$apiPlanId]);
+	bulkAssert($okResponse->getStatusCode() === 200, BULK_AUDIT_MARKER, 'A valid audit read did not return 200');
+	$okBody = bulkSelectionBody($okResponse);
+	bulkAssert(array_keys($okBody) === ['plan_id', 'records'], BULK_AUDIT_MARKER, 'The audit endpoint response is not the closed {plan_id, records} shape');
+	bulkAssert(count($okBody['records']) === 4, BULK_AUDIT_MARKER, 'The audit endpoint did not return the four ledger rows');
+	$endpointItemActors = array_values(array_unique(array_map(static fn(array $r): string => (string)$r['actor'], array_filter($okBody['records'], static fn(array $r): bool => $r['plan_item_id'] !== null))));
+	bulkAssert($endpointItemActors === ['session-actor-42'], BULK_AUDIT_MARKER, 'The endpoint did not round-trip the session-resolved apply actor verbatim');
+	$endpointPreview = array_values(array_filter($okBody['records'], static fn(array $r): bool => $r['plan_item_id'] === null && $r['event'] === 'previewed'));
+	bulkAssert(count($endpointPreview) === 1 && (string)$endpointPreview[0]['actor'] === 'previewer-1', BULK_AUDIT_MARKER, 'The endpoint did not expose the previewing actor for reconstruction');
+
+	// Test 2: an unknown plan id returns the bounded 404; a non-integer id is a bounded 400.
+	$missingResponse = $controller->BulkPlanAudit(bulkSelectionRequest('GET', '/x'), bulkSelectionResponse(), ['planId' => '987654321']);
+	bulkAssert($missingResponse->getStatusCode() === 404, BULK_AUDIT_MARKER, 'An unknown plan id did not return 404 from the audit read');
+	$badIdResponse = $controller->BulkPlanAudit(bulkSelectionRequest('GET', '/x'), bulkSelectionResponse(), ['planId' => 'abc']);
+	bulkAssert($badIdResponse->getStatusCode() === 400, BULK_AUDIT_MARKER, 'A non-integer plan id was not rejected by the audit read');
+
+	fwrite(STDOUT, "Bulk audit tests passed\n");
+	exit(0);
+}

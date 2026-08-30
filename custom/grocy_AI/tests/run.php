@@ -740,6 +740,12 @@ if (($argv[1] ?? null) === 'bulk-apply')
 	runBulkApply();
 }
 
+if (($argv[1] ?? null) === 'bulk-audit')
+{
+	require_once __DIR__ . '/bulk.php';
+	runBulkAudit();
+}
+
 if (($argv[1] ?? null) === '--list')
 {
 	foreach ([

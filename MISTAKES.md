@@ -17,6 +17,15 @@ store, not here.
   (`GROCY_AI_PHP`), hash through the `sha256()` helper, and derive counts from
   `portable-files.txt` rather than a literal. (hits: 2)
 
+- A source-grep test (`substr_count`/`str_contains`/`preg_match_all`) that asserts a file/method
+  avoids a forbidden token or SQL shape false-fails when the code's OWN docblock or inline comments
+  quote those exact tokens. Seen twice: a method-body idiom check tripped by its docblock
+  (`BEGIN IMMEDIATE`/`COMMIT` tokens), and an append-only ledger check
+  (`/(?:UPDATE|DELETE|REPLACE)[^;']*grocy_ai_bulk_audit/i`) tripped by a comment reading "no
+  UPDATE/DELETE/REPLACE against grocy_ai_bulk_audit". → Scope method-idiom greps to the sliced method
+  body (`public function X`→next `function`), and keep forbidden tokens out of prose comments — never
+  write the banned keyword adjacent to the guarded table/identifier name. (hits: 2)
+
 ## Observations (first sightings)
 
 - 2026-08-29: Ran the module suite with the default `php` and got misleading results. `composer.json`
@@ -56,13 +65,6 @@ store, not here.
   self-consistent, so a tampered document promoted successfully. → When one component validates
   another's input against a file, at least one immutable anchor must live outside that file. Fixed by
   pinning `CHARACTERIZATION_FACTS_SHA256` in `GrocyAiConversionService`. (hits: 1)
-
-- 2026-08-30: A `substr_count`/`str_contains` source-grep test that asserts a method uses only the
-  locked transaction idiom (`exec('BEGIN IMMEDIATE')`/`COMMIT`/`ROLLBACK`, never PDO
-  `beginTransaction()`/`commit()`/`inTransaction()`) false-failed because the method's OWN docblock and
-  inline comments quoted those exact tokens. → Scope such source assertions to the method body (slice
-  from `public function X` to the next `function`, which excludes the preceding docblock) and keep the
-  forbidden tokens out of in-body comments. (hits: 1)
 
 - 2026-08-30: Tried to prove `ApplyPlan`'s mid-apply rollback by deleting the proposed leaf's taxonomy
   node so the delegate write would throw — but `DetectApplyConflicts` re-reads through the same
