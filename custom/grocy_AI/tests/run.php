@@ -710,6 +710,12 @@ if (($argv[1] ?? null) === 'bulk-schema')
 	runBulkSchema();
 }
 
+if (($argv[1] ?? null) === 'bulk-generate')
+{
+	require_once __DIR__ . '/bulk.php';
+	runBulkGenerate();
+}
+
 if (($argv[1] ?? null) === '--list')
 {
 	foreach ([

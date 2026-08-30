@@ -305,3 +305,149 @@ function runBulkSchema(): never
 	fwrite(STDOUT, "Bulk schema tests passed\n");
 	exit(0);
 }
+
+const BULK_GENERATE_MARKER = 'EXPECTED_RED: bulk.generate';
+
+/**
+ * A self-contained non-household fixture database for GeneratePlan. Native tables (products,
+ * product_groups, quantity_unit_conversions, cache) are created here; the module taxonomy and bulk
+ * tables are created by the service constructor's bootstrap.
+ */
+function bulkGenerationPdo(): PDO
+{
+	$pdo = new PDO('sqlite::memory:');
+	$pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+	$pdo->exec('CREATE TABLE product_groups (id INTEGER PRIMARY KEY, name TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1)');
+	$pdo->exec('CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT NOT NULL, product_group_id INTEGER NULL)');
+	$pdo->exec("INSERT INTO products (id, name) VALUES (1, 'P1'), (2, 'P2'), (3, 'P3'), (4, 'P4'), (5, 'P5'), (6, 'P6')");
+	$pdo->exec('CREATE TABLE quantity_unit_conversions (id INTEGER NOT NULL PRIMARY KEY, product_id INTEGER NULL, from_qu_id INTEGER NOT NULL, to_qu_id INTEGER NOT NULL, factor REAL NOT NULL)');
+	$pdo->exec('INSERT INTO quantity_unit_conversions (id, product_id, from_qu_id, to_qu_id, factor) VALUES (1, 1, 2, 3, 4)');
+	$pdo->exec('CREATE TABLE cache__quantity_unit_conversions_resolved (product_id INTEGER NULL, from_qu_id INTEGER NOT NULL, to_qu_id INTEGER NOT NULL, factor REAL NOT NULL, path TEXT NOT NULL)');
+	$pdo->exec("INSERT INTO cache__quantity_unit_conversions_resolved (product_id, from_qu_id, to_qu_id, factor, path) VALUES (1, 2, 3, 4, '1')");
+	return $pdo;
+}
+
+/**
+ * Seed mixed taxonomy states so GeneratePlan exercises every closed count bucket:
+ *   P1 mapped/changed (unclassified -> produce), P2 mapped/unchanged (already dairy-eggs),
+ *   P3 excluded, P4 low_confidence (skipped), P5 unclassified (skipped),
+ *   P6 evidence-level conflicting (skipped, no actionable suggestion).
+ */
+function bulkSeedGenerationFixture(PDO $pdo, GrocyAiBulkService $service): void
+{
+	$evidence = $pdo->prepare('INSERT INTO grocy_ai_taxonomy_evidence (product_id, provider_category, mapping_version, confidence_band, reason_code) VALUES (?, ?, ?, ?, ?)');
+	$evidence->execute([1, 'produce', 'v1', 'high', 'provider_category']);
+	$evidence->execute([2, 'dairy', 'v1', 'high', 'provider_category']);
+	$evidence->execute([3, 'baby food', 'v1', 'high', 'provider_category']);
+	$evidence->execute([4, 'dairy', 'v1', 'low', 'provider_category']);
+	$evidence->execute([6, 'mystery-brand', 'v1', 'medium', 'conflicting_evidence']);
+
+	// P2 already carries its proposed leaf, so it is an included/unchanged item.
+	$taxonomy = new GrocyAiTaxonomyService($pdo);
+	$taxonomy->AssignProductTaxonomy(2, ['leaf_slug' => 'dairy-eggs', 'ruleset_version' => 'v1']);
+}
+
+/**
+ * Plan 05-03: GeneratePlan produces a bounded dry-run with exact counts, immutable before-images, and
+ * a deterministic checksum, provably without mutating any native Grocy state.
+ */
+function runBulkGenerate(): never
+{
+	if (!class_exists(GrocyAiBulkService::class) || !method_exists(GrocyAiBulkService::class, 'GeneratePlan'))
+	{
+		expectedRed(BULK_GENERATE_MARKER, 'GeneratePlan is not implemented');
+	}
+
+	$plan = bulkPlanCases();
+	$expectedPlanKeys = $plan['dto_shapes']['plan'];
+	$expectedItemKeys = $plan['dto_shapes']['plan_item'];
+
+	$pdo = bulkGenerationPdo();
+	$service = new GrocyAiBulkService($pdo);
+	bulkSeedGenerationFixture($pdo, $service);
+
+	// Native + module snapshots for the zero-write proof (Task 2).
+	$snapshotTables = ['products', 'product_groups', 'quantity_unit_conversions', 'cache__quantity_unit_conversions_resolved', 'grocy_ai_taxonomy_classifications', 'grocy_ai_taxonomy_evidence'];
+	$schemaBefore = $pdo->query("SELECT type, name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name")->fetchAll(PDO::FETCH_ASSOC);
+	$rowsBefore = bulkSnapshotTables($pdo, $snapshotTables);
+	$changesBefore = (int)$pdo->query('SELECT total_changes()')->fetchColumn();
+
+	$generated = $service->GeneratePlan([]);
+
+	$changesAfter = (int)$pdo->query('SELECT total_changes()')->fetchColumn();
+	$schemaAfter = $pdo->query("SELECT type, name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name")->fetchAll(PDO::FETCH_ASSOC);
+	$rowsAfter = bulkSnapshotTables($pdo, $snapshotTables);
+
+	// Test 1 / DTO: exact plan header key set and exact closed counts.
+	bulkAssert(array_keys($generated) === $expectedPlanKeys, BULK_GENERATE_MARKER, 'GeneratePlan returned a plan DTO outside the closed key set');
+	bulkAssert((string)$generated['operation_type'] === 'taxonomy_assignment', BULK_GENERATE_MARKER, 'The plan operation type is not taxonomy_assignment');
+	bulkAssert((string)$generated['ruleset_version'] === 'v1', BULK_GENERATE_MARKER, 'The plan ruleset version is not the taxonomy migration version');
+	bulkAssert((string)$generated['status'] === 'draft', BULK_GENERATE_MARKER, 'A freshly generated plan is not in draft status');
+	$counts = json_decode((string)$generated['counts_json'], true, 512, JSON_THROW_ON_ERROR);
+	$expectedCounts = ['included' => 2, 'excluded' => 1, 'skipped' => 3, 'conflicted' => 0, 'changed' => 1, 'unchanged' => 1];
+	bulkAssert($counts === $expectedCounts, BULK_GENERATE_MARKER, 'counts_json does not match the fixture bucket-to-count mapping: ' . json_encode($counts));
+	bulkAssert($counts['conflicted'] === 0, BULK_GENERATE_MARKER, 'conflicted must be 0 at generation');
+	bulkAssert($counts['included'] === $counts['changed'] + $counts['unchanged'], BULK_GENERATE_MARKER, 'included must equal changed + unchanged');
+	bulkAssert($counts['included'] + $counts['excluded'] + $counts['skipped'] + $counts['conflicted'] === 6, BULK_GENERATE_MARKER, 'The counts do not reconcile with the bounded scope size');
+
+	// Test 2 / immutable items: identity, before/proposed written-field shape, reason, provenance.
+	$planId = (int)$generated['id'];
+	$rows = $pdo->query('SELECT * FROM grocy_ai_bulk_plan_items WHERE plan_id = ' . $planId . ' ORDER BY object_id')->fetchAll(PDO::FETCH_ASSOC);
+	bulkAssert(count($rows) === 2, BULK_GENERATE_MARKER, 'GeneratePlan persisted an unexpected number of items');
+	foreach ($rows as $row)
+	{
+		bulkAssert(array_keys($row) === $expectedItemKeys, BULK_GENERATE_MARKER, 'A persisted item is outside the closed item key set');
+		bulkAssert((string)$row['object_type'] === 'product', BULK_GENERATE_MARKER, 'A persisted item has a non-product object type');
+		bulkAssert((string)$row['operation'] === 'assign_taxonomy_leaf', BULK_GENERATE_MARKER, 'A generated proposal is not assign_taxonomy_leaf');
+		bulkAssert(in_array((string)$row['reason'], $plan['reason_vocabulary'], true), BULK_GENERATE_MARKER, 'A persisted item reason is outside the closed reason vocabulary');
+		bulkAssert((string)$row['outcome'] === 'pending', BULK_GENERATE_MARKER, 'A freshly generated item is not pending');
+		// before/proposed images carry ONLY the written field (the leaf slug), never volatile evidence.
+		$beforeImage = json_decode((string)$row['before_image_json'], true, 512, JSON_THROW_ON_ERROR);
+		$proposedValue = json_decode((string)$row['proposed_value_json'], true, 512, JSON_THROW_ON_ERROR);
+		bulkAssert(array_keys($beforeImage) === ['leaf_slug'], BULK_GENERATE_MARKER, 'before_image_json exposes fields beyond the written leaf slug');
+		bulkAssert(array_keys($proposedValue) === ['leaf_slug'], BULK_GENERATE_MARKER, 'proposed_value_json exposes fields beyond the written leaf slug');
+	}
+	$byId = [];
+	foreach ($rows as $row)
+	{
+		$byId[(int)$row['object_id']] = $row;
+	}
+	$p1Before = json_decode((string)$byId[1]['before_image_json'], true, 512, JSON_THROW_ON_ERROR);
+	$p1Proposed = json_decode((string)$byId[1]['proposed_value_json'], true, 512, JSON_THROW_ON_ERROR);
+	bulkAssert($p1Before['leaf_slug'] === null && $p1Proposed['leaf_slug'] === 'produce' && (int)$byId[1]['selected'] === 1, BULK_GENERATE_MARKER, 'P1 must be a changed, pre-selected proposal from unclassified to produce');
+	$p2Before = json_decode((string)$byId[2]['before_image_json'], true, 512, JSON_THROW_ON_ERROR);
+	$p2Proposed = json_decode((string)$byId[2]['proposed_value_json'], true, 512, JSON_THROW_ON_ERROR);
+	bulkAssert($p2Before['leaf_slug'] === 'dairy-eggs' && $p2Proposed['leaf_slug'] === 'dairy-eggs' && (int)$byId[2]['selected'] === 0, BULK_GENERATE_MARKER, 'P2 must be an unchanged, deselected proposal already at dairy-eggs');
+
+	// Test 3 / checksum: reorder-stable, mutation-sensitive, and equal to the stored checksum.
+	$checksum = (string)$generated['checksum'];
+	bulkAssert(preg_match('/^[0-9a-f]{64}$/D', $checksum) === 1, BULK_GENERATE_MARKER, 'The plan checksum is not a lowercase 64-hex SHA-256');
+	$items = [
+		['object_type' => 'product', 'object_id' => 1, 'operation' => 'assign_taxonomy_leaf', 'before_image' => null, 'proposed_value' => 'produce'],
+		['object_type' => 'product', 'object_id' => 2, 'operation' => 'assign_taxonomy_leaf', 'before_image' => 'dairy-eggs', 'proposed_value' => 'dairy-eggs']
+	];
+	$recomputed = $service->ChecksumForPlan('taxonomy_assignment', 'v1', $items);
+	bulkAssert($recomputed === $checksum, BULK_GENERATE_MARKER, 'The stored checksum does not match the recomputed checksum for the same items');
+	$reordered = [$items[1], $items[0]];
+	bulkAssert($service->ChecksumForPlan('taxonomy_assignment', 'v1', $reordered) === $checksum, BULK_GENERATE_MARKER, 'Reordering items changed the checksum');
+	$mutated = $items;
+	$mutated[1]['proposed_value'] = 'produce';
+	bulkAssert($service->ChecksumForPlan('taxonomy_assignment', 'v1', $mutated) !== $checksum, BULK_GENERATE_MARKER, 'Mutating a proposed value did not change the checksum');
+
+	// Determinism: regenerating the same scope yields the same checksum.
+	$secondPdo = bulkGenerationPdo();
+	$secondService = new GrocyAiBulkService($secondPdo);
+	bulkSeedGenerationFixture($secondPdo, $secondService);
+	$second = $secondService->GeneratePlan([]);
+	bulkAssert((string)$second['checksum'] === $checksum, BULK_GENERATE_MARKER, 'Regenerating the same scope produced a different checksum');
+
+	// Task 2 zero-write proof: native + module state byte-identical except the two bulk tables, no
+	// schema change, and total_changes attributable only to the plan + item inserts.
+	bulkAssert($schemaBefore === $schemaAfter, BULK_GENERATE_MARKER, 'Generation created, altered, or dropped a database object');
+	bulkAssert($rowsBefore === $rowsAfter, BULK_GENERATE_MARKER, 'Generation mutated a native or read-only module table');
+	$itemCount = (int)$pdo->query('SELECT COUNT(*) FROM grocy_ai_bulk_plan_items WHERE plan_id = ' . $planId)->fetchColumn();
+	bulkAssert($changesAfter - $changesBefore === 1 + $itemCount, BULK_GENERATE_MARKER, 'Generation issued row changes beyond the plan and its items: delta ' . ($changesAfter - $changesBefore));
+
+	fwrite(STDOUT, "Bulk generate tests passed\n");
+	exit(0);
+}
