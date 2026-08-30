@@ -7,6 +7,15 @@ use GrocyAI\Services\GrocyAiBulkMigration;
 use GrocyAI\Services\GrocyAiTaxonomyMigration;
 use GrocyAI\Services\GrocyAiTaxonomyService;
 
+foreach (['GrocyAiBulkMigration', 'GrocyAiBulkService'] as $bulkClassFile)
+{
+	$bulkClassPath = __DIR__ . '/../src/' . $bulkClassFile . '.php';
+	if (is_file($bulkClassPath))
+	{
+		require_once $bulkClassPath;
+	}
+}
+
 /**
  * Phase 5 bulk-engine contract suite.
  *
@@ -201,5 +210,98 @@ function runBulkInvariants(): never
 	}
 
 	fwrite(STDOUT, "Bulk engine invariants passed\n");
+	exit(0);
+}
+
+const BULK_SCHEMA_MARKER = 'EXPECTED_RED: bulk.schema';
+
+function bulkNativeFixturePdo(): PDO
+{
+	$pdo = new PDO('sqlite::memory:');
+	$pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+	$pdo->exec('CREATE TABLE products (id INTEGER NOT NULL PRIMARY KEY, name TEXT NOT NULL)');
+	$pdo->exec("INSERT INTO products (id, name) VALUES (1, 'Fixture product')");
+	$pdo->exec('CREATE TABLE quantity_unit_conversions (id INTEGER NOT NULL PRIMARY KEY, product_id INTEGER NULL, from_qu_id INTEGER NOT NULL, to_qu_id INTEGER NOT NULL, factor REAL NOT NULL)');
+	$pdo->exec('INSERT INTO quantity_unit_conversions (id, product_id, from_qu_id, to_qu_id, factor) VALUES (1, 1, 2, 3, 4)');
+	$pdo->exec('CREATE TABLE cache__quantity_unit_conversions_resolved (product_id INTEGER NULL, from_qu_id INTEGER NOT NULL, to_qu_id INTEGER NOT NULL, factor REAL NOT NULL, path TEXT NOT NULL)');
+	$pdo->exec("INSERT INTO cache__quantity_unit_conversions_resolved (product_id, from_qu_id, to_qu_id, factor, path) VALUES (1, 2, 3, 4, '1')");
+	return $pdo;
+}
+
+function bulkSnapshotTables(PDO $pdo, array $tables): array
+{
+	$snapshots = [];
+	foreach ($tables as $table)
+	{
+		if (preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/D', (string)$table) !== 1)
+		{
+			throw new RuntimeException('Unsafe fixture table name');
+		}
+		$snapshots[$table] = $pdo->query('SELECT * FROM "' . $table . '" ORDER BY rowid')->fetchAll(PDO::FETCH_ASSOC);
+	}
+	return $snapshots;
+}
+
+/**
+ * Plan 05-02: the idempotent, namespaced, native-safe, append-only bulk schema. Turns the relevant
+ * Plan 05-01 DTO-shape assertions green against the real migration.
+ */
+function runBulkSchema(): never
+{
+	if (!class_exists(GrocyAiBulkMigration::class))
+	{
+		expectedRed(BULK_SCHEMA_MARKER, 'The bulk migration is not implemented');
+	}
+
+	$plan = bulkPlanCases();
+	$expectedTables = ['grocy_ai_bulk_audit', 'grocy_ai_bulk_migrations', 'grocy_ai_bulk_plan_items', 'grocy_ai_bulk_plans'];
+
+	// Test 1: double bootstrap is idempotent and leaves exactly the module tables + one version row.
+	$pdo = new PDO('sqlite::memory:');
+	$pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+	GrocyAiBulkMigration::Bootstrap($pdo);
+	GrocyAiBulkMigration::Bootstrap($pdo);
+	$tables = $pdo->query("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'grocy_ai_bulk_%' ORDER BY name")->fetchAll(PDO::FETCH_COLUMN);
+	bulkAssert($tables === $expectedTables, BULK_SCHEMA_MARKER, 'Bootstrap did not leave exactly the three bulk tables plus the migration ledger');
+	bulkAssert((int)$pdo->query('SELECT COUNT(*) FROM grocy_ai_bulk_migrations')->fetchColumn() === 1, BULK_SCHEMA_MARKER, 'Bootstrap is not idempotent: the migration ledger holds other than one version row');
+
+	// Test 2: each table carries exactly the shared-contract columns; the ledger is append-only; the
+	// plan-item plan_id foreign-keys the plan header.
+	foreach ([
+		'grocy_ai_bulk_plans' => $plan['dto_shapes']['plan'],
+		'grocy_ai_bulk_plan_items' => $plan['dto_shapes']['plan_item'],
+		'grocy_ai_bulk_audit' => $plan['dto_shapes']['audit']
+	] as $table => $expectedColumns)
+	{
+		$columns = $pdo->query('PRAGMA table_info(' . $table . ')')->fetchAll(PDO::FETCH_COLUMN, 1);
+		bulkAssert($columns === $expectedColumns, BULK_SCHEMA_MARKER, "Table {$table} columns are not the closed DTO shape");
+	}
+	$migrationSource = (string)file_get_contents(__DIR__ . '/../src/GrocyAiBulkMigration.php');
+	bulkAssert(preg_match('/\b(UPDATE|DELETE)\b/', $migrationSource) !== 1, BULK_SCHEMA_MARKER, 'The bulk migration must expose no UPDATE/DELETE path (audit ledger is append-only)');
+	$foreignKeys = $pdo->query('PRAGMA foreign_key_list(grocy_ai_bulk_plan_items)')->fetchAll(PDO::FETCH_ASSOC);
+	$plansFk = array_filter($foreignKeys, static fn(array $fk): bool => $fk['table'] === 'grocy_ai_bulk_plans' && $fk['from'] === 'plan_id' && $fk['to'] === 'id');
+	bulkAssert($plansFk !== [], BULK_SCHEMA_MARKER, 'grocy_ai_bulk_plan_items.plan_id must foreign-key grocy_ai_bulk_plans(id)');
+
+	// Test 3: bootstrapping alongside native tables creates/drops no native table and leaves the
+	// resolved cache row-identical.
+	$nativePdo = bulkNativeFixturePdo();
+	$nativeTables = ['products', 'quantity_unit_conversions', 'cache__quantity_unit_conversions_resolved'];
+	$nativeSchemaBefore = $nativePdo->query("SELECT type, name, sql FROM sqlite_master WHERE name NOT LIKE 'grocy_ai_bulk_%' AND name NOT LIKE 'sqlite_%' ORDER BY type, name")->fetchAll(PDO::FETCH_ASSOC);
+	$nativeBefore = bulkSnapshotTables($nativePdo, $nativeTables);
+	GrocyAiBulkMigration::Bootstrap($nativePdo);
+	$nativeSchemaAfter = $nativePdo->query("SELECT type, name, sql FROM sqlite_master WHERE name NOT LIKE 'grocy_ai_bulk_%' AND name NOT LIKE 'sqlite_%' ORDER BY type, name")->fetchAll(PDO::FETCH_ASSOC);
+	$nativeAfter = bulkSnapshotTables($nativePdo, $nativeTables);
+	bulkAssert($nativeSchemaBefore === $nativeSchemaAfter, BULK_SCHEMA_MARKER, 'Bootstrap created, altered, or dropped a native object');
+	bulkAssert($nativeBefore === $nativeAfter, BULK_SCHEMA_MARKER, 'Bootstrap mutated native table rows');
+
+	// Task 2: the migration is wired into the module bootstrap order ahead of the bulk service, and
+	// routes.php remains parseable and eager-write-free.
+	$routes = (string)file_get_contents(__DIR__ . '/../routes.php');
+	$migrationRequirePos = strpos($routes, "require_once __DIR__ . '/src/GrocyAiBulkMigration.php';");
+	$controllerRequirePos = strpos($routes, "require_once __DIR__ . '/src/GrocyAiApiController.php';");
+	bulkAssert($migrationRequirePos !== false, BULK_SCHEMA_MARKER, 'routes.php does not require the bulk migration');
+	bulkAssert($controllerRequirePos !== false && $migrationRequirePos < $controllerRequirePos, BULK_SCHEMA_MARKER, 'The bulk migration must be required before the controller requires');
+
+	fwrite(STDOUT, "Bulk schema tests passed\n");
 	exit(0);
 }

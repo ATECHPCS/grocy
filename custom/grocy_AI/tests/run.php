@@ -704,6 +704,12 @@ if (($argv[1] ?? null) === 'bulk-invariants')
 	runBulkInvariants();
 }
 
+if (($argv[1] ?? null) === 'bulk-schema')
+{
+	require_once __DIR__ . '/bulk.php';
+	runBulkSchema();
+}
+
 if (($argv[1] ?? null) === '--list')
 {
 	foreach ([
