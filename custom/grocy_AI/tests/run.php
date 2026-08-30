@@ -734,6 +734,12 @@ if (($argv[1] ?? null) === 'bulk-conflict')
 	runBulkConflict();
 }
 
+if (($argv[1] ?? null) === 'bulk-apply')
+{
+	require_once __DIR__ . '/bulk.php';
+	runBulkApply();
+}
+
 if (($argv[1] ?? null) === '--list')
 {
 	foreach ([

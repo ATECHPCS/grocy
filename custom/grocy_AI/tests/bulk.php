@@ -1058,3 +1058,312 @@ function runBulkConflict(): never
 	fwrite(STDOUT, "Bulk conflict tests passed\n");
 	exit(0);
 }
+
+const BULK_APPLY_MARKER = 'EXPECTED_RED: bulk.apply';
+
+/**
+ * A full persistent-state snapshot (native + resolved-cache + module taxonomy + the two bulk tables)
+ * plus `total_changes()`, for proving byte-identical rollback and zero-write idempotent re-apply.
+ */
+function bulkApplyStateSnapshot(PDO $pdo): array
+{
+	$tables = ['products', 'product_groups', 'quantity_unit_conversions', 'cache__quantity_unit_conversions_resolved', 'grocy_ai_taxonomy_classifications', 'grocy_ai_taxonomy_evidence', 'grocy_ai_bulk_plans', 'grocy_ai_bulk_plan_items'];
+	return [
+		'rows' => bulkSnapshotTables($pdo, $tables),
+		'schema' => $pdo->query("SELECT type, name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name")->fetchAll(PDO::FETCH_ASSOC),
+		'total_changes' => (int)$pdo->query('SELECT total_changes()')->fetchColumn()
+	];
+}
+
+/**
+ * Seed two products that each carry mapped, currently-unclassified evidence so GeneratePlan yields two
+ * changed, pre-selected `assign_taxonomy_leaf` items (P1 -> produce, P2 -> dairy-eggs) — the clean apply
+ * set the ApplyPlan tests exercise.
+ */
+function bulkSeedApplyFixture(PDO $pdo): void
+{
+	$evidence = $pdo->prepare('INSERT INTO grocy_ai_taxonomy_evidence (product_id, provider_category, mapping_version, confidence_band, reason_code) VALUES (?, ?, ?, ?, ?)');
+	$evidence->execute([1, 'produce', 'v1', 'high', 'provider_category']);
+	$evidence->execute([2, 'dairy', 'v1', 'high', 'provider_category']);
+}
+
+/** The current WRITTEN taxonomy leaf slug (null when unclassified), via the shipped public read path. */
+function bulkApplyCurrentLeaf(PDO $pdo, int $productId): ?string
+{
+	$dto = (new GrocyAiTaxonomyService($pdo))->ReadProductTaxonomy($productId);
+	return is_array($dto['current_leaf']) ? (string)$dto['current_leaf']['slug'] : null;
+}
+
+/**
+ * Plan 05-07: the single `BEGIN IMMEDIATE` idempotent apply transaction (BULK-06/BULK-07). Proves a
+ * one-transaction apply of the selected, non-conflicted items through the registered typed operation;
+ * conflicts skipped with no write; idempotent re-apply and interrupted-then-resumed apply with no
+ * duplication and a byte-identical rollback; no per-item commit; the delegate joins the outer
+ * transaction; and the sole apply surface is the authenticated MASTER_DATA_EDIT endpoint.
+ */
+function runBulkApply(): never
+{
+	if (!class_exists(GrocyAiBulkService::class) || !method_exists(GrocyAiBulkService::class, 'ApplyPlan'))
+	{
+		expectedRed(BULK_APPLY_MARKER, 'ApplyPlan is not implemented');
+	}
+
+	$expectedResultKeys = ['plan_id', 'checksum', 'status', 'blockers', 'outcomes', 'actor'];
+
+	// ---- Task 1 Test 1: single-transaction apply of every selected, non-conflicted item -------------
+	$pdo = bulkGenerationPdo();
+	$service = new GrocyAiBulkService($pdo);
+	bulkSeedApplyFixture($pdo);
+	$generated = $service->GeneratePlan([]);
+	$planId = (int)$generated['id'];
+	$checksum = (string)$generated['checksum'];
+
+	$result = $service->ApplyPlan($planId, 'actor-1', $checksum);
+	bulkAssert(array_keys($result) === $expectedResultKeys, BULK_APPLY_MARKER, 'ApplyPlan result is outside the closed shape');
+	bulkAssert($result['plan_id'] === $planId && $result['checksum'] === $checksum, BULK_APPLY_MARKER, 'ApplyPlan did not echo the plan identity and checksum');
+	bulkAssert($result['status'] === 'applied' && $result['blockers'] === [], BULK_APPLY_MARKER, 'A clean apply did not reach the applied status with no blocker');
+	bulkAssert($result['outcomes'] === ['applied' => 2, 'conflict' => 0, 'skipped' => 0], BULK_APPLY_MARKER, 'A clean apply did not apply exactly the two selected items');
+	bulkAssert($result['actor'] === 'actor-1', BULK_APPLY_MARKER, 'ApplyPlan did not thread the actor');
+	// Each item is written exactly once through its registered typed operation (the native taxonomy write).
+	bulkAssert(bulkApplyCurrentLeaf($pdo, 1) === 'produce', BULK_APPLY_MARKER, 'P1 was not written to its proposed leaf');
+	bulkAssert(bulkApplyCurrentLeaf($pdo, 2) === 'dairy-eggs', BULK_APPLY_MARKER, 'P2 was not written to its proposed leaf');
+	bulkAssert((int)$pdo->query('SELECT COUNT(*) FROM grocy_ai_taxonomy_classifications')->fetchColumn() === 2, BULK_APPLY_MARKER, 'Apply produced a duplicate classification row');
+	// The completion ledger is stamped in the same transaction, and the plan status transitions to applied.
+	bulkAssert((string)$pdo->query('SELECT status FROM grocy_ai_bulk_plans WHERE id = ' . $planId)->fetchColumn() === 'applied', BULK_APPLY_MARKER, 'A fully applied plan did not transition to applied status');
+	foreach ($pdo->query('SELECT outcome, applied_at FROM grocy_ai_bulk_plan_items WHERE plan_id = ' . $planId . ' ORDER BY seq')->fetchAll(PDO::FETCH_ASSOC) as $item)
+	{
+		bulkAssert((string)$item['outcome'] === 'applied' && $item['applied_at'] !== null, BULK_APPLY_MARKER, 'A completed item was not stamped applied with applied_at');
+	}
+
+	// ---- Task 2 Test 1: idempotent re-apply repeats no mutation and issues zero writes ---------------
+	$afterFirst = bulkApplyStateSnapshot($pdo);
+	$second = $service->ApplyPlan($planId, 'actor-1', $checksum);
+	$afterSecond = bulkApplyStateSnapshot($pdo);
+	bulkAssert($second['status'] === 'applied' && $second['blockers'] === [], BULK_APPLY_MARKER, 'A re-apply did not report the plan already applied');
+	bulkAssert($second['outcomes'] === ['applied' => 0, 'conflict' => 0, 'skipped' => 2], BULK_APPLY_MARKER, 'A re-apply did not skip both already-completed items via the ledger');
+	bulkAssert($afterFirst['rows'] === $afterSecond['rows'], BULK_APPLY_MARKER, 'A re-apply mutated persistent state');
+	bulkAssert($afterFirst['total_changes'] === $afterSecond['total_changes'], BULK_APPLY_MARKER, 'A re-apply issued a row change (a completed mutation repeated)');
+
+	// ---- Task 1 Test 2: one BEGIN IMMEDIATE / single COMMIT / single ROLLBACK, no PDO txn idiom ------
+	// Scope the proof to the ApplyPlan method body (the docblock is excluded — it begins at the keyword).
+	$src = (string)file_get_contents(__DIR__ . '/../src/GrocyAiBulkService.php');
+	$applyStart = strpos($src, 'public function ApplyPlan');
+	$applyEnd = strpos($src, 'private function RecomputePlanChecksum');
+	bulkAssert($applyStart !== false && $applyEnd !== false && $applyStart < $applyEnd, BULK_APPLY_MARKER, 'The ApplyPlan method could not be isolated');
+	$applyBody = substr($src, $applyStart, $applyEnd - $applyStart);
+	bulkAssert(substr_count($applyBody, "\$this->Db->exec('BEGIN IMMEDIATE')") === 1, BULK_APPLY_MARKER, 'The apply must open exactly one BEGIN IMMEDIATE');
+	bulkAssert(substr_count($applyBody, "\$this->Db->exec('COMMIT')") === 1, BULK_APPLY_MARKER, 'The apply must have exactly one COMMIT path (no per-item commit)');
+	bulkAssert(substr_count($applyBody, "\$this->Db->exec('ROLLBACK')") === 1, BULK_APPLY_MARKER, 'The apply must have exactly one ROLLBACK path');
+	foreach (['beginTransaction', '->commit(', '->rollBack(', 'inTransaction'] as $forbidden)
+	{
+		bulkAssert(!str_contains($applyBody, $forbidden), BULK_APPLY_MARKER, "ApplyPlan uses the forbidden PDO transaction idiom {$forbidden}");
+	}
+
+	// ---- Task 1 Test 1 (cont.): checksum refusal — a tampered plan refuses before any write ----------
+	$rPdo = bulkGenerationPdo();
+	$rService = new GrocyAiBulkService($rPdo);
+	bulkSeedApplyFixture($rPdo);
+	$rPlanId = (int)$rService->GeneratePlan([])['id'];
+	$rPdo->exec("UPDATE grocy_ai_bulk_plans SET checksum = '" . str_repeat('0', 64) . "' WHERE id = " . $rPlanId);
+	$rBefore = bulkApplyStateSnapshot($rPdo);
+	$refused = $rService->ApplyPlan($rPlanId, 'actor-1', str_repeat('0', 64));
+	$rAfter = bulkApplyStateSnapshot($rPdo);
+	bulkAssert($refused['blockers'] === ['plan_checksum_mismatch'] && $refused['outcomes'] === ['applied' => 0, 'conflict' => 0, 'skipped' => 0], BULK_APPLY_MARKER, 'A tampered stored checksum was not refused with the bounded blocker');
+	bulkAssert($rBefore['rows'] === $rAfter['rows'] && $rBefore['total_changes'] === $rAfter['total_changes'], BULK_APPLY_MARKER, 'A checksum-refused apply issued a write');
+	bulkAssert(bulkApplyCurrentLeaf($rPdo, 1) === null && bulkApplyCurrentLeaf($rPdo, 2) === null, BULK_APPLY_MARKER, 'A checksum-refused apply wrote a classification');
+	// A caller-confirmed checksum that differs from the reviewed plan is refused too.
+	$cPdo = bulkGenerationPdo();
+	$cService = new GrocyAiBulkService($cPdo);
+	bulkSeedApplyFixture($cPdo);
+	$cPlanId = (int)$cService->GeneratePlan([])['id'];
+	$confRefused = $cService->ApplyPlan($cPlanId, 'actor-1', str_repeat('a', 64));
+	bulkAssert($confRefused['blockers'] === ['plan_checksum_mismatch'], BULK_APPLY_MARKER, 'A confirmed checksum differing from the reviewed plan was not refused');
+	bulkAssert(bulkApplyCurrentLeaf($cPdo, 1) === null, BULK_APPLY_MARKER, 'A confirmed-checksum-mismatch apply wrote a classification');
+
+	// ---- Task 1 Test 1 (cont.): a freshly drifted item is recorded conflict and never written --------
+	$kPdo = bulkGenerationPdo();
+	$kService = new GrocyAiBulkService($kPdo);
+	bulkSeedApplyFixture($kPdo);
+	$kGen = $kService->GeneratePlan([]);
+	$kPlanId = (int)$kGen['id'];
+	// Drift P1's written value after generation so its reviewed before-image (null) no longer matches.
+	(new GrocyAiTaxonomyService($kPdo))->AssignProductTaxonomy(1, ['leaf_slug' => 'dairy-eggs', 'ruleset_version' => 'v1']);
+	$kResult = $kService->ApplyPlan($kPlanId, 'actor-1', (string)$kGen['checksum']);
+	bulkAssert($kResult['status'] === 'partially_applied', BULK_APPLY_MARKER, 'A plan with a drifted item did not become partially_applied');
+	bulkAssert($kResult['outcomes'] === ['applied' => 1, 'conflict' => 1, 'skipped' => 0], BULK_APPLY_MARKER, 'A drifted item was not recorded conflict while the valid sibling applied');
+	// The conflicted item is NOT overwritten to its proposed value; it keeps the drifted current value.
+	bulkAssert(bulkApplyCurrentLeaf($kPdo, 1) === 'dairy-eggs', BULK_APPLY_MARKER, 'A conflicted item was written over');
+	bulkAssert(bulkApplyCurrentLeaf($kPdo, 2) === 'dairy-eggs', BULK_APPLY_MARKER, 'The non-conflicted sibling was not applied');
+	$kItems = $kPdo->query('SELECT seq, outcome, applied_at FROM grocy_ai_bulk_plan_items WHERE plan_id = ' . $kPlanId . ' ORDER BY seq')->fetchAll(PDO::FETCH_ASSOC);
+	bulkAssert((string)$kItems[0]['outcome'] === 'conflict' && $kItems[0]['applied_at'] === null, BULK_APPLY_MARKER, 'The drifted item was not recorded conflict (unstamped)');
+	bulkAssert((string)$kItems[1]['outcome'] === 'applied' && $kItems[1]['applied_at'] !== null, BULK_APPLY_MARKER, 'The valid item was not stamped applied');
+
+	// ---- Task 1 Test 3 + Task 2 Test 2: mid-apply throw rolls back byte-identical, then resumes clean -
+	$tPdo = bulkGenerationPdo();
+	$tService = new GrocyAiBulkService($tPdo);
+	bulkSeedApplyFixture($tPdo);
+	$tGen = $tService->GeneratePlan([]);
+	$tPlanId = (int)$tGen['id'];
+	$tChecksum = (string)$tGen['checksum'];
+	// Force the SECOND item's delegate write to throw AFTER the first item's write has already succeeded,
+	// via a BEFORE INSERT trigger that aborts the classification write for product 2 only. The trigger
+	// affects the write path exclusively — every read (including TOCTOU conflict detection) still succeeds,
+	// so both items stay in the apply set and the throw genuinely happens mid-apply after item 1 is written.
+	$tPdo->exec("CREATE TRIGGER bulk_apply_fault BEFORE INSERT ON grocy_ai_taxonomy_classifications WHEN NEW.product_id = 2 BEGIN SELECT RAISE(ABORT, 'fault_injected'); END");
+	$tBefore = bulkApplyStateSnapshot($tPdo);
+	$failed = $tService->ApplyPlan($tPlanId, 'actor-1', $tChecksum);
+	$tAfter = bulkApplyStateSnapshot($tPdo);
+	bulkAssert($failed['blockers'] === ['apply_transaction_failed'] && $failed['outcomes'] === ['applied' => 0, 'conflict' => 0, 'skipped' => 0], BULK_APPLY_MARKER, 'A mid-apply throw did not return the bounded rollback outcome');
+	// Byte-identical rollback: the first item's already-succeeded write was undone; nothing stamped.
+	bulkAssert($tBefore['rows'] === $tAfter['rows'], BULK_APPLY_MARKER, 'A mid-apply throw left a partial write (state not byte-identical)');
+	bulkAssert($tBefore['schema'] === $tAfter['schema'], BULK_APPLY_MARKER, 'A mid-apply throw altered the schema');
+	bulkAssert(bulkApplyCurrentLeaf($tPdo, 1) === null, BULK_APPLY_MARKER, 'The first item was not rolled back after a later throw (no per-item commit)');
+	bulkAssert((string)$tPdo->query('SELECT status FROM grocy_ai_bulk_plans WHERE id = ' . $tPlanId)->fetchColumn() === 'draft', BULK_APPLY_MARKER, 'An interrupted apply advanced the plan status');
+	foreach ($tPdo->query('SELECT outcome, applied_at FROM grocy_ai_bulk_plan_items WHERE plan_id = ' . $tPlanId)->fetchAll(PDO::FETCH_ASSOC) as $item)
+	{
+		bulkAssert((string)$item['outcome'] === 'pending' && $item['applied_at'] === null, BULK_APPLY_MARKER, 'An interrupted apply stamped an item (a stamp committed outside the single transaction)');
+	}
+	// Resume: clear the injected fault and re-run; the whole apply set is safely redone with no duplication.
+	$tPdo->exec('DROP TRIGGER bulk_apply_fault');
+	$resume = $tService->ApplyPlan($tPlanId, 'actor-1', $tChecksum);
+	bulkAssert($resume['status'] === 'applied' && $resume['blockers'] === [] && $resume['outcomes'] === ['applied' => 2, 'conflict' => 0, 'skipped' => 0], BULK_APPLY_MARKER, 'A resume did not cleanly redo the whole apply set');
+	bulkAssert(bulkApplyCurrentLeaf($tPdo, 1) === 'produce' && bulkApplyCurrentLeaf($tPdo, 2) === 'dairy-eggs', BULK_APPLY_MARKER, 'A resume did not land the reviewed values');
+	bulkAssert((int)$tPdo->query('SELECT COUNT(*) FROM grocy_ai_taxonomy_classifications')->fetchColumn() === 2, BULK_APPLY_MARKER, 'A resume duplicated a classification row');
+	// The resumed final state equals exactly one clean apply (compared against a reference single apply).
+	$refPdo = bulkGenerationPdo();
+	$refService = new GrocyAiBulkService($refPdo);
+	bulkSeedApplyFixture($refPdo);
+	$refGen = $refService->GeneratePlan([]);
+	$refService->ApplyPlan((int)$refGen['id'], 'actor-1', (string)$refGen['checksum']);
+	$refClass = $refPdo->query('SELECT product_id, leaf_id, ruleset_version FROM grocy_ai_taxonomy_classifications ORDER BY product_id')->fetchAll(PDO::FETCH_ASSOC);
+	$resumeClass = $tPdo->query('SELECT product_id, leaf_id, ruleset_version FROM grocy_ai_taxonomy_classifications ORDER BY product_id')->fetchAll(PDO::FETCH_ASSOC);
+	bulkAssert($refClass === $resumeClass, BULK_APPLY_MARKER, 'The resumed final state does not equal exactly one clean apply');
+
+	// ---- Task 2 Test 3: completion markers are checksum + item-identity scoped (no cross-plan match) --
+	$xPdo = bulkGenerationPdo();
+	$xService = new GrocyAiBulkService($xPdo);
+	bulkSeedApplyFixture($xPdo);
+	$planA = $xService->GeneratePlan([]);
+	$planB = $xService->GeneratePlan([]);
+	$aId = (int)$planA['id'];
+	$bId = (int)$planB['id'];
+	bulkAssert((string)$planA['checksum'] === (string)$planB['checksum'] && $aId !== $bId, BULK_APPLY_MARKER, 'Two plans over the same scope did not share a checksum with distinct ids');
+	$xService->ApplyPlan($aId, 'actor-1', (string)$planA['checksum']);
+	// Applying plan A does NOT stamp plan B's own item rows: B is not falsely treated as already applied.
+	foreach ($xPdo->query('SELECT outcome, applied_at FROM grocy_ai_bulk_plan_items WHERE plan_id = ' . $bId)->fetchAll(PDO::FETCH_ASSOC) as $item)
+	{
+		bulkAssert((string)$item['outcome'] === 'pending' && $item['applied_at'] === null, BULK_APPLY_MARKER, 'Applying one plan falsely marked another plan over the same object as applied');
+	}
+	bulkAssert($xPdo->query('SELECT outcome FROM grocy_ai_bulk_plan_items WHERE plan_id = ' . $aId)->fetchAll(PDO::FETCH_COLUMN) === ['applied', 'applied'], BULK_APPLY_MARKER, 'Plan A was not fully applied');
+	// A plan whose stored checksum drifted is refused BEFORE the completion ledger is consulted.
+	$xPdo->exec("UPDATE grocy_ai_bulk_plans SET checksum = '" . str_repeat('f', 64) . "' WHERE id = " . $bId);
+	$driftBefore = bulkApplyStateSnapshot($xPdo);
+	$driftResult = $xService->ApplyPlan($bId, 'actor-1', str_repeat('f', 64));
+	$driftAfter = bulkApplyStateSnapshot($xPdo);
+	bulkAssert($driftResult['blockers'] === ['plan_checksum_mismatch'], BULK_APPLY_MARKER, 'A drifted stored checksum was not refused');
+	bulkAssert($driftBefore['rows'] === $driftAfter['rows'] && $driftBefore['total_changes'] === $driftAfter['total_changes'], BULK_APPLY_MARKER, 'A drifted-checksum refusal issued a write');
+
+	// ---- Task 3: the authenticated, MASTER_DATA_EDIT-gated apply endpoint is the sole apply surface ---
+	bulkSelectionRuntime();
+
+	// The single POST apply route is registered exactly once.
+	$container = new DI\Container();
+	$app = Slim\Factory\AppFactory::createFromContainer($container);
+	require dirname(__DIR__) . '/routes.php';
+	$found = [];
+	$applyRoutes = 0;
+	foreach ($app->getRouteCollector()->getRoutes() as $route)
+	{
+		$found[$route->getPattern()] = $route->getMethods();
+		if (str_contains($route->getPattern(), '/apply'))
+		{
+			$applyRoutes++;
+		}
+	}
+	bulkAssert(($found['/api/grocy-ai/bulk/plans/{planId}/apply'] ?? null) === ['POST'], BULK_APPLY_MARKER, 'The apply route is not registered exactly as POST');
+	bulkAssert($applyRoutes === 1, BULK_APPLY_MARKER, 'More than one apply route is registered');
+	// No maintainer CLI invokes ApplyPlan — apply is a user API action only (D-13).
+	foreach (glob(dirname(__DIR__) . '/bin/*.php') as $binFile)
+	{
+		bulkAssert(!str_contains((string)file_get_contents($binFile), 'ApplyPlan'), BULK_APPLY_MARKER, 'A maintainer CLI invokes ApplyPlan: ' . basename((string)$binFile));
+	}
+
+	$apiPdo = bulkGenerationPdo();
+	$apiPdo->exec('CREATE TABLE user_permissions_resolved (id INTEGER NOT NULL PRIMARY KEY, user_id INTEGER NOT NULL, permission_name TEXT NOT NULL)');
+	$apiPdo->exec("INSERT INTO user_permissions_resolved (id, user_id, permission_name) VALUES (1, 1, 'MASTER_DATA_EDIT')");
+	$apiService = new GrocyAiBulkService($apiPdo);
+	bulkSeedApplyFixture($apiPdo);
+	$apiGen = $apiService->GeneratePlan([]);
+	$apiPlanId = (int)$apiGen['id'];
+	$apiChecksum = (string)$apiGen['checksum'];
+	bulkInstallDatabase($apiPdo);
+	$controller = (new ReflectionClass(GrocyAI\Controllers\Api\GrocyAiApiController::class))->newInstanceWithoutConstructor();
+
+	// Test 1: an unauthenticated caller is rejected before any write.
+	$apiPdo->exec("DELETE FROM user_permissions_resolved WHERE permission_name = 'MASTER_DATA_EDIT'");
+	$permBefore = bulkApplyStateSnapshot($apiPdo);
+	try
+	{
+		$controller->BulkPlanApply(bulkSelectionRequest('POST', '/x', ['checksum' => $apiChecksum]), bulkSelectionResponse(), ['planId' => (string)$apiPlanId]);
+		bulkAssert(false, BULK_APPLY_MARKER, 'BulkPlanApply did not enforce MASTER_DATA_EDIT');
+	}
+	catch (Grocy\Controllers\Users\PermissionMissingException)
+	{
+	}
+	$permAfter = bulkApplyStateSnapshot($apiPdo);
+	bulkAssert($permBefore['rows'] === $permAfter['rows'] && $permBefore['total_changes'] === $permAfter['total_changes'], BULK_APPLY_MARKER, 'An unauthorized apply issued a write');
+	$apiPdo->exec("INSERT INTO user_permissions_resolved (id, user_id, permission_name) VALUES (1, 1, 'MASTER_DATA_EDIT')");
+
+	// Test 1 (cont.): only the closed confirmation body is accepted; any free-form payload is a bounded 400.
+	$badBodies = [
+		['checksum' => $apiChecksum, 'entity' => 'products'],
+		['entity' => 'products', 'field' => 'name', 'value' => 'x'],
+		['checksum' => 'not-a-sha256'],
+		['checksum' => 123],
+		['sql' => 'DROP TABLE products'],
+		[]
+	];
+	foreach ($badBodies as $bad)
+	{
+		$before = bulkApplyStateSnapshot($apiPdo);
+		$badResponse = $controller->BulkPlanApply(bulkSelectionRequest('POST', '/x', $bad), bulkSelectionResponse(), ['planId' => (string)$apiPlanId]);
+		bulkAssert($badResponse->getStatusCode() === 400, BULK_APPLY_MARKER, 'A non-closed apply body was not rejected with 400');
+		bulkAssert(bulkSelectionBody($badResponse) === ['error_message' => 'Invalid apply request'], BULK_APPLY_MARKER, 'A rejected apply body did not return the bounded error');
+		$after = bulkApplyStateSnapshot($apiPdo);
+		bulkAssert($before['rows'] === $after['rows'] && $before['total_changes'] === $after['total_changes'], BULK_APPLY_MARKER, 'A rejected apply body issued a write');
+	}
+	$badIdResponse = $controller->BulkPlanApply(bulkSelectionRequest('POST', '/x', ['checksum' => $apiChecksum]), bulkSelectionResponse(), ['planId' => 'abc']);
+	bulkAssert($badIdResponse->getStatusCode() === 400, BULK_APPLY_MARKER, 'A non-integer plan id was not rejected');
+
+	// Test 2: on success it delegates to ApplyPlan with the session actor and returns the applied outcome.
+	$okResponse = $controller->BulkPlanApply(bulkSelectionRequest('POST', '/x', ['checksum' => $apiChecksum]), bulkSelectionResponse(), ['planId' => (string)$apiPlanId]);
+	bulkAssert($okResponse->getStatusCode() === 200, BULK_APPLY_MARKER, 'A valid apply did not return 200');
+	$okBody = bulkSelectionBody($okResponse);
+	bulkAssert(array_keys($okBody) === $expectedResultKeys, BULK_APPLY_MARKER, 'The apply endpoint response is not the closed outcome shape');
+	bulkAssert($okBody['status'] === 'applied' && $okBody['outcomes'] === ['applied' => 2, 'conflict' => 0, 'skipped' => 0], BULK_APPLY_MARKER, 'The apply endpoint did not report the applied outcome');
+	bulkAssert($okBody['actor'] === (string)GROCY_USER_ID, BULK_APPLY_MARKER, 'The apply endpoint did not record the authenticated session user as actor');
+	bulkAssert(bulkApplyCurrentLeaf($apiPdo, 1) === 'produce' && bulkApplyCurrentLeaf($apiPdo, 2) === 'dairy-eggs', BULK_APPLY_MARKER, 'The endpoint apply did not land the reviewed values');
+
+	// Test 2 (cont.): a checksum mismatch returns the bounded engine outcome (409), not a partial write.
+	$mmPdo = bulkGenerationPdo();
+	$mmPdo->exec('CREATE TABLE user_permissions_resolved (id INTEGER NOT NULL PRIMARY KEY, user_id INTEGER NOT NULL, permission_name TEXT NOT NULL)');
+	$mmPdo->exec("INSERT INTO user_permissions_resolved (id, user_id, permission_name) VALUES (1, 1, 'MASTER_DATA_EDIT')");
+	$mmService = new GrocyAiBulkService($mmPdo);
+	bulkSeedApplyFixture($mmPdo);
+	$mmPlanId = (int)$mmService->GeneratePlan([])['id'];
+	bulkInstallDatabase($mmPdo);
+	$mmBefore = bulkApplyStateSnapshot($mmPdo);
+	$mmResponse = $controller->BulkPlanApply(bulkSelectionRequest('POST', '/x', ['checksum' => str_repeat('b', 64)]), bulkSelectionResponse(), ['planId' => (string)$mmPlanId]);
+	$mmAfter = bulkApplyStateSnapshot($mmPdo);
+	bulkAssert($mmResponse->getStatusCode() === 409, BULK_APPLY_MARKER, 'A checksum mismatch did not return the bounded 409 engine outcome');
+	bulkAssert(bulkSelectionBody($mmResponse)['blockers'] === ['plan_checksum_mismatch'], BULK_APPLY_MARKER, 'A checksum mismatch did not return the bounded engine blocker');
+	bulkAssert($mmBefore['rows'] === $mmAfter['rows'], BULK_APPLY_MARKER, 'A checksum-mismatch apply issued a partial write');
+	bulkAssert(bulkApplyCurrentLeaf($mmPdo, 1) === null, BULK_APPLY_MARKER, 'A checksum-mismatch apply wrote a classification');
+
+	// Test 2 (cont.): an unknown plan id returns the bounded 404, not a partial write.
+	$missingResponse = $controller->BulkPlanApply(bulkSelectionRequest('POST', '/x', ['checksum' => str_repeat('c', 64)]), bulkSelectionResponse(), ['planId' => '987654321']);
+	bulkAssert($missingResponse->getStatusCode() === 404, BULK_APPLY_MARKER, 'An unknown plan id did not return 404 from apply');
+
+	fwrite(STDOUT, "Bulk apply tests passed\n");
+	exit(0);
+}

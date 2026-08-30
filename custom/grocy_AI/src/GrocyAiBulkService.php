@@ -462,6 +462,190 @@ class GrocyAiBulkService
 	}
 
 	/**
+	 * The bounded, runtime-failure blocker returned after a mid-apply throw forces a rollback. It is
+	 * distinct from the review/refusal blocker vocabulary (`unknown_operation`, `plan_checksum_mismatch`,
+	 * …): it names the fail-closed transaction rollback, mirroring `ActivateVerifiedRuleset`'s
+	 * `activation_transaction_failed`. On this blocker the prior state is byte-identical — nothing applied.
+	 */
+	private const APPLY_TRANSACTION_FAILED = 'apply_transaction_failed';
+
+	/**
+	 * Apply an approved plan exactly once through one short `BEGIN IMMEDIATE` transaction (D-08), routing
+	 * every selected, non-conflicted, not-yet-completed item through its registered typed operation
+	 * (D-05/D-06 → `AssignProductTaxonomy`), idempotent via a plan-checksum-bound per-item completion
+	 * ledger (D-09/BULK-07), and fully rolled back to a byte-identical prior state on any throw.
+	 *
+	 * Transaction scheme (LOCKED): the write lock is taken up front with `$this->Db->exec('BEGIN
+	 * IMMEDIATE')`, there is exactly one commit path `$this->Db->exec('COMMIT')`, and any `\Throwable`
+	 * issues `$this->Db->exec('ROLLBACK')`. PDO's `beginTransaction()`/`commit()`/`inTransaction()` are
+	 * deliberately NOT used (a raw BEGIN IMMEDIATE leaves `inTransaction()` reading `false`). The delegate
+	 * is invoked with `$joinExistingTransaction = true` so it joins this single outer transaction and never
+	 * opens or commits its own. There are NO per-item commits inside the loop and NO network/provider call
+	 * while the lock is held.
+	 *
+	 * Idempotency (BULK-07): at entry the plan checksum is recomputed over the immutable items and
+	 * `hash_equals`-checked against the stored `checksum` (and, when the caller confirms one, against the
+	 * reviewed checksum), refusing before any write on mismatch — the direct analogue of
+	 * `ActivateVerifiedRuleset`'s `evidence_hash` existence gate. A completed item carries
+	 * `outcome='applied'` + `applied_at`; because those stamps commit only with the single `COMMIT`, an
+	 * interrupted (rolled-back) apply leaves every item un-stamped and the DB byte-identical, so a resume
+	 * safely redoes the whole apply set with no duplication and the final state equals exactly one clean
+	 * apply. The completion marker is consulted before conflict detection for a given item, so an item
+	 * already applied under this reviewed checksum is skipped (never re-mutated) rather than false-flagged
+	 * as a drift conflict against its own reviewed before-image.
+	 *
+	 * Conflict handling (TOCTOU-free): `DetectApplyConflicts` is re-run AFTER the write lock is acquired,
+	 * inside the transaction; a freshly drifted, not-yet-completed item is recorded `outcome='conflict'`
+	 * and never written. The apply set it returns does not carry the proposed value, so each write
+	 * re-fetches `proposed_value_json` by `seq` from `grocy_ai_bulk_plan_items`.
+	 *
+	 * @param string $actor the authenticated Grocy session user resolved by the controller
+	 * @param string|null $confirmedChecksum the reviewed checksum the caller confirms, cross-checked here
+	 * @return array{plan_id: int, checksum: string, status: string, blockers: array<int, string>, outcomes: array{applied: int, conflict: int, skipped: int}, actor: string}
+	 */
+	public function ApplyPlan(int $planId, string $actor, ?string $confirmedChecksum = null): array
+	{
+		$plan = $this->LoadPlanHeader($planId);
+		$storedChecksum = (string)$plan['checksum'];
+		$status = (string)$plan['status'];
+
+		// Bind the applied plan to the reviewed one before any write: the recomputed checksum must equal
+		// the stored checksum, and — when the caller confirms one — the caller's reviewed checksum too.
+		$recomputed = $this->RecomputePlanChecksum($planId, $plan);
+		if (!hash_equals($storedChecksum, $recomputed)
+			|| ($confirmedChecksum !== null && !hash_equals($storedChecksum, $confirmedChecksum)))
+		{
+			return $this->ApplyResult($planId, $storedChecksum, $status, ['plan_checksum_mismatch'], 0, 0, 0, $actor);
+		}
+
+		// LOCKED scheme: take the write lock up front with a raw BEGIN IMMEDIATE (never a PDO deferred begin,
+		// and never gated on the PDO transaction-state read, which is false after a raw BEGIN IMMEDIATE).
+		$this->Db->exec('BEGIN IMMEDIATE');
+		try
+		{
+			// TOCTOU-free: recompute the apply set against live reality INSIDE the lock.
+			$conflicts = $this->DetectApplyConflicts($planId);
+			$conflictBySeq = [];
+			foreach ($conflicts['items'] as $conflictItem)
+			{
+				$conflictBySeq[(int)$conflictItem['seq']] = (bool)$conflictItem['conflict'];
+			}
+
+			$selected = $this->Db->prepare('SELECT seq, object_id, operation, proposed_value_json, outcome, applied_at FROM grocy_ai_bulk_plan_items WHERE plan_id = ? AND selected = 1 ORDER BY seq');
+			$selected->execute([$planId]);
+
+			$markConflict = $this->Db->prepare("UPDATE grocy_ai_bulk_plan_items SET outcome = 'conflict' WHERE plan_id = ? AND seq = ?");
+			$markApplied = $this->Db->prepare("UPDATE grocy_ai_bulk_plan_items SET outcome = 'applied', applied_at = CURRENT_TIMESTAMP WHERE plan_id = ? AND seq = ?");
+
+			$applied = 0;
+			$conflicted = 0;
+			$skipped = 0;
+			foreach ($selected->fetchAll(PDO::FETCH_ASSOC) as $row)
+			{
+				$seq = (int)$row['seq'];
+
+				// Idempotency ledger (BULK-07): a completed item for this reviewed checksum is never redone
+				// and, critically, is consulted BEFORE conflict detection so an already-applied item is not
+				// false-flagged as a drift against its own reviewed before-image.
+				if ((string)$row['outcome'] === 'applied' && $row['applied_at'] !== null)
+				{
+					$skipped++;
+					continue;
+				}
+
+				// A freshly drifted item is recorded conflict and never written (optimistic concurrency).
+				if (($conflictBySeq[$seq] ?? true) === true)
+				{
+					$markConflict->execute([$planId, $seq]);
+					$conflicted++;
+					continue;
+				}
+
+				// Dispatch ONLY the closed registered typed operation; anything else fails closed (rollback).
+				$resolution = $this->ResolveOperation((string)$row['operation']);
+				if ($resolution['delegate'] === null)
+				{
+					throw new \RuntimeException('unknown_operation');
+				}
+				$proposed = json_decode((string)$row['proposed_value_json'], true, 512, JSON_THROW_ON_ERROR);
+				$leafSlug = is_array($proposed) && isset($proposed['leaf_slug']) && is_string($proposed['leaf_slug']) ? (string)$proposed['leaf_slug'] : null;
+
+				// The delegate joins THIS outer transaction ($joinExistingTransaction = true) and performs
+				// only the native/module upsert — no network, no own BEGIN/COMMIT, no per-item commit.
+				($resolution['delegate'])((int)$row['object_id'], $leafSlug);
+				$markApplied->execute([$planId, $seq]);
+				$applied++;
+			}
+
+			// Status vocab: any conflict among the selected set → partially_applied; otherwise applied.
+			$finalStatus = $conflicted > 0 ? 'partially_applied' : 'applied';
+			if ($finalStatus !== $status)
+			{
+				$this->Db->prepare('UPDATE grocy_ai_bulk_plans SET status = ? WHERE id = ?')->execute([$finalStatus, $planId]);
+			}
+
+			// The single commit path. Every completion stamp lands atomically here or not at all.
+			$this->Db->exec('COMMIT');
+			return $this->ApplyResult($planId, $storedChecksum, $finalStatus, [], $applied, $conflicted, $skipped, $actor);
+		}
+		catch (\Throwable $exception)
+		{
+			// Fail closed to a byte-identical prior state: nothing applied, no item stamped.
+			$this->Db->exec('ROLLBACK');
+			$blocker = $exception->getMessage() === 'unknown_operation' ? 'unknown_operation' : self::APPLY_TRANSACTION_FAILED;
+			return $this->ApplyResult($planId, $storedChecksum, $status, [$blocker], 0, 0, 0, $actor);
+		}
+	}
+
+	/**
+	 * Recompute the immutable plan checksum from the persisted items via the shared `ChecksumForPlan`
+	 * idiom, so the applied plan is provably the reviewed artifact. Decodes only the written-field leaf
+	 * slug from each before/proposed image — the same content `GeneratePlan` sealed.
+	 *
+	 * @param array<string, mixed> $plan the loaded plan header
+	 */
+	private function RecomputePlanChecksum(int $planId, array $plan): string
+	{
+		$statement = $this->Db->prepare('SELECT object_type, object_id, operation, before_image_json, proposed_value_json FROM grocy_ai_bulk_plan_items WHERE plan_id = ? ORDER BY seq');
+		$statement->execute([$planId]);
+
+		$items = [];
+		foreach ($statement->fetchAll(PDO::FETCH_ASSOC) as $row)
+		{
+			$before = json_decode((string)$row['before_image_json'], true, 512, JSON_THROW_ON_ERROR);
+			$proposed = json_decode((string)$row['proposed_value_json'], true, 512, JSON_THROW_ON_ERROR);
+			$items[] = [
+				'object_type' => (string)$row['object_type'],
+				'object_id' => (int)$row['object_id'],
+				'operation' => (string)$row['operation'],
+				'before_image' => is_array($before) ? ($before['leaf_slug'] ?? null) : null,
+				'proposed_value' => is_array($proposed) ? ($proposed['leaf_slug'] ?? null) : null
+			];
+		}
+
+		return $this->ChecksumForPlan((string)$plan['operation_type'], (string)$plan['ruleset_version'], $items);
+	}
+
+	/**
+	 * The closed apply-outcome DTO. `outcomes` counts use the closed per-item vocabulary; `blockers` is a
+	 * bounded list (empty on success). `actor` echoes the authenticated session user threaded from the
+	 * controller (the append-only audit ledger itself is Plan 05-08).
+	 *
+	 * @return array{plan_id: int, checksum: string, status: string, blockers: array<int, string>, outcomes: array{applied: int, conflict: int, skipped: int}, actor: string}
+	 */
+	private function ApplyResult(int $planId, string $checksum, string $status, array $blockers, int $applied, int $conflicted, int $skipped, string $actor): array
+	{
+		return [
+			'plan_id' => $planId,
+			'checksum' => $checksum,
+			'status' => $status,
+			'blockers' => $blockers,
+			'outcomes' => ['applied' => $applied, 'conflict' => $conflicted, 'skipped' => $skipped],
+			'actor' => $actor
+		];
+	}
+
+	/**
 	 * Decode a stored item's immutable written-field before-image to the leaf slug (`null` when the item
 	 * was unclassified at review). Fails closed on any malformed/absent image so the stored plan can never
 	 * be trusted as a self-certifying "match".

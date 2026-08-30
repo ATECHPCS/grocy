@@ -57,3 +57,24 @@ store, not here.
   another's input against a file, at least one immutable anchor must live outside that file. Fixed by
   pinning `CHARACTERIZATION_FACTS_SHA256` in `GrocyAiConversionService`. (hits: 1)
 
+- 2026-08-30: A `substr_count`/`str_contains` source-grep test that asserts a method uses only the
+  locked transaction idiom (`exec('BEGIN IMMEDIATE')`/`COMMIT`/`ROLLBACK`, never PDO
+  `beginTransaction()`/`commit()`/`inTransaction()`) false-failed because the method's OWN docblock and
+  inline comments quoted those exact tokens. → Scope such source assertions to the method body (slice
+  from `public function X` to the next `function`, which excludes the preceding docblock) and keep the
+  forbidden tokens out of in-body comments. (hits: 1)
+
+- 2026-08-30: Tried to prove `ApplyPlan`'s mid-apply rollback by deleting the proposed leaf's taxonomy
+  node so the delegate write would throw — but `DetectApplyConflicts` re-reads through the same
+  `ReadProductTaxonomy`→`Evidence`→`LeafBySlug` path, so the missing node became a fail-closed
+  `conflict` (item dropped, no throw). Any fault the write would hit is ALSO hit by TOCTOU conflict
+  detection first. → To force a genuine mid-apply write-throw, target the write path exclusively: a
+  `BEFORE INSERT` trigger on `grocy_ai_taxonomy_classifications` that `RAISE(ABORT)` for one product_id
+  lets all reads (and detection) pass while the second item's INSERT throws after the first committed
+  in-txn. (hits: 1)
+
+- 2026-08-30: SQLite `total_changes()` is NOT decremented by `ROLLBACK` — a rolled-back INSERT still
+  bumps the counter. → Prove byte-identical rollback with row-value equality (snapshot `SELECT *`), not
+  a `total_changes()` delta. Only assert a `total_changes()` delta for committed no-op paths (e.g. an
+  idempotent re-apply that executes zero INSERT/UPDATE/DELETE). (hits: 1)
+

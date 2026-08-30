@@ -470,6 +470,60 @@ class GrocyAiApiController extends BaseApiController
 		}
 	}
 
+	/**
+	 * Apply an approved plan (D-08/D-13): a user-facing, authenticated, MASTER_DATA_EDIT-gated durable
+	 * action — NOT a maintainer CLI. The permission is checked before any write. The body is the closed
+	 * confirmation `{ "checksum": "<sha256>" }` only; any extra key or a non-64-hex value is a bounded 400,
+	 * so no free-form entity/field/CRUD/SQL payload can reach the engine. The authenticated session user
+	 * (`GROCY_USER_ID`) is resolved as the actor and threaded to `ApplyPlan`; the confirmed checksum is
+	 * cross-checked by the engine, which returns a bounded outcome (never a partial write) on mismatch or
+	 * all-conflict. This is the sole apply surface — there is no CLI and no second apply route.
+	 */
+	public function BulkPlanApply(Request $request, Response $response, array $args): Response
+	{
+		User::CheckPermission($request, User::PERMISSION_MASTER_DATA_EDIT);
+		$planId = $args['planId'] ?? null;
+		if (!is_string($planId) || preg_match('/^[1-9][0-9]{0,9}$/D', $planId) !== 1)
+		{
+			return $this->GenericErrorResponse($response, 'Invalid apply request', 400);
+		}
+
+		$body = $request->getParsedBody();
+		if (!is_array($body))
+		{
+			return $this->GenericErrorResponse($response, 'Invalid apply request', 400);
+		}
+		// Closed candidate-key set: the request may supply only the reviewed 64-hex `checksum`. Any extra
+		// key makes the intersected candidate differ from the raw body and is refused before the engine.
+		$candidate = array_intersect_key($body, array_flip(['checksum']));
+		if ($candidate !== $body || !array_key_exists('checksum', $candidate)
+			|| !is_string($candidate['checksum']) || preg_match('/^[0-9a-f]{64}$/D', $candidate['checksum']) !== 1)
+		{
+			return $this->GenericErrorResponse($response, 'Invalid apply request', 400);
+		}
+
+		try
+		{
+			$service = new GrocyAiBulkService(DatabaseService::GetInstance()->GetDbConnectionRaw(), false);
+			$result = $service->ApplyPlan((int)$planId, (string)GROCY_USER_ID, $candidate['checksum']);
+			// The engine returns a bounded outcome; a refusal or a rolled-back apply maps to 409, never a
+			// partial write.
+			if ($result['blockers'] !== [])
+			{
+				return $this->ApiResponse($response->withStatus(409), $result);
+			}
+			return $this->ApiResponse($response, $result);
+		}
+		catch (\InvalidArgumentException)
+		{
+			return $this->GenericErrorResponse($response, 'Invalid apply request', 400);
+		}
+		catch (\RuntimeException)
+		{
+			return $this->GenericErrorResponse($response, 'Plan unavailable', 404);
+		}
+	}
+
 	private static function CountScopeInspectionDto(): array
 	{
 		return [
