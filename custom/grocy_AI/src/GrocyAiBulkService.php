@@ -265,6 +265,164 @@ class GrocyAiBulkService
 		return ['operation' => $operation, 'delegate' => $delegate, 'blockers' => []];
 	}
 
+	/**
+	 * The set of plan statuses that still accept human review. Selection may only be toggled while the
+	 * plan is reviewable; a plan that has already been applied or rolled back is frozen (D-04) and its
+	 * selection flags become an immutable part of the audit trail. `draft` is the status GeneratePlan
+	 * assigns; later plans may introduce further pre-apply statuses, so reviewability is expressed as an
+	 * exclusion of the terminal states rather than a fixed allow-list.
+	 */
+	private const TERMINAL_STATUSES = ['applied', 'rolled_back'];
+
+	/**
+	 * Toggle exactly one item's `selected` flag on a stored, still-reviewable plan (D-04). The apply set
+	 * is derived server-side from these flags — never from a browser-supplied item list. This writes only
+	 * the `selected` column via a single UPDATE, never re-derives the before-image, and touches no native
+	 * or resolved-cache state (D-13/D-14). It is idempotent: when the flag already holds the requested
+	 * value it issues no write at all, so a repeated identical call changes nothing.
+	 *
+	 * Fails closed with no write when the plan does not exist, is no longer reviewable, was generated
+	 * under a now-stale ruleset version, the seq is not one of the plan's own items, or `$selected` is not
+	 * a strict boolean. Returns the re-read plan (header + counts + items) so the caller re-renders from
+	 * server-owned state.
+	 *
+	 * @return array{plan: array<string, mixed>, counts: array<string, int>, items: array<int, array<string, mixed>>}
+	 */
+	public function SetItemSelection(int $planId, int $seq, mixed $selected): array
+	{
+		if (!is_bool($selected))
+		{
+			throw new \InvalidArgumentException('selection_flag_invalid');
+		}
+
+		$plan = $this->LoadPlanHeader($planId);
+		if (in_array((string)$plan['status'], self::TERMINAL_STATUSES, true))
+		{
+			throw new \RuntimeException('plan_not_reviewable');
+		}
+		if ((string)$plan['ruleset_version'] !== GrocyAiTaxonomyMigration::VERSION)
+		{
+			throw new \RuntimeException('plan_ruleset_stale');
+		}
+
+		$itemStatement = $this->Db->prepare('SELECT selected FROM grocy_ai_bulk_plan_items WHERE plan_id = ? AND seq = ?');
+		$itemStatement->execute([$planId, $seq]);
+		$current = $itemStatement->fetchColumn();
+		if ($current === false)
+		{
+			throw new \InvalidArgumentException('unknown_item_seq');
+		}
+
+		$desired = $selected ? 1 : 0;
+		if ((int)$current !== $desired)
+		{
+			// A single flag write, no other column, no before-image re-derivation, no native/cache SQL.
+			$update = $this->Db->prepare('UPDATE grocy_ai_bulk_plan_items SET selected = ? WHERE plan_id = ? AND seq = ?');
+			$update->execute([$desired, $planId, $seq]);
+		}
+
+		return $this->ReadPlan($planId);
+	}
+
+	/**
+	 * Read a stored plan's header, closed counts, and every item verbatim (D-13). Read-only: it decodes
+	 * the persisted before/proposed images and never re-derives them. The item DTO carries the object
+	 * identity, immutable before-image, proposed value, reason, provenance, registered operation, the
+	 * boolean selection flag, and the per-item outcome.
+	 *
+	 * @return array{plan: array<string, mixed>, counts: array<string, int>, items: array<int, array<string, mixed>>}
+	 */
+	public function ReadPlan(int $planId): array
+	{
+		$plan = $this->LoadPlanHeader($planId);
+		$itemsStatement = $this->Db->prepare('SELECT * FROM grocy_ai_bulk_plan_items WHERE plan_id = ? ORDER BY seq');
+		$itemsStatement->execute([$planId]);
+
+		$items = [];
+		foreach ($itemsStatement->fetchAll(PDO::FETCH_ASSOC) as $row)
+		{
+			$items[] = $this->PlanItemDto($row);
+		}
+
+		return [
+			'plan' => $plan,
+			'counts' => json_decode((string)$plan['counts_json'], true, 512, JSON_THROW_ON_ERROR),
+			'items' => $items
+		];
+	}
+
+	/**
+	 * The complete selected diff over a stored plan (D-04/D-13): every currently selected item, verbatim,
+	 * with rejected items omitted entirely. Read-only. The apply-set count is the number of selected items
+	 * only — 05-06 later subtracts apply-time conflicts. The stored plan checksum is returned unchanged;
+	 * selection never alters it, so the reviewed diff and the applied artifact stay provably the same.
+	 *
+	 * @return array{plan_id: int, checksum: string, operation_type: string, ruleset_version: string, included: int, items: array<int, array<string, mixed>>}
+	 */
+	public function SelectedDiff(int $planId): array
+	{
+		$plan = $this->LoadPlanHeader($planId);
+		$itemsStatement = $this->Db->prepare('SELECT * FROM grocy_ai_bulk_plan_items WHERE plan_id = ? AND selected = 1 ORDER BY seq');
+		$itemsStatement->execute([$planId]);
+
+		$items = [];
+		foreach ($itemsStatement->fetchAll(PDO::FETCH_ASSOC) as $row)
+		{
+			$items[] = $this->PlanItemDto($row);
+		}
+
+		return [
+			'plan_id' => (int)$plan['id'],
+			'checksum' => (string)$plan['checksum'],
+			'operation_type' => (string)$plan['operation_type'],
+			'ruleset_version' => (string)$plan['ruleset_version'],
+			// Apply-set size using the closed count vocabulary: selected items are `included`.
+			'included' => count($items),
+			'items' => $items
+		];
+	}
+
+	/**
+	 * Load a stored plan header or fail closed. Read-only single-row lookup.
+	 *
+	 * @return array<string, mixed>
+	 */
+	private function LoadPlanHeader(int $planId): array
+	{
+		$statement = $this->Db->prepare('SELECT * FROM grocy_ai_bulk_plans WHERE id = ?');
+		$statement->execute([$planId]);
+		$plan = $statement->fetch(PDO::FETCH_ASSOC);
+		if (!is_array($plan))
+		{
+			throw new \RuntimeException('plan_not_found');
+		}
+
+		return $plan;
+	}
+
+	/**
+	 * Normalize a stored plan-item row into the verbatim review DTO. The before/proposed images are the
+	 * immutable JSON captured at generation, decoded without re-derivation.
+	 *
+	 * @param array<string, mixed> $row
+	 * @return array<string, mixed>
+	 */
+	private function PlanItemDto(array $row): array
+	{
+		return [
+			'seq' => (int)$row['seq'],
+			'object_type' => (string)$row['object_type'],
+			'object_id' => (int)$row['object_id'],
+			'operation' => (string)$row['operation'],
+			'before_image' => json_decode((string)$row['before_image_json'], true, 512, JSON_THROW_ON_ERROR),
+			'proposed_value' => json_decode((string)$row['proposed_value_json'], true, 512, JSON_THROW_ON_ERROR),
+			'reason' => (string)$row['reason'],
+			'provenance' => (string)$row['provenance'],
+			'selected' => (int)$row['selected'] === 1,
+			'outcome' => (string)$row['outcome']
+		];
+	}
+
 	private function ModuleVersion(): string
 	{
 		$path = __DIR__ . '/../module-version.json';

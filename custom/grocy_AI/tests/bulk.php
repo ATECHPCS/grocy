@@ -546,3 +546,320 @@ function runBulkRegistry(): never
 	fwrite(STDOUT, "Bulk registry tests passed\n");
 	exit(0);
 }
+
+const BULK_SELECTION_MARKER = 'EXPECTED_RED: bulk.selection';
+
+/**
+ * Bind an in-memory PDO to the Grocy DatabaseService singleton so the controller's `new
+ * GrocyAiBulkService(...)` and `User::CheckPermission` resolve against the fixture database.
+ */
+function bulkInstallDatabase(PDO $pdo): void
+{
+	$serviceReflection = new ReflectionClass(Grocy\Services\DatabaseService::class);
+	foreach (['DbConnectionRaw' => $pdo, 'DbConnection' => new LessQL\Database($pdo), 'instance' => $serviceReflection->newInstance()] as $propertyName => $value)
+	{
+		$property = $serviceReflection->getProperty($propertyName);
+		$property->setValue(null, $value);
+	}
+}
+
+function bulkSelectionRuntime(): void
+{
+	if (!defined('GROCY_MODE'))
+	{
+		define('GROCY_MODE', 'production');
+	}
+	if (!defined('GROCY_DATAPATH'))
+	{
+		define('GROCY_DATAPATH', sys_get_temp_dir());
+	}
+	if (!defined('GROCY_USER_ID'))
+	{
+		define('GROCY_USER_ID', 1);
+	}
+	require_once dirname(__DIR__, 3) . '/packages/autoload.php';
+	require_once dirname(__DIR__) . '/src/GrocyAiBulkService.php';
+	require_once dirname(__DIR__) . '/src/GrocyAiApiController.php';
+	require_once dirname(__DIR__) . '/src/GrocyAiBulkController.php';
+}
+
+function bulkSelectionRequest(string $method, string $path, ?array $parsedBody = null): Psr\Http\Message\ServerRequestInterface
+{
+	$request = (new Slim\Psr7\Factory\ServerRequestFactory())->createServerRequest($method, $path);
+	if ($parsedBody !== null)
+	{
+		$request = $request->withHeader('Content-Type', 'application/json')->withParsedBody($parsedBody);
+	}
+	return $request;
+}
+
+function bulkSelectionResponse(): Psr\Http\Message\ResponseInterface
+{
+	return (new Slim\Psr7\Factory\ResponseFactory())->createResponse();
+}
+
+function bulkSelectionBody(Psr\Http\Message\ResponseInterface $response): array
+{
+	return json_decode((string)$response->getBody(), true, 512, JSON_THROW_ON_ERROR);
+}
+
+/**
+ * A full native + resolved-cache + taxonomy snapshot plus `total_changes()`, for the same zero-write
+ * rigor the 05-03 generation proof uses. Selection and rendering may touch only the module-owned
+ * `selected` flag; nothing here may change on a read or an invalid request.
+ */
+function bulkSelectionStateSnapshot(PDO $pdo): array
+{
+	$tables = ['products', 'product_groups', 'quantity_unit_conversions', 'cache__quantity_unit_conversions_resolved', 'grocy_ai_taxonomy_classifications', 'grocy_ai_taxonomy_evidence'];
+	return [
+		'rows' => bulkSnapshotTables($pdo, $tables),
+		'schema' => $pdo->query("SELECT type, name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name")->fetchAll(PDO::FETCH_ASSOC),
+		'total_changes' => (int)$pdo->query('SELECT total_changes()')->fetchColumn()
+	];
+}
+
+function bulkSelectionAssertRoutesRegistered(): void
+{
+	$container = new DI\Container();
+	$app = Slim\Factory\AppFactory::createFromContainer($container);
+	require dirname(__DIR__) . '/routes.php';
+	$found = [];
+	foreach ($app->getRouteCollector()->getRoutes() as $route)
+	{
+		$found[$route->getPattern()] = $route->getMethods();
+	}
+	$expected = [
+		'/api/grocy-ai/bulk/plans/{planId}' => ['GET'],
+		'/api/grocy-ai/bulk/plans/{planId}/items/{seq}/selection' => ['PUT'],
+		'/api/grocy-ai/bulk/plans/{planId}/selected-diff' => ['GET'],
+		'/grocyai/bulkreview' => ['GET']
+	];
+	foreach ($expected as $pattern => $methods)
+	{
+		bulkAssert(($found[$pattern] ?? null) === $methods, BULK_SELECTION_MARKER, "Route {$pattern} is not registered exactly as " . implode(',', $methods));
+	}
+}
+
+/**
+ * Plan 05-05: per-item selection persists with the plan and never touches the checksum; the selected
+ * diff is complete and rejected-free; selection and rendering are provably write-free beyond the single
+ * module-owned `selected` flag; and the reads/toggle are only reachable by an authenticated
+ * MASTER_DATA_EDIT user through closed endpoints.
+ */
+function runBulkSelection(): never
+{
+	if (!class_exists(GrocyAiBulkService::class)
+		|| !method_exists(GrocyAiBulkService::class, 'SetItemSelection')
+		|| !method_exists(GrocyAiBulkService::class, 'SelectedDiff')
+		|| !method_exists(GrocyAiBulkService::class, 'ReadPlan'))
+	{
+		expectedRed(BULK_SELECTION_MARKER, 'SetItemSelection / SelectedDiff / ReadPlan are not implemented');
+	}
+
+	$expectedItemKeys = ['seq', 'object_type', 'object_id', 'operation', 'before_image', 'proposed_value', 'reason', 'provenance', 'selected', 'outcome'];
+
+	// ---- Task 1: service-level selection + selected diff -----------------------------------------
+	$pdo = bulkGenerationPdo();
+	$service = new GrocyAiBulkService($pdo);
+	bulkSeedGenerationFixture($pdo, $service);
+	$generated = $service->GeneratePlan([]);
+	$planId = (int)$generated['id'];
+	$storedChecksum = (string)$generated['checksum'];
+
+	// Baseline: seq 0 = P1 (changed, pre-selected); seq 1 = P2 (unchanged, deselected).
+	$plan = $service->ReadPlan($planId);
+	bulkAssert(array_keys($plan) === ['plan', 'counts', 'items'], BULK_SELECTION_MARKER, 'ReadPlan DTO is not the closed shape');
+	bulkAssert(count($plan['items']) === 2, BULK_SELECTION_MARKER, 'ReadPlan returned an unexpected item count');
+	$bySeq = [];
+	foreach ($plan['items'] as $item)
+	{
+		$bySeq[$item['seq']] = $item;
+	}
+	bulkAssert(array_keys($bySeq[0]) === $expectedItemKeys, BULK_SELECTION_MARKER, 'A plan item DTO is outside the closed review shape');
+	bulkAssert($bySeq[0]['object_id'] === 1 && $bySeq[0]['selected'] === true, BULK_SELECTION_MARKER, 'P1 must start selected');
+	bulkAssert($bySeq[1]['object_id'] === 2 && $bySeq[1]['selected'] === false, BULK_SELECTION_MARKER, 'P2 must start deselected');
+
+	// Test 1: selecting P2 flips exactly one flag; re-read reflects it; a second identical call writes nothing.
+	$afterSelect = $service->SetItemSelection($planId, 1, true);
+	$reBySeq = [];
+	foreach ($afterSelect['items'] as $item)
+	{
+		$reBySeq[$item['seq']] = $item;
+	}
+	bulkAssert($reBySeq[1]['selected'] === true, BULK_SELECTION_MARKER, 'Selecting P2 did not persist');
+	bulkAssert($reBySeq[0]['selected'] === true, BULK_SELECTION_MARKER, 'Selecting P2 disturbed P1');
+	bulkAssert((int)$pdo->query('SELECT selected FROM grocy_ai_bulk_plan_items WHERE plan_id = ' . $planId . ' AND seq = 1')->fetchColumn() === 1, BULK_SELECTION_MARKER, 'The selected column was not written');
+	$changesBeforeIdem = (int)$pdo->query('SELECT total_changes()')->fetchColumn();
+	$service->SetItemSelection($planId, 1, true);
+	bulkAssert($changesBeforeIdem === (int)$pdo->query('SELECT total_changes()')->fetchColumn(), BULK_SELECTION_MARKER, 'An idempotent identical selection issued a write');
+
+	// Test 2: the selected diff is exactly the selected items, verbatim, rejected omitted; checksum unchanged.
+	$service->SetItemSelection($planId, 0, false); // reject P1, leaving only P2 selected
+	$diff = $service->SelectedDiff($planId);
+	bulkAssert(array_keys($diff) === ['plan_id', 'checksum', 'operation_type', 'ruleset_version', 'included', 'items'], BULK_SELECTION_MARKER, 'SelectedDiff DTO is outside the closed shape');
+	bulkAssert(count($diff['items']) === 1 && $diff['items'][0]['object_id'] === 2, BULK_SELECTION_MARKER, 'SelectedDiff must contain exactly the selected item');
+	bulkAssert($diff['included'] === 1, BULK_SELECTION_MARKER, 'The apply-set count must equal the number of selected items');
+	bulkAssert(array_keys($diff['items'][0]) === $expectedItemKeys, BULK_SELECTION_MARKER, 'A selected-diff item is outside the closed review shape');
+	bulkAssert($diff['items'][0]['before_image'] === ['leaf_slug' => 'dairy-eggs'] && $diff['items'][0]['proposed_value'] === ['leaf_slug' => 'dairy-eggs'], BULK_SELECTION_MARKER, 'The selected diff must expose the immutable before/proposed images verbatim');
+	bulkAssert($diff['checksum'] === $storedChecksum, BULK_SELECTION_MARKER, 'Selection changed the returned plan checksum');
+	$recompute = $service->ChecksumForPlan('taxonomy_assignment', 'v1', [
+		['object_type' => 'product', 'object_id' => 1, 'operation' => 'assign_taxonomy_leaf', 'before_image' => null, 'proposed_value' => 'produce'],
+		['object_type' => 'product', 'object_id' => 2, 'operation' => 'assign_taxonomy_leaf', 'before_image' => 'dairy-eggs', 'proposed_value' => 'dairy-eggs']
+	]);
+	bulkAssert($recompute === $storedChecksum, BULK_SELECTION_MARKER, 'The plan checksum is not reproducible after selection');
+	bulkAssert((string)$pdo->query('SELECT checksum FROM grocy_ai_bulk_plans WHERE id = ' . $planId)->fetchColumn() === $storedChecksum, BULK_SELECTION_MARKER, 'The stored checksum row changed after selection');
+
+	// Test 3: a selection change writes only the selected column; native/cache/taxonomy state is untouched.
+	$before = bulkSelectionStateSnapshot($pdo);
+	$service->SetItemSelection($planId, 1, false);
+	$after = bulkSelectionStateSnapshot($pdo);
+	bulkAssert($before['schema'] === $after['schema'], BULK_SELECTION_MARKER, 'Selection created, altered, or dropped a database object');
+	bulkAssert($before['rows'] === $after['rows'], BULK_SELECTION_MARKER, 'Selection mutated native, cache, or taxonomy state');
+	bulkAssert($after['total_changes'] - $before['total_changes'] === 1, BULK_SELECTION_MARKER, 'Selection issued row changes beyond the single selected flag');
+
+	// Invalid requests fail closed with no write.
+	$itemsBefore = $pdo->query('SELECT seq, selected FROM grocy_ai_bulk_plan_items WHERE plan_id = ' . $planId . ' ORDER BY seq')->fetchAll(PDO::FETCH_ASSOC);
+	$invalidBefore = bulkSelectionStateSnapshot($pdo);
+	try
+	{
+		$service->SetItemSelection($planId, 99, true);
+		bulkAssert(false, BULK_SELECTION_MARKER, 'An unknown seq was accepted');
+	}
+	catch (InvalidArgumentException)
+	{
+	}
+	try
+	{
+		$service->SetItemSelection($planId, 1, 'yes');
+		bulkAssert(false, BULK_SELECTION_MARKER, 'A non-boolean flag was accepted');
+	}
+	catch (InvalidArgumentException)
+	{
+	}
+	try
+	{
+		$service->SetItemSelection(999999, 0, true);
+		bulkAssert(false, BULK_SELECTION_MARKER, 'An unknown plan was accepted');
+	}
+	catch (RuntimeException)
+	{
+	}
+	$invalidAfter = bulkSelectionStateSnapshot($pdo);
+	bulkAssert($invalidBefore['rows'] === $invalidAfter['rows'] && $invalidBefore['total_changes'] === $invalidAfter['total_changes'], BULK_SELECTION_MARKER, 'An invalid selection request issued a write');
+	bulkAssert($itemsBefore === $pdo->query('SELECT seq, selected FROM grocy_ai_bulk_plan_items WHERE plan_id = ' . $planId . ' ORDER BY seq')->fetchAll(PDO::FETCH_ASSOC), BULK_SELECTION_MARKER, 'An invalid selection request changed a selection flag');
+
+	// A stale ruleset version freezes selection with no write.
+	$pdo->exec("UPDATE grocy_ai_bulk_plans SET ruleset_version = 'stale' WHERE id = " . $planId);
+	$staleBefore = bulkSelectionStateSnapshot($pdo);
+	try
+	{
+		$service->SetItemSelection($planId, 1, true);
+		bulkAssert(false, BULK_SELECTION_MARKER, 'A stale-ruleset plan accepted a selection');
+	}
+	catch (RuntimeException)
+	{
+	}
+	bulkAssert($staleBefore['total_changes'] === (int)$pdo->query('SELECT total_changes()')->fetchColumn(), BULK_SELECTION_MARKER, 'A stale-ruleset selection issued a write');
+	$pdo->exec("UPDATE grocy_ai_bulk_plans SET ruleset_version = 'v1' WHERE id = " . $planId);
+
+	// An already-applied (non-reviewable) plan freezes selection.
+	$pdo->exec("UPDATE grocy_ai_bulk_plans SET status = 'applied' WHERE id = " . $planId);
+	try
+	{
+		$service->SetItemSelection($planId, 1, true);
+		bulkAssert(false, BULK_SELECTION_MARKER, 'A non-reviewable plan accepted a selection');
+	}
+	catch (RuntimeException)
+	{
+	}
+	$pdo->exec("UPDATE grocy_ai_bulk_plans SET status = 'draft' WHERE id = " . $planId);
+
+	// ---- Task 2: MASTER_DATA_EDIT-gated read/selection endpoints ---------------------------------
+	bulkSelectionRuntime();
+	bulkSelectionAssertRoutesRegistered();
+
+	$apiPdo = bulkGenerationPdo();
+	$apiPdo->exec('CREATE TABLE user_permissions_resolved (id INTEGER NOT NULL PRIMARY KEY, user_id INTEGER NOT NULL, permission_name TEXT NOT NULL)');
+	$apiPdo->exec("INSERT INTO user_permissions_resolved (id, user_id, permission_name) VALUES (1, 1, 'MASTER_DATA_EDIT')");
+	$apiService = new GrocyAiBulkService($apiPdo);
+	bulkSeedGenerationFixture($apiPdo, $apiService);
+	$apiPlanId = (int)$apiService->GeneratePlan([])['id'];
+	bulkInstallDatabase($apiPdo);
+
+	$controller = (new ReflectionClass(GrocyAI\Controllers\Api\GrocyAiApiController::class))->newInstanceWithoutConstructor();
+
+	// Test 1: GET plan returns header + counts + items; permission enforced before any read.
+	$planResponse = $controller->BulkPlan(bulkSelectionRequest('GET', '/x'), bulkSelectionResponse(), ['planId' => (string)$apiPlanId]);
+	bulkAssert($planResponse->getStatusCode() === 200, BULK_SELECTION_MARKER, 'BulkPlan GET did not succeed');
+	$planBody = bulkSelectionBody($planResponse);
+	bulkAssert(array_keys($planBody) === ['plan', 'counts', 'items'] && count($planBody['items']) === 2, BULK_SELECTION_MARKER, 'BulkPlan response is not the closed plan read shape');
+	$controller->BulkPlan(bulkSelectionRequest('GET', '/x'), bulkSelectionResponse(), ['planId' => (string)$apiPlanId]);
+
+	$apiPdo->exec("DELETE FROM user_permissions_resolved WHERE permission_name = 'MASTER_DATA_EDIT'");
+	$permBefore = bulkSelectionStateSnapshot($apiPdo);
+	try
+	{
+		$controller->BulkPlan(bulkSelectionRequest('GET', '/x'), bulkSelectionResponse(), ['planId' => (string)$apiPlanId]);
+		bulkAssert(false, BULK_SELECTION_MARKER, 'BulkPlan did not enforce MASTER_DATA_EDIT');
+	}
+	catch (Grocy\Controllers\Users\PermissionMissingException)
+	{
+	}
+	bulkAssert($permBefore['total_changes'] === (int)$apiPdo->query('SELECT total_changes()')->fetchColumn(), BULK_SELECTION_MARKER, 'An unauthorized plan read issued a write');
+	$apiPdo->exec("INSERT INTO user_permissions_resolved (id, user_id, permission_name) VALUES (1, 1, 'MASTER_DATA_EDIT')");
+
+	// Test 2: PUT selection toggles one item via the closed body; anything else is a bounded 400 with no write.
+	$selResponse = $controller->BulkPlanSetItemSelection(bulkSelectionRequest('PUT', '/x', ['selected' => true]), bulkSelectionResponse(), ['planId' => (string)$apiPlanId, 'seq' => '1']);
+	bulkAssert($selResponse->getStatusCode() === 200, BULK_SELECTION_MARKER, 'Selection PUT did not succeed');
+	bulkAssert((int)$apiPdo->query('SELECT selected FROM grocy_ai_bulk_plan_items WHERE plan_id = ' . $apiPlanId . ' AND seq = 1')->fetchColumn() === 1, BULK_SELECTION_MARKER, 'Selection PUT did not persist the flag');
+
+	$badBodies = [
+		['selected' => true, 'entity' => 'products'],
+		['entity' => 'products', 'field' => 'name', 'value' => 'x'],
+		['selected' => 'true'],
+		['selected' => 1],
+		[]
+	];
+	foreach ($badBodies as $bad)
+	{
+		$flagBefore = $apiPdo->query('SELECT seq, selected FROM grocy_ai_bulk_plan_items WHERE plan_id = ' . $apiPlanId . ' ORDER BY seq')->fetchAll(PDO::FETCH_ASSOC);
+		$changesBefore = (int)$apiPdo->query('SELECT total_changes()')->fetchColumn();
+		$badResponse = $controller->BulkPlanSetItemSelection(bulkSelectionRequest('PUT', '/x', $bad), bulkSelectionResponse(), ['planId' => (string)$apiPlanId, 'seq' => '1']);
+		bulkAssert($badResponse->getStatusCode() === 400, BULK_SELECTION_MARKER, 'A non-closed selection body was not rejected with 400');
+		bulkAssert(bulkSelectionBody($badResponse) === ['error_message' => 'Invalid selection request'], BULK_SELECTION_MARKER, 'A rejected selection body did not return the bounded error');
+		bulkAssert($flagBefore === $apiPdo->query('SELECT seq, selected FROM grocy_ai_bulk_plan_items WHERE plan_id = ' . $apiPlanId . ' ORDER BY seq')->fetchAll(PDO::FETCH_ASSOC), BULK_SELECTION_MARKER, 'A rejected selection body changed a flag');
+		bulkAssert($changesBefore === (int)$apiPdo->query('SELECT total_changes()')->fetchColumn(), BULK_SELECTION_MARKER, 'A rejected selection body issued a write');
+	}
+	$badIdResponse = $controller->BulkPlanSetItemSelection(bulkSelectionRequest('PUT', '/x', ['selected' => true]), bulkSelectionResponse(), ['planId' => 'abc', 'seq' => '1']);
+	bulkAssert($badIdResponse->getStatusCode() === 400, BULK_SELECTION_MARKER, 'A non-integer plan id was not rejected');
+
+	// Test 3: GET selected-diff returns exactly the selected items and declares no apply/write; unknown plan → 404.
+	$controller->BulkPlanSetItemSelection(bulkSelectionRequest('PUT', '/x', ['selected' => true]), bulkSelectionResponse(), ['planId' => (string)$apiPlanId, 'seq' => '1']);
+	$controller->BulkPlanSetItemSelection(bulkSelectionRequest('PUT', '/x', ['selected' => false]), bulkSelectionResponse(), ['planId' => (string)$apiPlanId, 'seq' => '0']);
+	$diffResponse = $controller->BulkPlanSelectedDiff(bulkSelectionRequest('GET', '/x'), bulkSelectionResponse(), ['planId' => (string)$apiPlanId]);
+	bulkAssert($diffResponse->getStatusCode() === 200, BULK_SELECTION_MARKER, 'Selected-diff GET did not succeed');
+	$diffBody = bulkSelectionBody($diffResponse);
+	bulkAssert(array_keys($diffBody) === ['plan_id', 'checksum', 'operation_type', 'ruleset_version', 'included', 'items'], BULK_SELECTION_MARKER, 'Selected-diff endpoint exposes a field beyond the closed read shape');
+	bulkAssert(count($diffBody['items']) === 1 && $diffBody['items'][0]['object_id'] === 2 && $diffBody['included'] === 1, BULK_SELECTION_MARKER, 'Selected-diff endpoint did not return exactly the selected item');
+
+	$missingResponse = $controller->BulkPlanSelectedDiff(bulkSelectionRequest('GET', '/x'), bulkSelectionResponse(), ['planId' => '987654321']);
+	bulkAssert($missingResponse->getStatusCode() === 404, BULK_SELECTION_MARKER, 'An unknown plan id did not return 404 from selected-diff');
+
+	// Reading through the endpoints performs no write (query_only forbids any accidental mutation).
+	$readBefore = bulkSelectionStateSnapshot($apiPdo);
+	$apiPdo->exec('PRAGMA query_only = ON');
+	try
+	{
+		$controller->BulkPlan(bulkSelectionRequest('GET', '/x'), bulkSelectionResponse(), ['planId' => (string)$apiPlanId]);
+		$controller->BulkPlanSelectedDiff(bulkSelectionRequest('GET', '/x'), bulkSelectionResponse(), ['planId' => (string)$apiPlanId]);
+	}
+	finally
+	{
+		$apiPdo->exec('PRAGMA query_only = OFF');
+	}
+	$readAfter = bulkSelectionStateSnapshot($apiPdo);
+	bulkAssert($readBefore['rows'] === $readAfter['rows'] && $readBefore['total_changes'] === $readAfter['total_changes'], BULK_SELECTION_MARKER, 'A read endpoint issued a write');
+
+	fwrite(STDOUT, "Bulk selection tests passed\n");
+	exit(0);
+}

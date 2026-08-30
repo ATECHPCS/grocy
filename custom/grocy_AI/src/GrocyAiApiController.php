@@ -6,6 +6,7 @@ use Grocy\Controllers\Api\BaseApiController;
 use Grocy\Controllers\Users\User;
 use Grocy\Services\DatabaseService;
 use GrocyAI\Services\GrocyAiBarcodeService;
+use GrocyAI\Services\GrocyAiBulkService;
 use GrocyAI\Services\GrocyAiConversionMigration;
 use GrocyAI\Services\GrocyAiDiagnostic;
 use GrocyAI\Services\GrocyAiService;
@@ -367,6 +368,105 @@ class GrocyAiApiController extends BaseApiController
 		catch (\Throwable)
 		{
 			return $this->GenericErrorResponse($response, 'Conversion coverage unavailable', 503);
+		}
+	}
+
+	/**
+	 * Read a stored bulk plan header, counts, and items (D-13). MASTER_DATA_EDIT-gated, read-only.
+	 */
+	public function BulkPlan(Request $request, Response $response, array $args): Response
+	{
+		User::CheckPermission($request, User::PERMISSION_MASTER_DATA_EDIT);
+		$planId = $args['planId'] ?? null;
+		if (!is_string($planId) || preg_match('/^[1-9][0-9]{0,9}$/D', $planId) !== 1)
+		{
+			return $this->GenericErrorResponse($response, 'Invalid plan', 400);
+		}
+
+		try
+		{
+			$service = new GrocyAiBulkService(DatabaseService::GetInstance()->GetDbConnectionRaw(), false);
+			return $this->ApiResponse($response, $service->ReadPlan((int)$planId));
+		}
+		catch (\InvalidArgumentException)
+		{
+			return $this->GenericErrorResponse($response, 'Invalid plan', 400);
+		}
+		catch (\RuntimeException)
+		{
+			return $this->GenericErrorResponse($response, 'Plan unavailable', 404);
+		}
+	}
+
+	/**
+	 * Toggle one plan item's selection flag (D-04). The body is the closed `{ "selected": true|false }`
+	 * shape only; any other key or a non-boolean value is rejected before the service is called, so no
+	 * free-form entity/field/CRUD target can reach the selection write. MASTER_DATA_EDIT-gated.
+	 */
+	public function BulkPlanSetItemSelection(Request $request, Response $response, array $args): Response
+	{
+		User::CheckPermission($request, User::PERMISSION_MASTER_DATA_EDIT);
+		$planId = $args['planId'] ?? null;
+		$seq = $args['seq'] ?? null;
+		if (!is_string($planId) || preg_match('/^[1-9][0-9]{0,9}$/D', $planId) !== 1
+			|| !is_string($seq) || preg_match('/^(0|[1-9][0-9]{0,9})$/D', $seq) !== 1)
+		{
+			return $this->GenericErrorResponse($response, 'Invalid selection request', 400);
+		}
+
+		$body = $request->getParsedBody();
+		if (!is_array($body))
+		{
+			return $this->GenericErrorResponse($response, 'Invalid selection request', 400);
+		}
+		// Closed candidate-key set: the request may supply only the boolean `selected`. Any extra key
+		// makes the intersected candidate differ from the raw body and is refused.
+		$candidate = array_intersect_key($body, array_flip(['selected']));
+		if ($candidate !== $body || !array_key_exists('selected', $candidate) || !is_bool($candidate['selected']))
+		{
+			return $this->GenericErrorResponse($response, 'Invalid selection request', 400);
+		}
+
+		try
+		{
+			$service = new GrocyAiBulkService(DatabaseService::GetInstance()->GetDbConnectionRaw(), false);
+			return $this->ApiResponse($response, $service->SetItemSelection((int)$planId, (int)$seq, $candidate['selected']));
+		}
+		catch (\InvalidArgumentException)
+		{
+			return $this->GenericErrorResponse($response, 'Invalid selection request', 400);
+		}
+		catch (\RuntimeException)
+		{
+			return $this->GenericErrorResponse($response, 'Plan unavailable', 409);
+		}
+	}
+
+	/**
+	 * Return the complete selected diff for a stored plan (D-04/D-13). Read-only; declares no apply or
+	 * write action. MASTER_DATA_EDIT-gated.
+	 */
+	public function BulkPlanSelectedDiff(Request $request, Response $response, array $args): Response
+	{
+		User::CheckPermission($request, User::PERMISSION_MASTER_DATA_EDIT);
+		$planId = $args['planId'] ?? null;
+		if (!is_string($planId) || preg_match('/^[1-9][0-9]{0,9}$/D', $planId) !== 1)
+		{
+			return $this->GenericErrorResponse($response, 'Invalid plan', 400);
+		}
+
+		try
+		{
+			$service = new GrocyAiBulkService(DatabaseService::GetInstance()->GetDbConnectionRaw(), false);
+			return $this->ApiResponse($response, $service->SelectedDiff((int)$planId));
+		}
+		catch (\InvalidArgumentException)
+		{
+			return $this->GenericErrorResponse($response, 'Invalid plan', 400);
+		}
+		catch (\RuntimeException)
+		{
+			return $this->GenericErrorResponse($response, 'Plan unavailable', 404);
 		}
 	}
 

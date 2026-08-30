@@ -722,6 +722,12 @@ if (($argv[1] ?? null) === 'bulk-registry')
 	runBulkRegistry();
 }
 
+if (($argv[1] ?? null) === 'bulk-selection')
+{
+	require_once __DIR__ . '/bulk.php';
+	runBulkSelection();
+}
+
 if (($argv[1] ?? null) === '--list')
 {
 	foreach ([
