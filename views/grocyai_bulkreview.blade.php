@@ -34,6 +34,20 @@ $grocyAiAssetVersion = '2.5.0';
 	data-plan-id="{{ $planId !== null ? $planId : '' }}"
 	data-plans-endpoint="{{ $U('/api/grocy-ai/bulk/plans', true) }}">
 	<div class="col">
+		{{-- Generate plan (BULK-01 UI, D-13): the single user-facing plan-CREATION action on this page.
+		     bulk-review.js POSTs the closed { operation_type: "taxonomy_assignment" } body only, and this
+		     click handler is the sole trigger — neither the initial page render nor any other control can
+		     cause a plan to be generated. Writes only this module's own plan tables, never native data. --}}
+		<section class="grocy-ai-bulk-generate-section"
+			aria-labelledby="grocy-ai-bulk-generate-heading">
+			<h3 id="grocy-ai-bulk-generate-heading">{{ $__t('Generate plan') }}</h3>
+			<div class="grocy-ai-actions">
+				<button type="button"
+					class="btn btn-primary"
+					id="grocy-ai-bulk-generate-button">{{ $__t('Generate plan') }}</button>
+			</div>
+		</section>
+
 		<section class="grocy-ai-bulk-summary-section"
 			aria-labelledby="grocy-ai-bulk-summary-heading">
 			<h3 id="grocy-ai-bulk-summary-heading">{{ $__t('Plan summary') }}</h3>

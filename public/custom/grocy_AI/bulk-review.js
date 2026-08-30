@@ -77,8 +77,20 @@
 		exportHeading: 'Export',
 		exportJsonLabel: 'Download JSON (non-authoritative)',
 		exportCsvLabel: 'Download CSV (non-authoritative)',
-		exportNote: 'These files are non-authoritative recovery evidence for independent human review only. They cannot be re-imported to change data; Grocy remains the sole durable authority.'
+		exportNote: 'These files are non-authoritative recovery evidence for independent human review only. They cannot be re-imported to change data; Grocy remains the sole durable authority.',
+
+		// Generate plan (BULK-01 UI, D-13): the one user-facing plan-CREATION action on this page.
+		generateButtonLabel: 'Generate plan',
+		generateError: 'The plan could not be generated. Try again.'
 	};
+
+	/**
+	 * The single server-registered plan operation type (D-01/BULK-01). This is the ONLY value
+	 * `buildGeneratePlanBody` will ever send — there is no path from any DOM/user input to this
+	 * constant, so the generate request body can never carry anything else.
+	 */
+	var GENERATE_OPERATION_TYPE = 'taxonomy_assignment';
+	var ERROR_PAYLOAD_KEYS = ['error_message'];
 
 	// Closed vocabularies from the endpoint contract (05-05-PLAN). These tokens are rendered verbatim
 	// — never remapped to invented copy — and are used only to validate the response shape.
@@ -187,6 +199,29 @@
 	function isCounts(value)
 	{
 		return hasExactKeys(value, COUNT_KEYS) && COUNT_KEYS.every(function (key) { return isCount(value[key]); });
+	}
+
+	/**
+	 * Validate the closed `{ "error_message": "..." }` shape the generate-plan endpoint returns on a
+	 * bounded 400/503 failure. Only a payload matching this exact shape is ever surfaced verbatim to the
+	 * user (see `fetchGenerate` below) — anything else (a differently-shaped body, a non-JSON response
+	 * from a permission denial, etc.) falls back to the generic `COPY.generateError` instead of rendering
+	 * unbounded server output.
+	 */
+	function isErrorPayload(value)
+	{
+		return hasExactKeys(value, ERROR_PAYLOAD_KEYS) && isBoundedString(value.error_message, 500);
+	}
+
+	/**
+	 * Build the closed `POST /api/grocy-ai/bulk/plans` request body (D-01/BULK-01). Takes no arguments —
+	 * there is structurally no way for a caller (DOM input, selection state, etc.) to influence the body
+	 * this returns, so the browser can never send an items list, object_id, operation, value, or any key
+	 * beyond the single allowed `operation_type`.
+	 */
+	function buildGeneratePlanBody()
+	{
+		return { operation_type: GENERATE_OPERATION_TYPE };
 	}
 
 	function isPlanHeader(value)
@@ -492,6 +527,14 @@
 		// supply an item list/operation/value: apply()/rollback() below accept only a confirm flag.
 		var currentPlanChecksum = null;
 		var currentRollbackChecksum = null;
+		// The plan id every subsequent read/write below targets. Seeded from `options.planId` (the plan
+		// loaded via `?plan=id`, if any) and updated ONLY from a successfully rendered plan response's own
+		// `plan.id` (see `applyPlan`) — including the id returned by a freshly generated plan — so once
+		// `generate()` succeeds, every later toggle/apply/rollback/diff call targets the new plan without
+		// the DOM layer having to track or resupply it. It is appended as an EXTRA argument to each
+		// `options.request*` call below (never inserted before existing arguments) so this is purely
+		// additive and never changes what a caller already receives.
+		var currentPlanId = options.planId !== undefined ? options.planId : null;
 
 		function applyPlan(owned, payload)
 		{
@@ -504,6 +547,7 @@
 			{
 				renderedPlan = owned;
 				currentPlanChecksum = presentation.checksum;
+				currentPlanId = presentation.planId;
 				options.renderPlan(presentation);
 			}
 			return presentation;
@@ -526,7 +570,7 @@
 
 		function refreshDiff(owned)
 		{
-			return safePromise(options.requestSelectedDiff).then(function (payload)
+			return safePromise(function () { return options.requestSelectedDiff(currentPlanId); }).then(function (payload)
 			{
 				return applyDiff(owned, payload);
 			}, function ()
@@ -546,7 +590,7 @@
 			var owned = sequence;
 			options.onBusy(true);
 
-			var planPromise = safePromise(options.requestPlan).then(function (payload)
+			var planPromise = safePromise(function () { return options.requestPlan(currentPlanId); }).then(function (payload)
 			{
 				return applyPlan(owned, payload);
 			}, function ()
@@ -576,7 +620,7 @@
 			var owned = sequence;
 			options.onBusy(true);
 
-			return safePromise(function () { return options.requestSetSelection(seq, selected); })
+			return safePromise(function () { return options.requestSetSelection(seq, selected, currentPlanId); })
 				.then(function (payload)
 				{
 					var presentation = applyPlan(owned, payload);
@@ -608,7 +652,7 @@
 			var owned = sequence;
 			options.onBusy(true);
 
-			return safePromise(options.requestRollbackPreview).then(function (payload)
+			return safePromise(function () { return options.requestRollbackPreview(currentPlanId); }).then(function (payload)
 			{
 				var presentation = describeRollbackPreview(payload);
 				if (!presentation.valid)
@@ -656,7 +700,7 @@
 			var owned = sequence;
 			options.onBusy(true);
 
-			return safePromise(function () { return options.requestApply(checksum); }).then(function (payload)
+			return safePromise(function () { return options.requestApply(checksum, currentPlanId); }).then(function (payload)
 			{
 				var presentation = describeApplyResult(payload);
 				if (!presentation.valid)
@@ -704,7 +748,7 @@
 			var owned = sequence;
 			options.onBusy(true);
 
-			return safePromise(function () { return options.requestRollbackExecute(checksum); }).then(function (payload)
+			return safePromise(function () { return options.requestRollbackExecute(checksum, currentPlanId); }).then(function (payload)
 			{
 				var presentation = describeRollbackResult(payload);
 				if (!presentation.valid)
@@ -733,7 +777,54 @@
 			});
 		}
 
-		return { load: load, toggle: toggle, loadRollbackPreview: loadRollbackPreview, apply: apply, rollback: rollback };
+		/**
+		 * Generate a brand-new plan (BULK-01 UI, D-13/D-01) and render it exactly like a freshly loaded
+		 * plan. Fires ONLY when the caller invokes it explicitly — nothing above calls `generate()` on its
+		 * own, so a stray click or the page's initial render can never trigger generation. On success the
+		 * returned plan's own `id` becomes `currentPlanId` (inside `applyPlan`), so every subsequent
+		 * toggle/apply/rollback/diff call below targets the newly generated plan without any extra wiring.
+		 * On failure (a bounded 400/503 `error_message`, or a malformed/unexpected response) nothing is
+		 * rendered and no plan/diff state is touched — the caller's `onError` receives the server's own
+		 * bounded message when one was supplied (see `fetchGenerate`), or the generic `COPY.generateError`
+		 * otherwise; this module never fabricates plan state from a failed generation.
+		 */
+		function generate()
+		{
+			sequence++;
+			var owned = sequence;
+			options.onBusy(true);
+
+			return safePromise(options.requestGenerate).then(function (payload)
+			{
+				var presentation = applyPlan(owned, payload);
+				return refreshDiff(owned).then(function ()
+				{
+					options.onBusy(false);
+					return presentation;
+				});
+			})
+			.catch(function (error)
+			{
+				if (owned > renderedPlan)
+				{
+					var message = (error && typeof error.boundedMessage === 'string' && error.boundedMessage.length > 0)
+						? error.boundedMessage
+						: COPY.generateError;
+					options.onError(message, 'generate');
+				}
+				options.onBusy(false);
+				return null;
+			});
+		}
+
+		return {
+			load: load,
+			toggle: toggle,
+			loadRollbackPreview: loadRollbackPreview,
+			apply: apply,
+			rollback: rollback,
+			generate: generate
+		};
 	}
 
 	function element(document, tag, text)
@@ -1077,9 +1168,13 @@
 	}
 
 	/**
-	 * Wire the review surface to the live MASTER_DATA_EDIT-gated endpoints for the plan id carried on
-	 * `#grocy-ai-bulk-review`. Returns `null` (and renders a "no plan selected" message) when the page
-	 * carries no valid plan id, and issues no request in that case.
+	 * Wire the review surface to the live MASTER_DATA_EDIT-gated endpoints. If `#grocy-ai-bulk-review`
+	 * carries no valid `?plan=id`, the page still attaches — it renders a "no plan selected" message and
+	 * wires the Generate-plan control (BULK-01 UI) so the user can start the workflow in-product; every
+	 * other action stays inert until a plan exists (via `?plan=id` or a successful generate), since
+	 * `apply`/`rollback`/`loadRollbackPreview` below refuse to fire without one. Once a plan exists —
+	 * whether loaded from `?plan=id` or freshly generated — its own `id` becomes the target for every
+	 * subsequent read/write via the controller's `currentPlanId` (see `createBulkReviewController`).
 	 */
 	function attachBulkReview(document)
 	{
@@ -1092,6 +1187,7 @@
 		var itemsEl = document.getElementById('grocy-ai-bulk-items');
 		var diffEl = document.getElementById('grocy-ai-bulk-selected-diff');
 		var rollbackPreviewEl = document.getElementById('grocy-ai-bulk-rollback-preview');
+		var generateButton = document.getElementById('grocy-ai-bulk-generate-button');
 		var rollbackPreviewButton = document.getElementById('grocy-ai-bulk-rollback-preview-button');
 		var applyButton = document.getElementById('grocy-ai-bulk-apply-button');
 		var applyResultEl = document.getElementById('grocy-ai-bulk-apply-result');
@@ -1102,9 +1198,14 @@
 
 		var planIdRaw = root.getAttribute('data-plan-id') || '';
 		var plansEndpoint = root.getAttribute('data-plans-endpoint') || '';
-		var planId = /^[1-9][0-9]{0,9}$/.test(planIdRaw) ? planIdRaw : null;
+		var initialPlanId = /^[1-9][0-9]{0,9}$/.test(planIdRaw) ? planIdRaw : null;
+		// Mirrors the controller's own `currentPlanId` (see `createBulkReviewController`) so this DOM-only
+		// layer can gate the rollback-preview button and refresh the export links without reaching into the
+		// controller's internals. Updated ONLY from `renderPlan` below, i.e. only from a plan the server
+		// actually returned (the initial load or a successful generate) — never guessed or DOM-derived.
+		var activePlanId = initialPlanId;
 
-		if (!planId)
+		if (!initialPlanId)
 		{
 			if (summaryEl)
 			{
@@ -1123,31 +1224,41 @@
 			{
 				rollbackPreviewEl.textContent = '';
 			}
-			return null;
 		}
 
-		var planUrl = plansEndpoint + '/' + encodeURIComponent(planId);
-		var diffUrl = planUrl + '/selected-diff';
-		var rollbackPreviewUrl = planUrl + '/rollback-preview';
-		var applyUrl = planUrl + '/apply';
-		var rollbackExecuteUrl = planUrl + '/rollback';
-		var downloadLinks = exportLinks(plansEndpoint, planId);
-
-		// The export links are plain same-origin `<a href>` navigations, wired once from a pure URL builder
-		// — never a fetch call, so a click can never mutate plan/selection state and requests exactly the
-		// permission-checked, zero-write `GET .../export` read the server serves as a labelled file download.
-		if (exportJsonLink && downloadLinks.json)
+		function planUrl(planId)
 		{
-			exportJsonLink.href = downloadLinks.json;
-		}
-		if (exportCsvLink && downloadLinks.csv)
-		{
-			exportCsvLink.href = downloadLinks.csv;
+			return plansEndpoint + '/' + encodeURIComponent(String(planId));
 		}
 
-		function selectionUrl(seq)
+		function selectionUrl(planId, seq)
 		{
-			return planUrl + '/items/' + encodeURIComponent(String(seq)) + '/selection';
+			return planUrl(planId) + '/items/' + encodeURIComponent(String(seq)) + '/selection';
+		}
+
+		/**
+		 * The export links are plain same-origin `<a href>` navigations, refreshed from a pure URL builder
+		 * — never a fetch call, so a click can never mutate plan/selection state and requests exactly the
+		 * permission-checked, zero-write `GET .../export` read the server serves as a labelled file
+		 * download. Called once at attach time (if a plan is already loaded) and again every time
+		 * `renderPlan` below accepts a new plan, so the links always point at the currently active plan.
+		 */
+		function refreshExportLinks(planId)
+		{
+			var downloadLinks = exportLinks(plansEndpoint, planId);
+			if (exportJsonLink && downloadLinks.json)
+			{
+				exportJsonLink.href = downloadLinks.json;
+			}
+			if (exportCsvLink && downloadLinks.csv)
+			{
+				exportCsvLink.href = downloadLinks.csv;
+			}
+		}
+
+		if (initialPlanId)
+		{
+			refreshExportLinks(initialPlanId);
 		}
 
 		function fetchJson(url, requestOptions)
@@ -1190,6 +1301,45 @@
 			});
 		}
 
+		/**
+		 * POST the closed `{ operation_type: "taxonomy_assignment" }` generate-plan request (BULK-01 UI).
+		 * The body comes from `buildGeneratePlanBody()` alone — a zero-argument pure function — so nothing
+		 * this module reads from the DOM or from prior state can ever reach the request. On the documented
+		 * 201 the parsed plan payload is returned as-is for `describePlan` to validate. On a 400/503 whose
+		 * body matches the closed `{ error_message }` shape, that message is attached to the rejection as
+		 * `error.boundedMessage` so `generate()` can surface it verbatim; any other failure (a differently
+		 * shaped body, a non-JSON permission-denial response, a network error) rejects with a plain error
+		 * and falls back to the generic `COPY.generateError` — never rendering unbounded server output.
+		 */
+		function fetchGenerate()
+		{
+			return fetch(plansEndpoint, {
+				method: 'POST',
+				credentials: 'same-origin',
+				cache: 'no-store',
+				headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+				body: JSON.stringify(buildGeneratePlanBody())
+			}).then(function (response)
+			{
+				return response.json().then(function (body)
+				{
+					if (response.status === 201)
+					{
+						return body;
+					}
+					var error = new Error('generate_failed');
+					if (isErrorPayload(body))
+					{
+						error.boundedMessage = body.error_message;
+					}
+					throw error;
+				}, function ()
+				{
+					throw new Error('http_status');
+				});
+			});
+		}
+
 		function confirmAction(message)
 		{
 			return typeof window !== 'undefined' && typeof window.confirm === 'function' && window.confirm(message) === true;
@@ -1219,25 +1369,31 @@
 		var lastToggledSeq = null;
 
 		var controller = createBulkReviewController({
-			requestPlan: function () { return fetchJson(planUrl, { method: 'GET' }); },
-			requestSelectedDiff: function () { return fetchJson(diffUrl, { method: 'GET' }); },
-			requestSetSelection: function (seq, selected)
+			planId: initialPlanId,
+			requestPlan: function (planId) { return fetchJson(planUrl(planId), { method: 'GET' }); },
+			requestSelectedDiff: function (planId) { return fetchJson(planUrl(planId) + '/selected-diff', { method: 'GET' }); },
+			requestSetSelection: function (seq, selected, planId)
 			{
-				return fetchJson(selectionUrl(seq), {
+				return fetchJson(selectionUrl(planId, seq), {
 					method: 'PUT',
 					headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
 					body: JSON.stringify({ selected: selected })
 				});
 			},
-			requestRollbackPreview: function () { return fetchJson(rollbackPreviewUrl, { method: 'GET' }); },
-			// The checksum argument here is ALWAYS the controller's own last-rendered plan/preview checksum
-			// (see `apply`/`rollback` in `createBulkReviewController`) — this function never receives, and
-			// this module never lets the DOM layer supply, any browser-originated checksum, item list,
-			// operation, or value.
-			requestApply: function (checksum) { return fetchMutation(applyUrl, checksum); },
-			requestRollbackExecute: function (checksum) { return fetchMutation(rollbackExecuteUrl, checksum); },
+			requestRollbackPreview: function (planId) { return fetchJson(planUrl(planId) + '/rollback-preview', { method: 'GET' }); },
+			// The checksum argument here is ALWAYS the controller's own last-rendered plan/preview checksum,
+			// and the plan id is ALWAYS the controller's own `currentPlanId` (see `apply`/`rollback` in
+			// `createBulkReviewController`) — this function never receives, and this module never lets the
+			// DOM layer supply, any browser-originated checksum, item list, operation, or value.
+			requestApply: function (checksum, planId) { return fetchMutation(planUrl(planId) + '/apply', checksum); },
+			requestRollbackExecute: function (checksum, planId) { return fetchMutation(planUrl(planId) + '/rollback', checksum); },
+			// The request body is the closed `{ operation_type: "taxonomy_assignment" }` shape built by
+			// `fetchGenerate` alone; this function takes and forwards no arguments.
+			requestGenerate: function () { return fetchGenerate(); },
 			renderPlan: function (presentation)
 			{
+				activePlanId = String(presentation.planId);
+				refreshExportLinks(activePlanId);
 				if (summaryEl)
 				{
 					renderSummary(document, summaryEl, presentation);
@@ -1296,6 +1452,19 @@
 			onError: announceError
 		});
 
+		// Generate is a single explicit user action (BULK-01 UI): it fires ONLY from this click handler —
+		// nothing else in this module ever calls `controller.generate()`, so neither a stray click nor the
+		// page's initial render can trigger it. It writes only the module's own plan tables (never native
+		// data), so unlike apply/rollback it needs no confirmation dialog, but the control itself is an
+		// explicit, labelled button rather than any implicit/automatic trigger.
+		if (generateButton)
+		{
+			generateButton.addEventListener('click', function ()
+			{
+				controller.generate();
+			});
+		}
+
 		// Apply/rollback-execute are durable mutations (D-13): each button fires ONLY after an explicit
 		// `window.confirm` the user must accept, and `controller.apply`/`controller.rollback` independently
 		// refuse to issue a request unless their own `confirmed === true` gate is satisfied — so neither a
@@ -1313,6 +1482,13 @@
 		{
 			rollbackPreviewButton.addEventListener('click', function ()
 			{
+				// No plan (loaded or generated) exists yet, so there is nothing to preview a rollback for;
+				// mirrors the guard `apply()`/`rollback()` already enforce internally via their own bound
+				// checksum state.
+				if (activePlanId === null)
+				{
+					return;
+				}
 				controller.loadRollbackPreview();
 			});
 		}
@@ -1324,7 +1500,10 @@
 			});
 		}
 
-		controller.load();
+		if (initialPlanId)
+		{
+			controller.load();
+		}
 		return controller;
 	}
 
@@ -1341,6 +1520,7 @@
 		describeRollbackResult: describeRollbackResult,
 		exportUrl: exportUrl,
 		exportLinks: exportLinks,
+		buildGeneratePlanBody: buildGeneratePlanBody,
 		createBulkReviewController: createBulkReviewController,
 		renderSummary: renderSummary,
 		renderItems: renderItems,

@@ -665,6 +665,157 @@ test('a blocked rollback renders the bounded result but never reloads the plan o
 	assert.equal(previewCalls.length, 1);
 });
 
+// ---------------------------------------------------------------------------------------------------
+// Generate plan (BULK-01 UI, D-13): the user-facing plan-CREATION control. Closed request body, no
+// auto-generation, verbatim bounded error surfacing, and the returned id becoming the active plan.
+// ---------------------------------------------------------------------------------------------------
+
+test('buildGeneratePlanBody returns exactly the closed { operation_type: "taxonomy_assignment" } body and takes no arguments', function ()
+{
+	assert.deepEqual(bulkReview.buildGeneratePlanBody(), { operation_type: 'taxonomy_assignment' });
+	// Zero declared parameters means there is structurally no path from caller/DOM input into the body.
+	assert.equal(bulkReview.buildGeneratePlanBody.length, 0);
+});
+
+test('generate() calls requestGenerate with no arguments and renders the returned plan, refreshing the diff for the new plan id', async function ()
+{
+	const rendered = { plan: [], diff: [] };
+	const generateCalls = [];
+	const diffCalls = [];
+	const controller = bulkReview.createBulkReviewController({
+		requestPlan: function () { throw new Error('not used in this test'); },
+		requestSelectedDiff: function (planId) { diffCalls.push(planId); return Promise.resolve(selectedDiffPayload({ plan_id: 42 })); },
+		requestSetSelection: function () { throw new Error('not used in this test'); },
+		requestGenerate: function () { generateCalls.push(arguments.length); return Promise.resolve(planPayload({ plan: planHeader({ id: 42 }) })); },
+		renderPlan: function (presentation) { rendered.plan.push(presentation); },
+		renderSelectedDiff: function (presentation) { rendered.diff.push(presentation); },
+		onBusy: function () { },
+		onError: function () { rendered.plan.push('error'); }
+	});
+
+	const result = await controller.generate();
+
+	assert.equal(result.valid, true);
+	assert.equal(result.planId, 42);
+	assert.deepEqual(generateCalls, [0]);
+	assert.equal(rendered.plan.length, 1);
+	assert.equal(rendered.plan[0].planId, 42);
+	assert.equal(rendered.diff.length, 1);
+	assert.deepEqual(diffCalls, [42]);
+});
+
+test('a 400/503 from generate surfaces the bounded server error_message verbatim and renders no fabricated plan state', async function ()
+{
+	const rendered = [];
+	const errors = [];
+	const boundedError = Object.assign(new Error('generate_failed'), { boundedMessage: 'Invalid plan generation request' });
+	const controller = bulkReview.createBulkReviewController({
+		requestPlan: function () { throw new Error('not used in this test'); },
+		requestSelectedDiff: function () { throw new Error('not used in this test'); },
+		requestSetSelection: function () { throw new Error('not used in this test'); },
+		requestGenerate: function () { return Promise.reject(boundedError); },
+		renderPlan: function (presentation) { rendered.push(presentation); },
+		renderSelectedDiff: function () { },
+		onBusy: function () { },
+		onError: function (message) { errors.push(message); }
+	});
+
+	const result = await controller.generate();
+
+	assert.equal(result, null);
+	assert.deepEqual(rendered, []);
+	assert.deepEqual(errors, ['Invalid plan generation request']);
+});
+
+test('a malformed 201 payload from generate fails closed to the generic generate error, never a fabricated or partial render', async function ()
+{
+	const rendered = [];
+	const errors = [];
+	const controller = bulkReview.createBulkReviewController({
+		requestPlan: function () { throw new Error('not used in this test'); },
+		requestSelectedDiff: function () { throw new Error('not used in this test'); },
+		requestSetSelection: function () { throw new Error('not used in this test'); },
+		requestGenerate: function () { return Promise.resolve({}); },
+		renderPlan: function (presentation) { rendered.push(presentation); },
+		renderSelectedDiff: function () { },
+		onBusy: function () { },
+		onError: function (message) { errors.push(message); }
+	});
+
+	const result = await controller.generate();
+
+	assert.equal(result, null);
+	assert.deepEqual(rendered, []);
+	assert.deepEqual(errors, [bulkReview.COPY.generateError]);
+});
+
+test('generation never fires on initial load — only an explicit generate() call ever calls requestGenerate', async function ()
+{
+	let generateCalls = 0;
+	const controller = bulkReview.createBulkReviewController({
+		requestPlan: function () { return Promise.resolve(planPayload()); },
+		requestSelectedDiff: function () { return Promise.resolve(selectedDiffPayload()); },
+		requestSetSelection: function () { throw new Error('not used in this test'); },
+		requestGenerate: function () { generateCalls++; return Promise.resolve(planPayload()); },
+		renderPlan: function () { },
+		renderSelectedDiff: function () { },
+		onBusy: function () { },
+		onError: function () { }
+	});
+
+	await controller.load();
+
+	assert.equal(generateCalls, 0);
+});
+
+test('the plan id returned by generate() becomes the target for every subsequent toggle and rollback-preview call', async function ()
+{
+	const diffCalls = [];
+	const setSelectionCalls = [];
+	const rollbackPreviewCalls = [];
+	const controller = bulkReview.createBulkReviewController({
+		requestPlan: function () { throw new Error('not used in this test'); },
+		requestSelectedDiff: function (planId) { diffCalls.push(planId); return Promise.resolve(selectedDiffPayload({ plan_id: 42, items: [], included: 0 })); },
+		requestSetSelection: function (seq, selected, planId)
+		{
+			setSelectionCalls.push(planId);
+			return Promise.resolve(planPayload({ plan: planHeader({ id: 42 }), items: [item({ seq: seq, selected: selected })] }));
+		},
+		requestGenerate: function () { return Promise.resolve(planPayload({ plan: planHeader({ id: 42 }) })); },
+		requestRollbackPreview: function (planId) { rollbackPreviewCalls.push(planId); return Promise.resolve(rollbackPreviewPayload()); },
+		renderPlan: function () { },
+		renderSelectedDiff: function () { },
+		renderRollbackPreview: function () { },
+		onBusy: function () { },
+		onError: function () { }
+	});
+
+	await controller.generate();
+	await controller.toggle(0, false);
+	await controller.loadRollbackPreview();
+
+	assert.deepEqual(diffCalls, [42, 42]);
+	assert.deepEqual(setSelectionCalls, [42]);
+	assert.deepEqual(rollbackPreviewCalls, [42]);
+});
+
+test('apply(), after generate(), sends the generated plan\'s own id and checksum — never the id of any previously loaded plan', async function ()
+{
+	const applyCalls = [];
+	const controller = bulkReview.createBulkReviewController(baseControllerOptions({
+		requestGenerate: function () { return Promise.resolve(planPayload({ plan: planHeader({ id: 42 }) })); },
+		requestSelectedDiff: function () { return Promise.resolve(selectedDiffPayload({ plan_id: 42 })); },
+		requestApply: function (checksum, planId) { applyCalls.push([planId, checksum]); return Promise.resolve(applyResultPayload()); },
+		requestPlan: function () { return Promise.resolve(planPayload({ plan: planHeader({ id: 42 }) })); }
+	}));
+
+	await controller.generate();
+	const result = await controller.apply(true);
+
+	assert.equal(result.valid, true);
+	assert.deepEqual(applyCalls, [[42, 'a'.repeat(64)]]);
+});
+
 test('a failed rollback-preview load announces its own error and never blocks a later successful load', async function ()
 {
 	const errors = [];
