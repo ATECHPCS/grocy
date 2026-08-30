@@ -863,3 +863,198 @@ function runBulkSelection(): never
 	fwrite(STDOUT, "Bulk selection tests passed\n");
 	exit(0);
 }
+
+const BULK_CONFLICT_MARKER = 'EXPECTED_RED: bulk.conflict';
+
+/**
+ * A full persistent-state snapshot (native + resolved-cache + module taxonomy + the two bulk tables)
+ * plus `total_changes()`, for the same zero-write rigor the 05-03 generation proof uses. Conflict
+ * detection may touch NONE of these — it is a pure read.
+ */
+function bulkConflictStateSnapshot(PDO $pdo): array
+{
+	$tables = ['products', 'product_groups', 'quantity_unit_conversions', 'cache__quantity_unit_conversions_resolved', 'grocy_ai_taxonomy_classifications', 'grocy_ai_taxonomy_evidence', 'grocy_ai_bulk_plans', 'grocy_ai_bulk_plan_items'];
+	return [
+		'rows' => bulkSnapshotTables($pdo, $tables),
+		'schema' => $pdo->query("SELECT type, name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name")->fetchAll(PDO::FETCH_ASSOC),
+		'total_changes' => (int)$pdo->query('SELECT total_changes()')->fetchColumn()
+	];
+}
+
+/** Index a conflict-detection item list by its plan-item seq. */
+function bulkConflictBySeq(array $items): array
+{
+	$bySeq = [];
+	foreach ($items as $item)
+	{
+		$bySeq[$item['seq']] = $item;
+	}
+	return $bySeq;
+}
+
+/**
+ * Plan 05-06: per-item optimistic-concurrency conflict detection. `DetectApplyConflicts` re-reads each
+ * selected item's current WRITTEN field through the shipped taxonomy read path and refuses any item whose
+ * value has drifted from the reviewed before-image — marking it `conflict`, dropping it from the apply
+ * set while valid siblings remain, comparing only the written field (never volatile evidence), never
+ * trusting the stored plan as reality, and never writing.
+ */
+function runBulkConflict(): never
+{
+	if (!class_exists(GrocyAiBulkService::class) || !method_exists(GrocyAiBulkService::class, 'DetectApplyConflicts'))
+	{
+		expectedRed(BULK_CONFLICT_MARKER, 'DetectApplyConflicts is not implemented');
+	}
+
+	$expectedResultKeys = ['plan_id', 'checksum', 'items', 'apply_set'];
+	$expectedItemKeys = ['seq', 'object_type', 'object_id', 'operation', 'before_image', 'current_value', 'conflict', 'annotation'];
+
+	// ---- Task 1: matching stays eligible, drift becomes conflict, re-read is live, zero-write --------
+	$pdo = bulkGenerationPdo();
+	$service = new GrocyAiBulkService($pdo);
+	bulkSeedGenerationFixture($pdo, $service);
+	$generated = $service->GeneratePlan([]);
+	$planId = (int)$generated['id'];
+	// Select both items: seq 0 = P1 (before null / unclassified), seq 1 = P2 (before dairy-eggs).
+	$service->SetItemSelection($planId, 1, true);
+	$taxonomy = new GrocyAiTaxonomyService($pdo);
+
+	// Test 1: every selected item still matches its reviewed before-image -> no conflict, all eligible.
+	$clean = $service->DetectApplyConflicts($planId);
+	bulkAssert(array_keys($clean) === $expectedResultKeys, BULK_CONFLICT_MARKER, 'DetectApplyConflicts result is outside the closed shape');
+	bulkAssert((int)$clean['plan_id'] === $planId && $clean['checksum'] === (string)$generated['checksum'], BULK_CONFLICT_MARKER, 'DetectApplyConflicts did not echo the stored plan identity and checksum');
+	bulkAssert(count($clean['items']) === 2, BULK_CONFLICT_MARKER, 'DetectApplyConflicts evaluated other than the two selected items');
+	$cleanBySeq = bulkConflictBySeq($clean['items']);
+	bulkAssert(array_keys($cleanBySeq[0]) === $expectedItemKeys, BULK_CONFLICT_MARKER, 'A conflict-detection item is outside the closed shape');
+	bulkAssert($cleanBySeq[0]['annotation'] === 'no_conflict' && $cleanBySeq[0]['conflict'] === false, BULK_CONFLICT_MARKER, 'A matching unclassified item was not eligible');
+	bulkAssert($cleanBySeq[0]['before_image'] === null && $cleanBySeq[0]['current_value'] === null, BULK_CONFLICT_MARKER, 'P1 written-field before/current are not both null (unclassified)');
+	bulkAssert($cleanBySeq[1]['annotation'] === 'no_conflict' && $cleanBySeq[1]['before_image'] === 'dairy-eggs' && $cleanBySeq[1]['current_value'] === 'dairy-eggs', BULK_CONFLICT_MARKER, 'A matching classified item was not eligible over the written field');
+	bulkAssert(count($clean['apply_set']) === 2, BULK_CONFLICT_MARKER, 'The apply set is not the full selected set when nothing drifted');
+
+	// Test 2: drift P1's underlying written value after generation -> P1 conflicts and drops; P2 stays.
+	$taxonomy->AssignProductTaxonomy(1, ['leaf_slug' => 'produce', 'ruleset_version' => 'v1']);
+	$drift = $service->DetectApplyConflicts($planId);
+	$driftBySeq = bulkConflictBySeq($drift['items']);
+	bulkAssert($driftBySeq[0]['annotation'] === 'conflict' && $driftBySeq[0]['conflict'] === true, BULK_CONFLICT_MARKER, 'A drifted item was not marked conflict');
+	bulkAssert($driftBySeq[0]['before_image'] === null && $driftBySeq[0]['current_value'] === 'produce', BULK_CONFLICT_MARKER, 'The conflict did not reflect the live drifted written value');
+	bulkAssert($driftBySeq[1]['annotation'] === 'no_conflict', BULK_CONFLICT_MARKER, 'A non-drifted sibling was disturbed by a drifted item');
+	bulkAssert(count($drift['apply_set']) === 1 && $drift['apply_set'][0]['object_id'] === 2, BULK_CONFLICT_MARKER, 'The drifted item was not dropped from the apply set while the valid sibling remained');
+
+	// Test 3a: detection is zero-write (no native, cache, taxonomy, plan, item, or outcome row changes).
+	$before = bulkConflictStateSnapshot($pdo);
+	$service->DetectApplyConflicts($planId);
+	$after = bulkConflictStateSnapshot($pdo);
+	bulkAssert($before['schema'] === $after['schema'], BULK_CONFLICT_MARKER, 'Conflict detection created, altered, or dropped a database object');
+	bulkAssert($before['rows'] === $after['rows'], BULK_CONFLICT_MARKER, 'Conflict detection mutated a persistent table');
+	bulkAssert($before['total_changes'] === $after['total_changes'], BULK_CONFLICT_MARKER, 'Conflict detection issued a row change');
+	// The per-item outcome column stays untouched: recording conflict is 05-07's job, inside the write txn.
+	$outcomes = $pdo->query('SELECT outcome FROM grocy_ai_bulk_plan_items WHERE plan_id = ' . $planId . ' ORDER BY seq')->fetchAll(PDO::FETCH_COLUMN);
+	bulkAssert($outcomes === ['pending', 'pending'], BULK_CONFLICT_MARKER, 'Conflict detection wrote the outcome column');
+
+	// Test 3b: detection re-reads live reality on every call — a fresh drift on P2 flips it to conflict.
+	$taxonomy->AssignProductTaxonomy(2, ['leaf_slug' => 'produce', 'ruleset_version' => 'v1']);
+	$freshDrift = $service->DetectApplyConflicts($planId);
+	$freshBySeq = bulkConflictBySeq($freshDrift['items']);
+	bulkAssert($freshBySeq[1]['annotation'] === 'conflict' && $freshBySeq[1]['current_value'] === 'produce', BULK_CONFLICT_MARKER, 'A second call did not reflect fresh drift: detection trusted the stored plan as current');
+	bulkAssert($freshDrift['apply_set'] === [], BULK_CONFLICT_MARKER, 'A fully-drifted plan produced a non-empty apply set');
+
+	// Test 3c: a changed VOLATILE evidence field must NOT false-conflict — only the written field counts.
+	$vePdo = bulkGenerationPdo();
+	$veService = new GrocyAiBulkService($vePdo);
+	bulkSeedGenerationFixture($vePdo, $veService);
+	$vePlanId = (int)$veService->GeneratePlan([])['id'];
+	$veService->SetItemSelection($vePlanId, 1, true); // select P2 (before dairy-eggs, current dairy-eggs)
+	// Mutate ONLY the volatile evidence for product 2: provider category, confidence band, reason code.
+	// This changes ReadProductTaxonomy's suggested_leaf/provider_category/confidence_band/reason_code but
+	// leaves the WRITTEN classification leaf (current_leaf) at dairy-eggs.
+	$vePdo->prepare('UPDATE grocy_ai_taxonomy_evidence SET provider_category = ?, confidence_band = ?, reason_code = ? WHERE product_id = 2')->execute(['produce', 'medium', 'provider_category']);
+	$veDto = (new GrocyAiTaxonomyService($vePdo))->ReadProductTaxonomy(2);
+	// Guard the test against vacuity: the volatile fields really did drift while the written field held.
+	bulkAssert(($veDto['suggested_leaf']['slug'] ?? null) === 'produce' && $veDto['confidence_band'] === 'medium', BULK_CONFLICT_MARKER, 'The volatile-evidence fixture did not actually change the evidence DTO');
+	bulkAssert(($veDto['current_leaf']['slug'] ?? null) === 'dairy-eggs', BULK_CONFLICT_MARKER, 'The volatile-evidence fixture unexpectedly changed the written classification leaf');
+	$veResult = $veService->DetectApplyConflicts($vePlanId);
+	$veBySeq = bulkConflictBySeq($veResult['items']);
+	bulkAssert($veBySeq[1]['annotation'] === 'no_conflict' && $veBySeq[1]['before_image'] === 'dairy-eggs' && $veBySeq[1]['current_value'] === 'dairy-eggs', BULK_CONFLICT_MARKER, 'A changed volatile evidence field false-conflicted an item whose written field was unchanged');
+	// P1 (pre-selected, unchanged) and P2 (volatile evidence changed, written field held) both stay eligible.
+	$veApplyIds = array_map(static fn(array $item): int => $item['object_id'], $veResult['apply_set']);
+	sort($veApplyIds);
+	bulkAssert($veApplyIds === [1, 2], BULK_CONFLICT_MARKER, 'The volatile-evidence item was wrongly dropped from the apply set');
+
+	// ---- Task 2: no partial write, fail-closed, deterministic order-independent apply set ------------
+
+	// Test 1: a fully-conflicted plan returns an empty apply set and writes nothing to any table.
+	$fullBefore = bulkConflictStateSnapshot($pdo); // $pdo has both P1 and P2 drifted from Test 3b
+	$full = $service->DetectApplyConflicts($planId);
+	$fullAfter = bulkConflictStateSnapshot($pdo);
+	bulkAssert($full['apply_set'] === [], BULK_CONFLICT_MARKER, 'A fully-conflicted plan did not yield an empty apply set');
+	bulkAssert(count($full['items']) === 2, BULK_CONFLICT_MARKER, 'A fully-conflicted plan dropped items from the conflict report');
+	foreach ($full['items'] as $item)
+	{
+		bulkAssert($item['annotation'] === 'conflict', BULK_CONFLICT_MARKER, 'A fully-conflicted plan reported a non-conflict item');
+	}
+	bulkAssert($fullBefore['rows'] === $fullAfter['rows'] && $fullBefore['total_changes'] === $fullAfter['total_changes'], BULK_CONFLICT_MARKER, 'A fully-conflicted detection issued a write');
+
+	// Test 2a: a corrupted (invalid JSON) or absent (NULL) before-image fails closed to conflict — the
+	// stored plan is never trusted as a self-certifying match.
+	$cbPdo = bulkGenerationPdo();
+	$cbService = new GrocyAiBulkService($cbPdo);
+	bulkSeedGenerationFixture($cbPdo, $cbService);
+	$cbPlanId = (int)$cbService->GeneratePlan([])['id'];
+	$cbService->SetItemSelection($cbPlanId, 1, true);
+	$cbPdo->exec("UPDATE grocy_ai_bulk_plan_items SET before_image_json = 'not-json' WHERE plan_id = " . $cbPlanId . ' AND seq = 0');
+	// An image that omits the written leaf-slug field is treated as absent and fails closed.
+	$cbPdo->exec("UPDATE grocy_ai_bulk_plan_items SET before_image_json = '{}' WHERE plan_id = " . $cbPlanId . ' AND seq = 1');
+	$cbBefore = bulkConflictStateSnapshot($cbPdo);
+	$cb = $cbService->DetectApplyConflicts($cbPlanId);
+	$cbAfter = bulkConflictStateSnapshot($cbPdo);
+	$cbBySeq = bulkConflictBySeq($cb['items']);
+	bulkAssert($cbBySeq[0]['annotation'] === 'conflict' && $cbBySeq[1]['annotation'] === 'conflict', BULK_CONFLICT_MARKER, 'A corrupt/absent before-image did not fail closed to conflict');
+	bulkAssert($cb['apply_set'] === [], BULK_CONFLICT_MARKER, 'A plan with unreadable before-images produced a non-empty apply set');
+	bulkAssert($cbBefore['rows'] === $cbAfter['rows'] && $cbBefore['total_changes'] === $cbAfter['total_changes'], BULK_CONFLICT_MARKER, 'Fail-closed before-image handling issued a write');
+
+	// Test 2b: an unreadable current value (object vanished) or an operation outside the closed registry
+	// also fails closed — never assumed to match.
+	$fcPdo = bulkGenerationPdo();
+	$fcService = new GrocyAiBulkService($fcPdo);
+	bulkSeedGenerationFixture($fcPdo, $fcService);
+	$fcPlanId = (int)$fcService->GeneratePlan([])['id'];
+	$fcService->SetItemSelection($fcPlanId, 1, true);
+	$fcPdo->exec('DELETE FROM products WHERE id = 1'); // P1 current value now unreadable
+	$fcPdo->exec("UPDATE grocy_ai_bulk_plan_items SET operation = 'delete_all_rows' WHERE plan_id = " . $fcPlanId . ' AND seq = 1'); // P2 operation off-registry
+	$fc = $fcService->DetectApplyConflicts($fcPlanId);
+	$fcBySeq = bulkConflictBySeq($fc['items']);
+	bulkAssert($fcBySeq[0]['annotation'] === 'conflict', BULK_CONFLICT_MARKER, 'An unreadable current value did not fail closed to conflict');
+	bulkAssert($fcBySeq[1]['annotation'] === 'conflict', BULK_CONFLICT_MARKER, 'An off-registry operation did not fail closed to conflict');
+	bulkAssert($fc['apply_set'] === [], BULK_CONFLICT_MARKER, 'A fully-unreadable plan produced a non-empty apply set');
+
+	// Test 3: mixed drift yields exactly the non-drifted items, deterministically and order-independently,
+	// with no plan-level TTL and no item-count cap applied (the only bound is the generated scope).
+	$mixPdo = bulkGenerationPdo();
+	$mixService = new GrocyAiBulkService($mixPdo);
+	bulkSeedGenerationFixture($mixPdo, $mixService);
+	$mixPlanId = (int)$mixService->GeneratePlan([])['id'];
+	$mixService->SetItemSelection($mixPlanId, 1, true);
+	(new GrocyAiTaxonomyService($mixPdo))->AssignProductTaxonomy(1, ['leaf_slug' => 'produce', 'ruleset_version' => 'v1']); // drift only P1
+	$mixA = $mixService->DetectApplyConflicts($mixPlanId);
+	$mixB = $mixService->DetectApplyConflicts($mixPlanId);
+	bulkAssert($mixA === $mixB, BULK_CONFLICT_MARKER, 'Mixed-drift detection is not deterministic across identical calls');
+	$applyIds = array_map(static fn(array $item): int => $item['object_id'], $mixA['apply_set']);
+	bulkAssert($applyIds === [2], BULK_CONFLICT_MARKER, 'Mixed drift did not leave exactly the non-drifted item in the apply set');
+	// Order-independence: the apply set is precisely the selected-and-non-conflicted subset, regardless of
+	// the order items are reported in.
+	$independentApply = [];
+	foreach ($mixA['items'] as $item)
+	{
+		if ($item['conflict'] === false)
+		{
+			$independentApply[] = $item['object_id'];
+		}
+	}
+	sort($independentApply);
+	$sortedApply = $applyIds;
+	sort($sortedApply);
+	bulkAssert($independentApply === $sortedApply, BULK_CONFLICT_MARKER, 'The apply set is not exactly the non-conflicted selected subset');
+
+	fwrite(STDOUT, "Bulk conflict tests passed\n");
+	exit(0);
+}

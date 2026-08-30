@@ -383,6 +383,126 @@ class GrocyAiBulkService
 	}
 
 	/**
+	 * Per-item optimistic-concurrency conflict detection (D-07): a pure, zero-write pre-apply check that
+	 * binds the apply set to present reality. For each SELECTED item it re-reads the current WRITTEN field
+	 * through the shipped public read path and refuses any item whose value has drifted from the reviewed
+	 * before-image, so a stale plan can never silently overwrite a value that changed after generation.
+	 *
+	 * Contract (consumed by 05-07's `ApplyPlan`, which records the outcome inside its write transaction):
+	 *   - Only the WRITTEN field is compared. For the two closed taxonomy operations the written field is the
+	 *     product's current classification leaf slug (`current_leaf`, `null` when unclassified), re-read via
+	 *     `GrocyAiTaxonomyService::ReadProductTaxonomy` — never the private `CurrentLeaf` helper and never the
+	 *     whole DTO with its volatile evidence fields (`suggested_leaf`, `provider_category`, `confidence_band`,
+	 *     `reason_code`, `evidence_source`). A change to a volatile evidence field therefore never false-conflicts.
+	 *   - The current value is re-read fresh on every call through the live read path; the stored
+	 *     `before_image_json` is only ever the past claim being compared against, never the source of truth.
+	 *   - Fail-closed: an unreadable current value (e.g. the object vanished), an operation outside the closed
+	 *     registry, or a malformed/absent before-image yields `conflict` — never a silent "match".
+	 *   - Zero-write: only SELECTs are issued. The per-item `outcome` column is deliberately NOT written here —
+	 *     conflict is a transient, re-read-fresh judgement, and keeping detection write-free is what proves it
+	 *     re-reads reality on each call. There is no plan-level TTL and no item-count cap (locked stale-plan
+	 *     decision); the only bound is the scope `GeneratePlan` produced.
+	 *
+	 * @return array{plan_id: int, checksum: string, items: array<int, array<string, mixed>>, apply_set: array<int, array<string, mixed>>}
+	 */
+	public function DetectApplyConflicts(int $planId): array
+	{
+		$plan = $this->LoadPlanHeader($planId);
+
+		// The candidate apply set is exactly the selected items (05-05); this check subtracts conflicts.
+		$statement = $this->Db->prepare('SELECT * FROM grocy_ai_bulk_plan_items WHERE plan_id = ? AND selected = 1 ORDER BY seq');
+		$statement->execute([$planId]);
+
+		$items = [];
+		$applySet = [];
+		foreach ($statement->fetchAll(PDO::FETCH_ASSOC) as $row)
+		{
+			$beforeValue = null;
+			$currentValue = null;
+			try
+			{
+				// The immutable written-field before-image (the leaf slug / null). A malformed or absent
+				// image fails closed to a conflict rather than being assumed to match reality.
+				$beforeValue = $this->WrittenBeforeImage((string)$row['before_image_json']);
+				// Re-read the CURRENT written field through the shipped public read path — never the stored plan.
+				$currentValue = $this->CurrentWrittenValue((string)$row['operation'], (string)$row['object_type'], (int)$row['object_id']);
+				// Exact, normalized comparison over the written field ONLY.
+				$conflict = $beforeValue !== $currentValue;
+			}
+			catch (\Throwable $exception)
+			{
+				$conflict = true;
+			}
+
+			$annotated = [
+				'seq' => (int)$row['seq'],
+				'object_type' => (string)$row['object_type'],
+				'object_id' => (int)$row['object_id'],
+				'operation' => (string)$row['operation'],
+				// The written field on both sides of the comparison, made explicit for the caller.
+				'before_image' => $beforeValue,
+				'current_value' => $currentValue,
+				'conflict' => $conflict,
+				// A transient annotation; the closed stored outcome vocabulary reuses `conflict` verbatim.
+				'annotation' => $conflict ? 'conflict' : 'no_conflict'
+			];
+			$items[] = $annotated;
+			if (!$conflict)
+			{
+				$applySet[] = $annotated;
+			}
+		}
+
+		return [
+			'plan_id' => (int)$plan['id'],
+			'checksum' => (string)$plan['checksum'],
+			'items' => $items,
+			'apply_set' => $applySet
+		];
+	}
+
+	/**
+	 * Decode a stored item's immutable written-field before-image to the leaf slug (`null` when the item
+	 * was unclassified at review). Fails closed on any malformed/absent image so the stored plan can never
+	 * be trusted as a self-certifying "match".
+	 */
+	private function WrittenBeforeImage(string $beforeImageJson): ?string
+	{
+		$decoded = json_decode($beforeImageJson, true, 512, JSON_THROW_ON_ERROR);
+		if (!is_array($decoded) || array_keys($decoded) !== ['leaf_slug'])
+		{
+			throw new \RuntimeException('before_image_malformed');
+		}
+		$slug = $decoded['leaf_slug'];
+		if ($slug !== null && !is_string($slug))
+		{
+			throw new \RuntimeException('before_image_malformed');
+		}
+
+		return $slug;
+	}
+
+	/**
+	 * Re-read the current WRITTEN field for a named operation through the shipped public read path. Both
+	 * closed taxonomy operations write the product's classification leaf, so the written value is the
+	 * current leaf slug (`null` when unclassified) via `ReadProductTaxonomy['current_leaf']`. Fails closed
+	 * for an operation outside the closed registry or an unreadable object.
+	 */
+	private function CurrentWrittenValue(string $operation, string $objectType, int $objectId): ?string
+	{
+		$registry = $this->RegisteredOperations();
+		if (!isset($registry[$operation]) || $objectType !== 'product')
+		{
+			throw new \RuntimeException('unreadable_current_value');
+		}
+
+		$current = $this->Taxonomy->ReadProductTaxonomy($objectId);
+		$leaf = $current['current_leaf'];
+
+		return is_array($leaf) ? (string)$leaf['slug'] : null;
+	}
+
+	/**
 	 * Load a stored plan header or fail closed. Read-only single-row lookup.
 	 *
 	 * @return array<string, mixed>
