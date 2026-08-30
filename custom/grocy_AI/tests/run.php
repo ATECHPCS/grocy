@@ -692,6 +692,18 @@ if (($argv[1] ?? null) === 'conversion-activation-command')
 	runConversionActivationCommand();
 }
 
+if (($argv[1] ?? null) === 'bulk-contract')
+{
+	require_once __DIR__ . '/bulk.php';
+	runBulkContract();
+}
+
+if (($argv[1] ?? null) === 'bulk-invariants')
+{
+	require_once __DIR__ . '/bulk.php';
+	runBulkInvariants();
+}
+
 if (($argv[1] ?? null) === '--list')
 {
 	foreach ([

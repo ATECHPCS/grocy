@@ -1,0 +1,18 @@
+{
+	"description": "Deterministic fixtures fixing the closed typed-operation registry for Phase 5. The engine may resolve only these named operations; every other operation, entity, field, CRUD verb, or SQL string fails closed.",
+	"delegated_write": "AssignProductTaxonomy",
+	"resolve": [
+		{"operation": "assign_taxonomy_leaf", "delegate_write": "AssignProductTaxonomy", "assignment_keys": ["leaf_slug", "ruleset_version"]},
+		{"operation": "set_unclassified", "delegate_write": "AssignProductTaxonomy", "assignment_keys": ["unclassified", "ruleset_version"]}
+	],
+	"reject": [
+		{"operation": "update_products", "blocker": "unknown_operation"},
+		{"operation": "delete_product", "blocker": "unknown_operation"},
+		{"operation": "assign_taxonomy_leaf; DROP TABLE products", "blocker": "unknown_operation"},
+		{"operation": "DELETE FROM grocy_ai_taxonomy_classifications", "blocker": "unknown_operation"},
+		{"operation": "products.name", "blocker": "unknown_operation"},
+		{"operation": "set_food_type", "blocker": "unknown_operation"},
+		{"operation": "", "blocker": "unknown_operation"},
+		{"operation": "assign_conversion_profile", "blocker": "unknown_operation"}
+	]
+}
