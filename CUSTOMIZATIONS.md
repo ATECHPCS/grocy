@@ -49,6 +49,21 @@ product overrides — all conversion cleanup remains Phase 6 work. Stable differ
 module bytes only in the documented adapters (controller namespace/base class, route syntax, Blade
 hooks and their asset-version literals, `custom/grocy_AI/version.json`, and the Docker overlay).
 
+Phase 5 adds the bulk maintenance & recovery engine (`GrocyAiBulkService`, the idempotent
+`GrocyAiBulkMigration` owning `grocy_ai_bulk_plans`/`grocy_ai_bulk_plan_items`/the append-only
+`grocy_ai_bulk_audit`, and the read-only `views/grocyai_bulkreview.blade.php` surface). Grocy remains
+the sole durable mutation authority: the engine opens no parallel write path and issues no ad-hoc
+native or cache SQL. Its apply and rollback execute only named typed operations from a closed
+server-side registry, each delegating to the shipped `GrocyAiTaxonomyService::AssignProductTaxonomy`
+write, through one short `BEGIN IMMEDIATE` transaction that is checksum-bound, optimistic-concurrency
+guarded, idempotent, and takes no network call while the write lock is held; the audit ledger is
+append-only. Preview generation, selection, the selected diff, export, and rollback preview are
+reads, and the durable apply and rollback are authenticated audited in-app actions — all under
+`PERMISSION_MASTER_DATA_EDIT` on the `/api/grocy-ai` group. There is no maintainer CLI apply. Every
+new Phase 5 module file is in `custom/grocy_AI/portable-files.txt`; the Blade view ships through the
+branch adapter / changed-paths mechanism like the conversion coverage view. The actual
+existing-inventory sweep and conversion cleanup remain Phase 6 work.
+
 The stable release mirrors the portable module bytes first, then carries one separately reviewable eight-path framework adapter commit. Stable retains its `Grocy\Controllers\BaseApiController` namespace and class-based `JsonMiddleware::class`; the other adapter paths are the feature-gated product-form hook, narrow normal-Save continuation, exact migration, cache marker, customization record, and the Docker overlay that installs both new core adapter files at their runtime paths.
 
 The module implementation and contract are documented in [`custom/grocy_AI/README.md`](custom/grocy_AI/README.md).

@@ -335,6 +335,93 @@ controller namespace and base class, route registration syntax, the Blade view h
 conversion release gate proves the immutable dual-branch evidence directly from git, so it runs
 identically whether both maintained branches live in one checkout or two.
 
+## Bulk maintenance & recovery engine
+
+Phase 5 adds a reusable bulk workflow — generate a bounded zero-mutation plan, review and select
+individual items, apply the approved plan once through a short conflict-safe transaction, audit
+exactly what changed, export a redacted snapshot, and preview and execute a guarded rollback. It is
+delivered by `GrocyAiBulkService`, the idempotent namespaced `GrocyAiBulkMigration`
+(`grocy_ai_bulk_plans`, `grocy_ai_bulk_plan_items`, and the append-only `grocy_ai_bulk_audit`), and
+the read-only `grocyai_bulkreview` Blade surface driven by `public/custom/grocy_AI/bulk-review.js`.
+Phase 5 ships the engine and proves it end-to-end against the shipped Phase 3 taxonomy write; the
+full existing-inventory sweep and conversion-cleanup operations remain Phase 6 work.
+
+### The workflow
+
+- **Generate (BULK-01/02/03).** `GeneratePlan` produces a bounded dry-run reporting the exact
+  closed counts (`included`, `excluded`, `skipped`, `conflicted`, `changed`, `unchanged`). It reads
+  current values only through the shipped taxonomy read paths, captures an immutable before-image of
+  the written field once, and writes only the two module plan tables — never a native Grocy row and
+  never ad-hoc cache SQL. Generation is zero-mutation over native/cache state.
+- **Checksum binding (BULK-02).** Each plan carries a deterministic SHA-256 checksum over its
+  immutable content (item identities, before/proposed values, operation types, ruleset version), so
+  the reviewed plan and the applied plan are provably the same artifact.
+- **Review and select (BULK-03).** The user selects or rejects each item and inspects the complete
+  selected diff. Selection state lives with the plan; the apply set is exactly the selected,
+  non-conflicted items, derived server-side and never from a browser-supplied item list.
+- **Named-operation-only apply (BULK-05/06/07).** Apply executes only named typed operations from a
+  closed server-side registry (`assign_taxonomy_leaf`, `set_unclassified`), each of which delegates
+  to the shipped `GrocyAiTaxonomyService::AssignProductTaxonomy` write. It can never execute
+  arbitrary CRUD, free-form entity/field targets, or SQL supplied by the browser or companion;
+  unknown operations fail closed. Before writing each item it re-reads the current value and refuses
+  any item that drifted from the reviewed before-image (optimistic concurrency, recorded as a
+  per-item `conflict` with no partial write). The whole apply runs through one short
+  `BEGIN IMMEDIATE` transaction with no network/provider call while the write lock is held, and is
+  idempotent through a plan-checksum-bound completion ledger — a re-run or a resumed interrupted
+  apply repeats no mutation.
+- **Audit (BULK-08).** Every apply appends immutable `grocy_ai_bulk_audit` rows — actor, previewed
+  and applied timestamps, module version, per-item outcome, and exact before/after values. The
+  ledger is append-only: no service or migration path ever UPDATEs or DELETEs it.
+- **Export (BULK-10).** `ExportPlan` emits a redacted JSON or CSV snapshot through a closed
+  default-deny field allowlist, marked `authoritative: false` / `reimport_supported: false`. It is
+  recovery evidence for independent human review only and offers no re-import path (re-import is the
+  deferred v2 item V2-03); CSV fields are RFC-4180 quoted and formula-injection neutralized.
+- **Rollback (BULK-09).** `PreviewRollback` is a zero-write read that refuses to overwrite any field
+  hand-edited after the original apply (it re-reads current values against the audited after-image,
+  refusing with `manual_edit_after_apply`). `RollbackPlan` reuses the same named-operation,
+  optimistic-concurrency, single-transaction, idempotent, append-only path as forward apply.
+
+### Authority boundary
+
+Grocy remains the sole durable mutation authority. The engine adds no parallel write path and no
+ad-hoc cache SQL; its typed operations delegate to the shipped module write, so Grocy's triggers,
+cache, and consumers stay unchanged. Every read (plan read, selection, selected diff, export,
+rollback preview) and the two durable actions (apply, rollback) are authenticated and permission
+checked with `PERMISSION_MASTER_DATA_EDIT` on the `/api/grocy-ai` group. Unlike the Phase 4
+conversion promotion, the bulk apply is a user-facing, audited in-app action — **not** a maintainer
+CLI; no `bin/` command applies or rolls back a plan.
+
+### Grocy routes (all MASTER_DATA_EDIT-gated)
+
+- `GET /api/grocy-ai/bulk/plans/{planId}` — read the stored plan (header, counts, items)
+- `PUT /api/grocy-ai/bulk/plans/{planId}/items/{seq}/selection` — toggle one item's selection
+- `GET /api/grocy-ai/bulk/plans/{planId}/selected-diff` — the complete selected diff
+- `POST /api/grocy-ai/bulk/plans/{planId}/apply` — the authenticated, audited durable apply
+- `GET /api/grocy-ai/bulk/plans/{planId}/audit` — the append-only audit ledger
+- `GET /api/grocy-ai/bulk/plans/{planId}/rollback-preview` — zero-write rollback preview
+- `POST /api/grocy-ai/bulk/plans/{planId}/rollback` — the guarded, audited rollback
+- `GET /api/grocy-ai/bulk/plans/{planId}/export?format=json|csv` — the non-authoritative snapshot
+- `GET /grocyai/bulkreview` — the read-only review page
+
+Run the engine's unit modes and its release gate with:
+
+```sh
+GROCY_AI_PHP=php8.5 php8.5 custom/grocy_AI/tests/run.php bulk-apply   # and bulk-generate, bulk-registry, …
+GROCY_AI_PHP=php8.5 bash custom/grocy_AI/tests/release-gate.sh bulk
+node --test public/custom/grocy_AI/bulk-review.test.js
+```
+
+The `bulk` gate proves portable-manifest membership and sorted-unique/safe paths for every Phase 5
+file, named-operation-only apply with its sole `AssignProductTaxonomy` delegate, no ad-hoc
+native/cache write, no UPDATE/DELETE against the append-only audit ledger, no network primitive in
+the apply/rollback path, the single `BEGIN IMMEDIATE` transaction and checksum idempotency gate, the
+`MASTER_DATA_EDIT`-checked apply/rollback with no `bin/` CLI apply, and every `bulk-*` unit mode
+(including 05-01's `bulk-contract`/`bulk-invariants`/`bulk-schema`) plus the frontend suite. Like the
+conversion gate it resolves the stable side from `GROCY_AI_STABLE_REPO`/`GROCY_AI_STABLE_REF` with a
+same-checkout fallback and runs PHP through `GROCY_AI_PHP`. `views/grocyai_bulkreview.blade.php` is a
+core-tree Blade view carried by the branch-adapter / changed-paths mechanism (like
+`views/grocyai_conversioncoverage.blade.php`), so it is deliberately NOT in `portable-files.txt`.
+
 ## Deterministic release gates
 
 Run the main-repository contracts from `/Users/ian/Documents/Repos/grocy` on `atech-main`:

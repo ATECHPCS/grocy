@@ -893,6 +893,15 @@ check(($coverageAssetMatch[1] ?? null) === $moduleVersion, 'The conversion cover
 check(substr_count($coverageTemplate, '{{ $grocyAiAssetVersion }}') === 2, 'All custom conversion coverage assets use the grocy_AI token');
 check(str_contains($coverageTemplate, 'permission-MASTER_DATA_EDIT'), 'The conversion coverage report is scoped to MASTER_DATA_EDIT');
 check(!preg_match('/\b(POST|PUT|DELETE)\b/', $coverageTemplate), 'The conversion coverage view declares no write action');
+$bulkReviewTemplate = file_get_contents($repoRoot . '/views/grocyai_bulkreview.blade.php');
+$bulkReviewAssetMatch = [];
+$hasBulkReviewAssetVersion = preg_match('/\$grocyAiAssetVersion = \'([^\']+)\'/', $bulkReviewTemplate, $bulkReviewAssetMatch) === 1;
+check($hasBulkReviewAssetVersion, 'The bulk review view defines one grocy_AI asset version token');
+check(($bulkReviewAssetMatch[1] ?? null) === $moduleVersion, 'The bulk review asset token matches the portable module version');
+check(substr_count($bulkReviewTemplate, '{{ $grocyAiAssetVersion }}') === 2, 'All custom bulk review assets use the grocy_AI token');
+check(str_contains($bulkReviewTemplate, 'permission-MASTER_DATA_EDIT'), 'The bulk review surface is scoped to MASTER_DATA_EDIT');
+$bulkReviewMarkup = preg_replace('/\{\{--.*?--\}\}/s', '', $bulkReviewTemplate);
+check(!preg_match('/<form\b/', $bulkReviewMarkup), 'The bulk review view declares no write form action of its own');
 check(!str_contains($productFormTemplate, 'grocy-ai.css?v=\', true) }}{{ $version }}'), 'Custom CSS is independent from the Grocy core version');
 check(!str_contains($productFormTemplate, 'product-enrichment.js?v=\', true) }}{{ $version }}'), 'Custom JavaScript is independent from the Grocy core version');
 

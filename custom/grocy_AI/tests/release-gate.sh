@@ -343,6 +343,127 @@ EOF
 	echo "RELEASE_GATE: PASS (conversions)"
 }
 
+bulk_release_gate()
+{
+	temporary_root=$(mktemp -d "${TMPDIR:-/tmp}/grocy-ai-release-gate.XXXXXX")
+	trap 'rm -rf "$temporary_root"' EXIT HUP INT TERM
+
+	manifest="$main_repo/custom/grocy_AI/portable-files.txt"
+	service_source="$main_repo/custom/grocy_AI/src/GrocyAiBulkService.php"
+	migration_source="$main_repo/custom/grocy_AI/src/GrocyAiBulkMigration.php"
+	controller_source="$main_repo/custom/grocy_AI/src/GrocyAiApiController.php"
+	routes_source="$main_repo/custom/grocy_AI/routes.php"
+
+	# Test 1 (manifest membership): every new Phase 5 module file under a manifest-tracked tree is a
+	# declared portable file that exists, and the manifest stays LC_ALL=C sorted-unique with safe paths.
+	# The bulk review Blade view is deliberately excluded — Blade views live in the core `views/` tree and
+	# ship through the branch-adapter / changed-paths mechanism, matching the untracked conversion view.
+	required_portable_paths=$(printf '%s\n' \
+		'custom/grocy_AI/src/GrocyAiBulkController.php' \
+		'custom/grocy_AI/src/GrocyAiBulkMigration.php' \
+		'custom/grocy_AI/src/GrocyAiBulkService.php' \
+		'custom/grocy_AI/tests/bulk.php' \
+		'custom/grocy_AI/tests/fixtures/bulk-plan-cases.json' \
+		'custom/grocy_AI/tests/fixtures/bulk-registry-cases.json' \
+		'public/custom/grocy_AI/bulk-review.js' \
+		'public/custom/grocy_AI/bulk-review.test.js')
+	while IFS= read -r path; do
+		grep -Fqx -- "$path" "$manifest" || fail bulk_portable_manifest
+		[ -f "$main_repo/$path" ] || fail bulk_portable_source
+	done <<EOF
+$required_portable_paths
+EOF
+	manifest_paths=$(sed '/^$/d' "$manifest")
+	manifest_sorted=$(printf '%s\n' "$manifest_paths" | LC_ALL=C sort -u)
+	[ "$manifest_paths" = "$manifest_sorted" ] || fail bulk_portable_manifest_sorted_unique
+	case "$manifest_paths" in
+		/*|*'/../'*|../*|*'/..') fail bulk_portable_manifest_safe_paths ;;
+	esac
+	while IFS= read -r path; do
+		[ -n "$path" ] || continue
+		[ -f "$main_repo/$path" ] || fail bulk_portable_manifest_source
+	done <<EOF
+$manifest_paths
+EOF
+	# The bulk review Blade view is NOT a manifest-tracked path; assert it stays OUT of the manifest and
+	# that the adapter-carried view file exists on disk so it ships on both branches.
+	if grep -Fqx -- 'views/grocyai_bulkreview.blade.php' "$manifest"; then
+		fail bulk_blade_view_not_manifest_tracked
+	fi
+	[ -f "$main_repo/views/grocyai_bulkreview.blade.php" ] || fail bulk_blade_view_present
+	pass bulk_portable_manifest
+
+	# Test 2 (named-operation-only apply, no ad-hoc native/cache write, append-only audit): the service
+	# resolves durable writes only through the closed registry and its sole durable delegate,
+	# ->AssignProductTaxonomy(. It issues no INSERT/UPDATE/DELETE/REPLACE against native product/taxonomy/
+	# conversion/cache relations, and never UPDATE/DELETEs the append-only audit ledger.
+	grep -Fq 'RegisteredOperations' "$service_source" || fail bulk_closed_registry
+	grep -Fq -- '->AssignProductTaxonomy(' "$service_source" || fail bulk_named_delegate
+	if grep -Eq "(INSERT|UPDATE|DELETE|REPLACE)[^;']*(products|grocy_ai_taxonomy_classifications|quantity_unit_conversions|cache__)" "$service_source"; then
+		fail bulk_no_adhoc_native_write
+	fi
+	if grep -Eq "(UPDATE|DELETE|REPLACE)[^;']*grocy_ai_bulk_audit" "$service_source"; then
+		fail bulk_append_only_audit
+	fi
+	pass bulk_named_operation_contract
+
+	# Test 3 (no network primitive in the apply/rollback path): apply and rollback run entirely under a
+	# BEGIN IMMEDIATE write lock and must never touch the network while it is held. Assert the service
+	# contains zero network primitives anywhere — curl, an http(s) stream wrapper, a raw socket, or a
+	# provider/companion client call. The local module-version.json read is not an http wrapper and is
+	# intentionally not matched.
+	if grep -Eq "curl_|file_get_contents\('http|fsockopen|stream_socket|new GrocyAiService|->EnrichByUpc\(|->FetchImage\(" "$service_source"; then
+		fail bulk_no_network_primitive
+	fi
+	pass bulk_no_network_primitive
+
+	# Test 4 (single guarded transaction + checksum idempotency): apply/rollback take the write lock with
+	# a raw BEGIN IMMEDIATE, have a single COMMIT path, and bind the applied artifact to the reviewed one
+	# with a hash_equals checksum gate before any write. The audit ledger is created in the migration.
+	grep -Fq "\$this->Db->exec('BEGIN IMMEDIATE')" "$service_source" || fail bulk_begin_immediate
+	grep -Fq "\$this->Db->exec('COMMIT')" "$service_source" || fail bulk_single_commit
+	grep -Fq 'hash_equals(' "$service_source" || fail bulk_checksum_idempotency
+	grep -Fq 'grocy_ai_bulk_audit' "$migration_source" || fail bulk_audit_table
+	pass bulk_transaction_and_idempotency_contract
+
+	# Test 5 (authority surface): the durable apply and rollback actions are permission-checked with
+	# PERMISSION_MASTER_DATA_EDIT (grep only each method's own body per MISTAKES.md GREP-01), the export
+	# read route is wired exactly once, and NO bin/ command applies or rolls back a bulk plan (no
+	# maintainer CLI apply is added in Phase 5, per D-13).
+	apply_body=$(awk '/public function BulkPlanApply\(/{f=1} f{print} f&&/^\t}$/{exit}' "$controller_source")
+	printf '%s\n' "$apply_body" | grep -Fq 'User::CheckPermission($request, User::PERMISSION_MASTER_DATA_EDIT)' || fail bulk_apply_permission
+	rollback_body=$(awk '/public function BulkPlanRollback\(/{f=1} f{print} f&&/^\t}$/{exit}' "$controller_source")
+	printf '%s\n' "$rollback_body" | grep -Fq 'User::CheckPermission($request, User::PERMISSION_MASTER_DATA_EDIT)' || fail bulk_rollback_permission
+	[ "$(grep -c -- 'ExportBulkPlan' "$routes_source")" -eq 1 ] || fail bulk_export_route_single
+	cli_apply=$(find "$main_repo/custom/grocy_AI/bin" -type f -name '*.php' -exec grep -l -- '->ApplyPlan(\|->RollbackPlan(' {} + 2>/dev/null || true)
+	[ -z "$cli_apply" ] || fail bulk_no_cli_apply
+	pass bulk_authority_surface
+
+	# Test 6 (fail-closed unit proof): run every bulk-* unit mode — including 05-01's contract/invariants/
+	# schema so the RED contract is proven GREEN — then lint every new/changed PHP file through $php_runner.
+	run_quiet bulk_contract "$php_runner" "$main_repo/custom/grocy_AI/tests/run.php" bulk-contract
+	run_quiet bulk_invariants "$php_runner" "$main_repo/custom/grocy_AI/tests/run.php" bulk-invariants
+	run_quiet bulk_schema "$php_runner" "$main_repo/custom/grocy_AI/tests/run.php" bulk-schema
+	run_quiet bulk_generate "$php_runner" "$main_repo/custom/grocy_AI/tests/run.php" bulk-generate
+	run_quiet bulk_registry "$php_runner" "$main_repo/custom/grocy_AI/tests/run.php" bulk-registry
+	run_quiet bulk_selection "$php_runner" "$main_repo/custom/grocy_AI/tests/run.php" bulk-selection
+	run_quiet bulk_conflict "$php_runner" "$main_repo/custom/grocy_AI/tests/run.php" bulk-conflict
+	run_quiet bulk_apply "$php_runner" "$main_repo/custom/grocy_AI/tests/run.php" bulk-apply
+	run_quiet bulk_audit "$php_runner" "$main_repo/custom/grocy_AI/tests/run.php" bulk-audit
+	run_quiet bulk_rollback "$php_runner" "$main_repo/custom/grocy_AI/tests/run.php" bulk-rollback
+	run_quiet bulk_export "$php_runner" "$main_repo/custom/grocy_AI/tests/run.php" bulk-export
+	run_quiet bulk_service_lint "$php_runner" -l "$service_source"
+	run_quiet bulk_migration_lint "$php_runner" -l "$migration_source"
+	run_quiet bulk_controller_lint "$php_runner" -l "$controller_source"
+	run_quiet bulk_routes_lint "$php_runner" -l "$routes_source"
+	run_quiet bulk_tests_lint "$php_runner" -l "$main_repo/custom/grocy_AI/tests/bulk.php"
+
+	# Test 7 (frontend): the read-only bulk review surface unit suite.
+	run_quiet bulk_frontend node --test "$main_repo/public/custom/grocy_AI/bulk-review.test.js"
+
+	echo "RELEASE_GATE: PASS (bulk)"
+}
+
 if [ "$#" -eq 1 ] && [ "$1" = taxonomy ]; then
 	taxonomy_release_gate
 	exit 0
@@ -350,6 +471,11 @@ fi
 
 if [ "$#" -eq 1 ] && [ "$1" = conversions ]; then
 	conversions_release_gate
+	exit 0
+fi
+
+if [ "$#" -eq 1 ] && [ "$1" = bulk ]; then
+	bulk_release_gate
 	exit 0
 fi
 
