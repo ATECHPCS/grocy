@@ -426,8 +426,9 @@ class GrocyAiBulkService
 	 * independent human review and recovery evidence (D-12/BULK-10). Zero-write: it only SELECTs.
 	 *
 	 * Redaction is default-deny. Every emitted per-item field is projected through the closed
-	 * `EXPORT_ITEM_FIELDS` allowlist, the plan header is read field-by-named-field (never the raw
-	 * `SELECT *` row, so an injected header column cannot leak), the plan-item rows are read via an
+	 * `EXPORT_ITEM_FIELDS` allowlist; the plan header row may be read broadly, but ONLY the
+	 * allowlisted named header fields are ever emitted, so an injected header column can never leak.
+	 * The plan-item rows are read via an
 	 * EXPLICIT column list (never `SELECT *`), and product names come from a bounded read-only `id, name`
 	 * lookup (never any other product column). Companion API keys, service secrets/tokens, opaque media/
 	 * image handles, session identifiers, raw actor credentials, and unrelated household detail (stock,
@@ -604,6 +605,11 @@ class GrocyAiBulkService
 	 * Escape and join one CSV record: every field is wrapped in double quotes with embedded quotes
 	 * doubled (RFC 4180), so no value can inject a delimiter, row break, or leading `#` comment marker.
 	 *
+	 * Before quoting, any field whose first character is a spreadsheet formula trigger (`=`, `+`, `-`,
+	 * `@`, tab, or CR) is prefixed with a single quote so the receiving spreadsheet treats it as literal
+	 * text instead of executing it (CSV formula injection, CWE-1236). Values that do not start with a
+	 * trigger are emitted exactly as before.
+	 *
 	 * @param array<int, string> $fields
 	 */
 	private function ExportCsvRow(array $fields): string
@@ -611,7 +617,14 @@ class GrocyAiBulkService
 		$escaped = [];
 		foreach ($fields as $field)
 		{
-			$escaped[] = '"' . str_replace('"', '""', (string)$field) . '"';
+			$value = (string)$field;
+			// Neutralize CSV formula injection (CWE-1236): a non-empty value starting with a formula
+			// trigger becomes literal text via a leading apostrophe, applied BEFORE RFC-4180 quoting.
+			if ($value !== '' && preg_match('/^[=+\-@\t\r]/', $value) === 1)
+			{
+				$value = "'" . $value;
+			}
+			$escaped[] = '"' . str_replace('"', '""', $value) . '"';
 		}
 
 		return implode(',', $escaped);

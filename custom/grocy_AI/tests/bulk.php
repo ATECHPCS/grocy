@@ -2022,6 +2022,24 @@ function runBulkExport(): never
 		bulkAssert(str_getcsv($dataLine) !== null && count(str_getcsv($dataLine)) === count($expectedItemFields), BULK_EXPORT_MARKER, 'A CSV data row does not carry exactly the closed column count');
 	}
 
+	// Test 3: CSV formula injection (CWE-1236) is neutralized. A product name that begins with a
+	// spreadsheet formula trigger must be emitted as literal text (prefixed with a leading apostrophe),
+	// never as a raw `=cmd...` at a cell-start position.
+	$formulaName = "=cmd|' /C calc'!A1";
+	$pdo->prepare('UPDATE products SET name = ? WHERE id = 1')->execute([$formulaName]);
+	$formulaCsv = $service->ExportPlan($planId, 'csv');
+	bulkAssert(is_string($formulaCsv), BULK_EXPORT_MARKER, 'The CSV export did not return a string for the formula-injection canary');
+	$formulaLines = explode("\r\n", rtrim($formulaCsv, "\r\n"));
+	$formulaCells = str_getcsv($formulaLines[5]);
+	$formulaNameField = array_search('product_name', $expectedItemFields, true);
+	bulkAssert($formulaNameField !== false, BULK_EXPORT_MARKER, 'The export allowlist is missing product_name');
+	// The parsed cell is the neutralized literal: a leading apostrophe followed by the raw payload.
+	bulkAssert($formulaCells[$formulaNameField] === "'" . $formulaName, BULK_EXPORT_MARKER, 'The CSV export did not neutralize the formula-injection payload with a leading apostrophe');
+	// The raw formula never appears at a cell-start position (right after the opening quote of a field).
+	bulkAssert(!str_contains($formulaCsv, '"' . $formulaName), BULK_EXPORT_MARKER, 'The CSV export emitted a raw formula at a cell-start position');
+	// Restore the RFC-4180 hostile name so the remaining Part A invariants read the fixture as before.
+	$pdo->prepare('UPDATE products SET name = ? WHERE id = 1')->execute([$hostileName]);
+
 	// Test 4: export is a provable zero-write read (schema + rows + total_changes byte-identical).
 	$before = bulkExportStateSnapshot($pdo);
 	$service->ExportPlan($planId, 'json');
