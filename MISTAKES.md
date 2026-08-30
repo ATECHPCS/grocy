@@ -5,9 +5,25 @@ store, not here.
 
 ## Enforced Rules (check every task)
 
-*(none promoted yet)*
+- **GREP-01** — When a test greps a single method's body for a required/forbidden idiom (BEGIN
+  IMMEDIATE / COMMIT / ROLLBACK counts, forbidden PDO txn tokens), slice the body between
+  `public function X` and the NEXT `function` declaration and grep only that slice; never grep the whole
+  file. And never write a banned keyword (UPDATE/DELETE/REPLACE/BEGIN IMMEDIATE) adjacent to the guarded
+  table/identifier name in a docblock or comment — source-grep gates match prose too. (hits: 3)
 
 ## Patterns (promote at 3 hits)
+
+- To force a genuine mid-transaction write-throw (apply OR rollback), target the write path exclusively
+  with a `BEFORE INSERT`/`BEFORE UPDATE` trigger on `grocy_ai_taxonomy_classifications` that
+  `RAISE(ABORT)` for one product_id — reads (and TOCTOU/optimistic-concurrency re-reads) still pass, so
+  the throw lands after an earlier item already wrote in-txn. Note the taxonomy write is an
+  `INSERT ... ON CONFLICT` upsert: a fresh product resolves to INSERT, a re-written product (e.g. a
+  rollback over an applied row) resolves to UPDATE — install BOTH triggers to be safe. (hits: 2)
+
+- SQLite `total_changes()` is NOT decremented by `ROLLBACK` — a rolled-back INSERT/UPDATE still bumps the
+  counter. Prove byte-identical rollback with row-value equality (snapshot `SELECT *`), not a
+  `total_changes()` delta. Only assert a `total_changes()` delta for committed no-op paths (an idempotent
+  re-apply/re-rollback that executes zero INSERT/UPDATE/DELETE). (hits: 2)
 
 - `custom/grocy_AI/tests/release-gate.sh` assumes the maintainer's macOS layout and toolchain:
   hardcoded `/Users/ian/Documents/Repos/...` repo paths, `shasum -a 256`, a bare `php`, a `HEAD`
@@ -16,15 +32,6 @@ store, not here.
   fallback (`GROCY_AI_STABLE_REPO`, `GROCY_AI_STABLE_REF`), run PHP through `$php_runner`
   (`GROCY_AI_PHP`), hash through the `sha256()` helper, and derive counts from
   `portable-files.txt` rather than a literal. (hits: 2)
-
-- A source-grep test (`substr_count`/`str_contains`/`preg_match_all`) that asserts a file/method
-  avoids a forbidden token or SQL shape false-fails when the code's OWN docblock or inline comments
-  quote those exact tokens. Seen twice: a method-body idiom check tripped by its docblock
-  (`BEGIN IMMEDIATE`/`COMMIT` tokens), and an append-only ledger check
-  (`/(?:UPDATE|DELETE|REPLACE)[^;']*grocy_ai_bulk_audit/i`) tripped by a comment reading "no
-  UPDATE/DELETE/REPLACE against grocy_ai_bulk_audit". → Scope method-idiom greps to the sliced method
-  body (`public function X`→next `function`), and keep forbidden tokens out of prose comments — never
-  write the banned keyword adjacent to the guarded table/identifier name. (hits: 2)
 
 ## Observations (first sightings)
 
@@ -65,18 +72,4 @@ store, not here.
   self-consistent, so a tampered document promoted successfully. → When one component validates
   another's input against a file, at least one immutable anchor must live outside that file. Fixed by
   pinning `CHARACTERIZATION_FACTS_SHA256` in `GrocyAiConversionService`. (hits: 1)
-
-- 2026-08-30: Tried to prove `ApplyPlan`'s mid-apply rollback by deleting the proposed leaf's taxonomy
-  node so the delegate write would throw — but `DetectApplyConflicts` re-reads through the same
-  `ReadProductTaxonomy`→`Evidence`→`LeafBySlug` path, so the missing node became a fail-closed
-  `conflict` (item dropped, no throw). Any fault the write would hit is ALSO hit by TOCTOU conflict
-  detection first. → To force a genuine mid-apply write-throw, target the write path exclusively: a
-  `BEFORE INSERT` trigger on `grocy_ai_taxonomy_classifications` that `RAISE(ABORT)` for one product_id
-  lets all reads (and detection) pass while the second item's INSERT throws after the first committed
-  in-txn. (hits: 1)
-
-- 2026-08-30: SQLite `total_changes()` is NOT decremented by `ROLLBACK` — a rolled-back INSERT still
-  bumps the counter. → Prove byte-identical rollback with row-value equality (snapshot `SELECT *`), not
-  a `total_changes()` delta. Only assert a `total_changes()` delta for committed no-op paths (e.g. an
-  idempotent re-apply that executes zero INSERT/UPDATE/DELETE). (hits: 1)
 

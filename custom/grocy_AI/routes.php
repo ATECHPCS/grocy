@@ -38,6 +38,8 @@ $app->group('/api/grocy-ai', function (RouteCollectorProxy $group)
 	$group->get('/bulk/plans/{planId}/selected-diff', [GrocyAiApiController::class, 'BulkPlanSelectedDiff']);
 	$group->post('/bulk/plans/{planId}/apply', [GrocyAiApiController::class, 'BulkPlanApply']);
 	$group->get('/bulk/plans/{planId}/audit', [GrocyAiApiController::class, 'BulkPlanAudit']);
+	$group->get('/bulk/plans/{planId}/rollback-preview', [GrocyAiApiController::class, 'BulkPlanRollbackPreview']);
+	$group->post('/bulk/plans/{planId}/rollback', [GrocyAiApiController::class, 'BulkPlanRollback']);
 	$group->get('/images/{variant}/{token}', [GrocyAiApiController::class, 'FetchImage']);
 })->add(new CorsMiddleware($container, $app->getResponseFactory()))->add(new JsonMiddleware($container, $app->getResponseFactory()));
 

@@ -746,6 +746,12 @@ if (($argv[1] ?? null) === 'bulk-audit')
 	runBulkAudit();
 }
 
+if (($argv[1] ?? null) === 'bulk-rollback')
+{
+	require_once __DIR__ . '/bulk.php';
+	runBulkRollback();
+}
+
 if (($argv[1] ?? null) === '--list')
 {
 	foreach ([

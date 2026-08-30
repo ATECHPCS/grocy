@@ -515,6 +515,26 @@ class GrocyAiBulkService
 	public const AUDIT_EVENT_APPLIED = 'applied';
 
 	/**
+	 * The rollback audit event (D-11). A guarded rollback appends `rolled_back` rows through the same
+	 * append-only INSERT writer as forward apply, inside its own single transaction; it never rewrites an
+	 * existing ledger row. `event` and per-item/plan `outcome` both use the pinned `rolled_back` token.
+	 */
+	public const AUDIT_EVENT_ROLLED_BACK = 'rolled_back';
+
+	/**
+	 * The pinned per-item refusal blocker when a field's live value drifted from the audited after-image —
+	 * i.e. it was hand-edited after the original apply (D-11). Such an item is never overwritten.
+	 */
+	private const ROLLBACK_MANUAL_EDIT = 'manual_edit_after_apply';
+
+	/**
+	 * The bounded fail-closed blocker after a mid-rollback throw forces the whole transaction back to a
+	 * byte-identical prior state. Mirrors the forward-apply runtime blocker; distinct from the closed
+	 * review/refusal vocabulary.
+	 */
+	private const ROLLBACK_TRANSACTION_FAILED = 'rollback_transaction_failed';
+
+	/**
 	 * Apply an approved plan exactly once through one short `BEGIN IMMEDIATE` transaction (D-08), routing
 	 * every selected, non-conflicted, not-yet-completed item through its registered typed operation
 	 * (D-05/D-06 → `AssignProductTaxonomy`), idempotent via a plan-checksum-bound per-item completion
@@ -718,6 +738,287 @@ class GrocyAiBulkService
 			'status' => $status,
 			'blockers' => $blockers,
 			'outcomes' => ['applied' => $applied, 'conflict' => $conflicted, 'skipped' => $skipped],
+			'actor' => $actor
+		];
+	}
+
+	/**
+	 * Compute a zero-write rollback preview from the append-only audit ledger (D-11). The reversible set is
+	 * derived ONLY from the `applied` item rows recorded in `grocy_ai_bulk_audit` — the immutable
+	 * after-image (what the original apply wrote) and before-image (the value to restore) — never re-derived
+	 * from a fresh classification scan. For each applied item it re-reads the CURRENT written field through
+	 * the shipped public read path (`ReadProductTaxonomy` via `CurrentWrittenValue`) and marks it
+	 * `reversible` only when the current value STILL equals the audited after-image. An item whose current
+	 * value drifted (a manual edit after the original apply) is `refused` with the pinned
+	 * `manual_edit_after_apply` blocker and its inverse operation is withheld, so it can never be silently
+	 * overwritten. Items already reversed under this plan leave the actionable preview entirely. This method
+	 * issues no write and no rollback execution; the returned `checksum` is the deterministic rollback-plan
+	 * checksum over the full audit-derived reversal set (identities, both images, inverse operation types,
+	 * and the ruleset version), stable across preview and execute. Fails closed if the plan is unknown.
+	 *
+	 * @return array{plan_id: int, plan_checksum: string, checksum: string, items: array<int, array<string, mixed>>, reversible: array<int, array<string, mixed>>, refused: array<int, array<string, mixed>>}
+	 */
+	public function PreviewRollback(int|string $planId): array
+	{
+		$planIdInt = (int)$planId;
+		$plan = $this->LoadPlanHeader($planIdInt);
+		$rulesetVersion = (string)$plan['ruleset_version'];
+		$candidates = $this->RollbackAppliedLedger($planIdInt);
+
+		$items = [];
+		$reversible = [];
+		$refused = [];
+		foreach ($candidates as $candidate)
+		{
+			// An item already reversed under this plan is done: it is no longer an actionable candidate.
+			if ($candidate['current_outcome'] === 'rolled_back')
+			{
+				continue;
+			}
+
+			try
+			{
+				// Re-read the CURRENT written field live — never the stored ledger — to bind the preview to reality.
+				$current = $this->CurrentWrittenValue($candidate['inverse_operation'], $candidate['object_type'], $candidate['object_id']);
+				$isReversible = $current === $candidate['after_image'];
+			}
+			catch (\Throwable $exception)
+			{
+				// An unreadable current value fails closed to a refusal, never a silent "still matches".
+				$current = null;
+				$isReversible = false;
+			}
+
+			$entry = [
+				'plan_item_id' => $candidate['plan_item_id'],
+				'object_type' => $candidate['object_type'],
+				'object_id' => $candidate['object_id'],
+				// The audited before-image (the value to restore) and after-image (what apply wrote).
+				'before_image' => $candidate['before_image'],
+				'after_image' => $candidate['after_image'],
+				'current_value' => $current,
+				// The inverse named operation is emitted only for a reversible item; a refused one withholds it.
+				'inverse_operation' => $isReversible ? $candidate['inverse_operation'] : null,
+				'reversible' => $isReversible,
+				'blocker' => $isReversible ? null : self::ROLLBACK_MANUAL_EDIT
+			];
+			$items[] = $entry;
+			if ($isReversible)
+			{
+				$reversible[] = $entry;
+			}
+			else
+			{
+				$refused[] = $entry;
+			}
+		}
+
+		return [
+			'plan_id' => $planIdInt,
+			'plan_checksum' => (string)$plan['checksum'],
+			'checksum' => $this->RollbackChecksum($candidates, $rulesetVersion),
+			'items' => $items,
+			'reversible' => $reversible,
+			'refused' => $refused
+		];
+	}
+
+	/**
+	 * Execute a guarded rollback through the SAME path as forward apply (D-11). It restores only the
+	 * reversible items' audited before-images by reusing the 05-04 named typed-operation registry, the
+	 * 05-06 optimistic-concurrency re-read, and the 05-07 single `BEGIN IMMEDIATE` transaction — it opens no
+	 * parallel write path and issues no ad-hoc native/cache SQL. Each restore delegates to
+	 * `AssignProductTaxonomy($objectId, <before-image assignment>, $joinExistingTransaction = true)` so it
+	 * joins this one outer transaction (no own BEGIN/COMMIT, no per-item commit, no network/provider call
+	 * under the lock). Optimistic concurrency: each item's current written value is re-read inside the lock
+	 * and MUST still equal the audited after-image; a drifted item is recorded `conflict` and never written
+	 * (no partial write). Idempotency (D-09): an item already `rolled_back` under this plan is skipped, so a
+	 * re-run or a resumed interrupted rollback repeats no completed reversal; on any throw the whole
+	 * transaction rolls back to a byte-identical prior state and its audit rows vanish with it. Every
+	 * durable write and audit append lives inside the single transaction; the ledger stays append-only and
+	 * gains only `rolled_back` (and per-item `conflict`) rows. On success the plan status becomes
+	 * `rolled_back`.
+	 *
+	 * @param string $actor the authenticated Grocy session user resolved by the controller
+	 * @param string|null $confirmedChecksum the reviewed rollback-plan checksum, cross-checked before any write
+	 * @return array{plan_id: int, checksum: string, status: string, blockers: array<int, string>, outcomes: array{rolled_back: int, conflict: int, skipped: int}, actor: string}
+	 */
+	public function RollbackPlan(int $planId, string $actor, ?string $confirmedChecksum = null): array
+	{
+		$plan = $this->LoadPlanHeader($planId);
+		$rulesetVersion = (string)$plan['ruleset_version'];
+		$rollbackChecksum = $this->RollbackChecksum($this->RollbackAppliedLedger($planId), $rulesetVersion);
+
+		// Bind the executed reversal to the reviewed one before any write: when the caller confirms a
+		// checksum it must equal the audit-derived rollback-plan checksum, else refuse with no write.
+		if ($confirmedChecksum !== null && !hash_equals($rollbackChecksum, $confirmedChecksum))
+		{
+			return $this->RollbackResult($planId, $rollbackChecksum, (string)$plan['status'], ['plan_checksum_mismatch'], 0, 0, 0, $actor);
+		}
+
+		// LOCKED scheme identical to ApplyPlan: raw BEGIN IMMEDIATE up front, one COMMIT, one ROLLBACK; no
+		// PDO transaction idiom, no network/provider call while the lock is held.
+		$this->Db->exec('BEGIN IMMEDIATE');
+		try
+		{
+			$rolledBackAt = (string)$this->Db->query('SELECT CURRENT_TIMESTAMP')->fetchColumn();
+			$moduleVersion = $this->ModuleVersion();
+			// The append-only ledger writer: INSERT only, inside THIS transaction, so a rolled-back rollback
+			// discards its own rows atomically with the reversals they record.
+			$auditInsert = $this->Db->prepare('INSERT INTO grocy_ai_bulk_audit (plan_id, plan_item_id, actor, event, event_at, module_version, before_json, after_json, outcome) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
+			$markRolledBack = $this->Db->prepare("UPDATE grocy_ai_bulk_plan_items SET outcome = 'rolled_back' WHERE plan_id = ? AND id = ?");
+			$markConflict = $this->Db->prepare("UPDATE grocy_ai_bulk_plan_items SET outcome = 'conflict' WHERE plan_id = ? AND id = ?");
+
+			// TOCTOU-free: recompute the audit-derived reversal set INSIDE the lock.
+			$candidates = $this->RollbackAppliedLedger($planId);
+
+			$rolledBack = 0;
+			$conflicted = 0;
+			$skipped = 0;
+			foreach ($candidates as $candidate)
+			{
+				$planItemId = $candidate['plan_item_id'];
+
+				// Idempotency (D-09): an item already reversed under this plan is never reversed twice.
+				if ($candidate['current_outcome'] === 'rolled_back')
+				{
+					$skipped++;
+					continue;
+				}
+
+				$afterJson = $this->CanonicalJson(['leaf_slug' => $candidate['after_image']]);
+				$beforeJson = $this->CanonicalJson(['leaf_slug' => $candidate['before_image']]);
+
+				// Optimistic concurrency: the live value MUST still equal the audited after-image. A field
+				// hand-edited after the original apply has drifted, so it is refused and never overwritten.
+				$current = $this->CurrentWrittenValue($candidate['inverse_operation'], $candidate['object_type'], $candidate['object_id']);
+				if ($current !== $candidate['after_image'])
+				{
+					$markConflict->execute([$planId, $planItemId]);
+					$auditInsert->execute([$planId, $planItemId, $actor, self::AUDIT_EVENT_ROLLED_BACK, $rolledBackAt, $moduleVersion, $afterJson, null, 'conflict']);
+					$conflicted++;
+					continue;
+				}
+
+				// Restore the audited before-image through the SAME named typed operation + shipped write.
+				$resolution = $this->ResolveOperation($candidate['inverse_operation']);
+				if ($resolution['delegate'] === null)
+				{
+					throw new \RuntimeException('unknown_operation');
+				}
+				($resolution['delegate'])($candidate['object_id'], $candidate['before_image']);
+				$markRolledBack->execute([$planId, $planItemId]);
+				// before = the value that stood before this reversal (the audited after-image); after = the
+				// restored before-image. Same transaction, so a rollback discards it with the reversal.
+				$auditInsert->execute([$planId, $planItemId, $actor, self::AUDIT_EVENT_ROLLED_BACK, $rolledBackAt, $moduleVersion, $afterJson, $beforeJson, 'rolled_back']);
+				$rolledBack++;
+			}
+
+			$status = (string)$plan['status'];
+			$finalStatus = $rolledBack > 0 ? 'rolled_back' : $status;
+			if ($finalStatus !== $status)
+			{
+				$this->Db->prepare('UPDATE grocy_ai_bulk_plans SET status = ? WHERE id = ?')->execute([$finalStatus, $planId]);
+			}
+
+			// Two plan-scope rows make the ledger self-reconstructing without a plan-header join, appended
+			// only when this rollback did real work so an idempotent re-run appends nothing.
+			if ($rolledBack + $conflicted > 0)
+			{
+				$previewedAt = (string)$plan['created_at'];
+				$previewedBy = $plan['created_by'] === null ? '' : (string)$plan['created_by'];
+				$auditInsert->execute([$planId, null, $previewedBy, self::AUDIT_EVENT_PREVIEWED, $previewedAt, $moduleVersion, null, $this->CanonicalJson(['checksum' => (string)$plan['checksum']]), 'pending']);
+				$auditInsert->execute([$planId, null, $actor, self::AUDIT_EVENT_ROLLED_BACK, $rolledBackAt, $moduleVersion, $this->CanonicalJson(['status' => $status]), $this->CanonicalJson(['status' => $finalStatus, 'checksum' => $rollbackChecksum, 'outcomes' => ['rolled_back' => $rolledBack, 'conflict' => $conflicted, 'skipped' => $skipped]]), self::AUDIT_EVENT_ROLLED_BACK]);
+			}
+
+			$this->Db->exec('COMMIT');
+			return $this->RollbackResult($planId, $rollbackChecksum, $finalStatus, [], $rolledBack, $conflicted, $skipped, $actor);
+		}
+		catch (\Throwable $exception)
+		{
+			// Fail closed to a byte-identical prior state: nothing reverted, nothing stamped, no audit row.
+			$this->Db->exec('ROLLBACK');
+			$blocker = $exception->getMessage() === 'unknown_operation' ? 'unknown_operation' : self::ROLLBACK_TRANSACTION_FAILED;
+			return $this->RollbackResult($planId, $rollbackChecksum, (string)$plan['status'], [$blocker], 0, 0, 0, $actor);
+		}
+	}
+
+	/**
+	 * The audit-derived reversal set (D-11): one entry per successfully applied item recorded in the
+	 * append-only ledger, joined to its stored plan item for identity and its current outcome. The restore
+	 * target is the audited before-image; the audited after-image is the value the original apply wrote; the
+	 * inverse named operation restores the before-image. Read-only; nothing here re-derives from a fresh
+	 * classification scan.
+	 *
+	 * @return array<int, array{plan_item_id: int, object_type: string, object_id: int, before_image: ?string, after_image: ?string, inverse_operation: string, current_outcome: string}>
+	 */
+	private function RollbackAppliedLedger(int $planId): array
+	{
+		$statement = $this->Db->prepare('SELECT audit.plan_item_id, audit.before_json, audit.after_json, item.object_type, item.object_id, item.outcome FROM grocy_ai_bulk_audit AS audit INNER JOIN grocy_ai_bulk_plan_items AS item ON item.id = audit.plan_item_id WHERE audit.plan_id = ? AND audit.plan_item_id IS NOT NULL AND audit.event = ? AND audit.outcome = ? ORDER BY audit.plan_item_id');
+		$statement->execute([$planId, self::AUDIT_EVENT_APPLIED, 'applied']);
+
+		$candidates = [];
+		foreach ($statement->fetchAll(PDO::FETCH_ASSOC) as $row)
+		{
+			// Both images are the closed written-field shape captured at apply; a malformed image fails closed.
+			$beforeImage = $this->WrittenBeforeImage((string)$row['before_json']);
+			$afterImage = $this->WrittenBeforeImage((string)$row['after_json']);
+			$candidates[] = [
+				'plan_item_id' => (int)$row['plan_item_id'],
+				'object_type' => (string)$row['object_type'],
+				'object_id' => (int)$row['object_id'],
+				'before_image' => $beforeImage,
+				'after_image' => $afterImage,
+				// The inverse restores the before-image: a prior leaf via assign_taxonomy_leaf, a prior
+				// unclassified state via set_unclassified.
+				'inverse_operation' => $beforeImage === null ? 'set_unclassified' : 'assign_taxonomy_leaf',
+				'current_outcome' => (string)$row['outcome']
+			];
+		}
+
+		return $candidates;
+	}
+
+	/**
+	 * The deterministic rollback-plan checksum over the full audit-derived reversal set — item identities,
+	 * both images, inverse operation types, and the ruleset version — via the shared `ChecksumForPlan`
+	 * idiom. It is stable across preview and execute (independent of per-item completion), so the reviewed
+	 * reversal and the executed reversal are provably the same artifact.
+	 *
+	 * @param array<int, array<string, mixed>> $candidates
+	 */
+	private function RollbackChecksum(array $candidates, string $rulesetVersion): string
+	{
+		$items = [];
+		foreach ($candidates as $candidate)
+		{
+			$items[] = [
+				'object_type' => $candidate['object_type'],
+				'object_id' => $candidate['object_id'],
+				'operation' => $candidate['inverse_operation'],
+				// The expected current value (audited after-image) and the restore target (before-image).
+				'before_image' => $candidate['after_image'],
+				'proposed_value' => $candidate['before_image']
+			];
+		}
+
+		return $this->ChecksumForPlan('taxonomy_rollback', $rulesetVersion, $items);
+	}
+
+	/**
+	 * The closed rollback-outcome DTO, mirroring `ApplyResult`. `outcomes` uses the rollback per-item
+	 * vocabulary; `blockers` is bounded (empty on success); `actor` echoes the authenticated session user.
+	 *
+	 * @return array{plan_id: int, checksum: string, status: string, blockers: array<int, string>, outcomes: array{rolled_back: int, conflict: int, skipped: int}, actor: string}
+	 */
+	private function RollbackResult(int $planId, string $checksum, string $status, array $blockers, int $rolledBack, int $conflicted, int $skipped, string $actor): array
+	{
+		return [
+			'plan_id' => $planId,
+			'checksum' => $checksum,
+			'status' => $status,
+			'blockers' => $blockers,
+			'outcomes' => ['rolled_back' => $rolledBack, 'conflict' => $conflicted, 'skipped' => $skipped],
 			'actor' => $actor
 		];
 	}

@@ -57,18 +57,30 @@ function bulkAssert(bool $condition, string $marker, string $message): void
  */
 function bulkEngineSurfaceComplete(): bool
 {
+	return bulkEngineMissingMethods() === [];
+}
+
+/**
+ * The still-unimplemented engine methods, so the invariant RED gate shrinks as each plan lands (naming
+ * only what remains). Returns the missing classes/methods in declaration order.
+ *
+ * @return array<int, string>
+ */
+function bulkEngineMissingMethods(): array
+{
 	if (!class_exists(GrocyAiBulkMigration::class) || !class_exists(GrocyAiBulkService::class))
 	{
-		return false;
+		return ['GrocyAiBulkMigration/GrocyAiBulkService'];
 	}
+	$missing = [];
 	foreach (['GeneratePlan', 'SetItemSelection', 'ApplyPlan', 'PreviewRollback', 'ExportPlan'] as $method)
 	{
 		if (!method_exists(GrocyAiBulkService::class, $method))
 		{
-			return false;
+			$missing[] = $method;
 		}
 	}
-	return true;
+	return $missing;
 }
 
 /**
@@ -204,9 +216,10 @@ function runBulkInvariants(): never
 		'D-12 non-authoritative redacted export' => 'ExportPlan'
 	];
 
-	if (!bulkEngineSurfaceComplete())
+	$missingEngineMethods = bulkEngineMissingMethods();
+	if ($missingEngineMethods !== [])
 	{
-		expectedRed(BULK_INVARIANTS_MARKER, 'The bulk engine surface (' . implode(', ', array_values(array_unique($invariantClaims))) . ') is not implemented');
+		expectedRed(BULK_INVARIANTS_MARKER, 'The bulk engine surface (' . implode(', ', $missingEngineMethods) . ') is not implemented');
 	}
 
 	fwrite(STDOUT, "Bulk engine invariants passed\n");
@@ -1570,5 +1583,341 @@ function runBulkAudit(): never
 	bulkAssert($badIdResponse->getStatusCode() === 400, BULK_AUDIT_MARKER, 'A non-integer plan id was not rejected by the audit read');
 
 	fwrite(STDOUT, "Bulk audit tests passed\n");
+	exit(0);
+}
+
+const BULK_ROLLBACK_MARKER = 'EXPECTED_RED: bulk.rollback';
+
+/**
+ * A full persistent-state snapshot (native + resolved-cache + module taxonomy + the three bulk tables,
+ * including the append-only audit ledger) plus `total_changes()`, for proving a zero-write rollback
+ * preview and a byte-identical mid-rollback fault.
+ */
+function bulkRollbackStateSnapshot(PDO $pdo): array
+{
+	$tables = ['products', 'product_groups', 'quantity_unit_conversions', 'cache__quantity_unit_conversions_resolved', 'grocy_ai_taxonomy_classifications', 'grocy_ai_taxonomy_evidence', 'grocy_ai_bulk_plans', 'grocy_ai_bulk_plan_items', 'grocy_ai_bulk_audit'];
+	return [
+		'rows' => bulkSnapshotTables($pdo, $tables),
+		'schema' => $pdo->query("SELECT type, name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name")->fetchAll(PDO::FETCH_ASSOC),
+		'total_changes' => (int)$pdo->query('SELECT total_changes()')->fetchColumn()
+	];
+}
+
+/** Generate + fully apply the two-item apply fixture, returning [service, planId, checksum]. */
+function bulkRollbackAppliedPlan(PDO $pdo): array
+{
+	$service = new GrocyAiBulkService($pdo);
+	bulkSeedApplyFixture($pdo);
+	$generated = $service->GeneratePlan(['actor' => 'previewer-1']);
+	$planId = (int)$generated['id'];
+	$applyResult = $service->ApplyPlan($planId, 'applier-9', (string)$generated['checksum']);
+	bulkAssert($applyResult['outcomes'] === ['applied' => 2, 'conflict' => 0, 'skipped' => 0], BULK_ROLLBACK_MARKER, 'The rollback fixture apply did not apply both items');
+	return [$service, $planId, (string)$generated['checksum']];
+}
+
+/**
+ * Plan 05-09: a zero-write, audit-derived rollback preview that refuses a field hand-edited after apply,
+ * and a guarded rollback-execute reusing the single-transaction, optimistic-concurrency, idempotent,
+ * append-only forward-apply path.
+ */
+function runBulkRollback(): never
+{
+	if (!class_exists(GrocyAiBulkService::class)
+		|| !method_exists(GrocyAiBulkService::class, 'PreviewRollback')
+		|| !method_exists(GrocyAiBulkService::class, 'RollbackPlan'))
+	{
+		expectedRed(BULK_ROLLBACK_MARKER, 'PreviewRollback / RollbackPlan are not implemented');
+	}
+
+	// ---- Task 1: the preview is zero-write, audit-derived, and lists reversible items ----------------
+	$pdo = bulkGenerationPdo();
+	[$service, $planId] = bulkRollbackAppliedPlan($pdo);
+	// After apply, P1 -> produce and P2 -> dairy-eggs (both from unclassified/null).
+	bulkAssert(bulkApplyCurrentLeaf($pdo, 1) === 'produce' && bulkApplyCurrentLeaf($pdo, 2) === 'dairy-eggs', BULK_ROLLBACK_MARKER, 'The applied fixture is not in its expected written state');
+
+	$preview = $service->PreviewRollback($planId);
+	bulkAssert(array_keys($preview) === ['plan_id', 'plan_checksum', 'checksum', 'items', 'reversible', 'refused'], BULK_ROLLBACK_MARKER, 'The rollback preview DTO is outside the closed shape');
+	bulkAssert((int)$preview['plan_id'] === $planId, BULK_ROLLBACK_MARKER, 'The preview echoed the wrong plan id');
+	bulkAssert(preg_match('/^[0-9a-f]{64}$/D', (string)$preview['checksum']) === 1, BULK_ROLLBACK_MARKER, 'The rollback-plan checksum is not a lowercase 64-hex SHA-256');
+	bulkAssert(count($preview['reversible']) === 2 && $preview['refused'] === [], BULK_ROLLBACK_MARKER, 'A clean applied plan did not list both items as reversible');
+	$expectedItemKeys = ['plan_item_id', 'object_type', 'object_id', 'before_image', 'after_image', 'current_value', 'inverse_operation', 'reversible', 'blocker'];
+	$reversibleByObject = [];
+	foreach ($preview['reversible'] as $entry)
+	{
+		bulkAssert(array_keys($entry) === $expectedItemKeys, BULK_ROLLBACK_MARKER, 'A reversible entry is outside the closed shape');
+		bulkAssert($entry['reversible'] === true && $entry['blocker'] === null, BULK_ROLLBACK_MARKER, 'A reversible entry is not marked reversible with no blocker');
+		$reversibleByObject[(int)$entry['object_id']] = $entry;
+	}
+	// The reversal set is derived from the audit after/before images (P1: produce -> null; P2: dairy-eggs -> null),
+	// and the inverse operation restores the audited before-image (set_unclassified, since before was null).
+	bulkAssert($reversibleByObject[1]['after_image'] === 'produce' && $reversibleByObject[1]['before_image'] === null, BULK_ROLLBACK_MARKER, 'P1 reversal images do not match the audit ledger');
+	bulkAssert($reversibleByObject[1]['current_value'] === 'produce' && $reversibleByObject[1]['inverse_operation'] === 'set_unclassified', BULK_ROLLBACK_MARKER, 'P1 reversal did not re-read the live value or derive the inverse operation');
+	bulkAssert($reversibleByObject[2]['after_image'] === 'dairy-eggs' && $reversibleByObject[2]['before_image'] === null && $reversibleByObject[2]['inverse_operation'] === 'set_unclassified', BULK_ROLLBACK_MARKER, 'P2 reversal images/inverse do not match the audit ledger');
+	// The preview is derived from the ledger, not a fresh scan: it matches the audited applied rows exactly.
+	$auditApplied = [];
+	foreach ($service->ReadPlanAudit($planId)['records'] as $record)
+	{
+		if ($record['plan_item_id'] !== null && $record['event'] === 'applied' && $record['outcome'] === 'applied')
+		{
+			$auditApplied[] = $record;
+		}
+	}
+	bulkAssert(count($auditApplied) === count($preview['reversible']), BULK_ROLLBACK_MARKER, 'The reversible set is not one-to-one with the audited applied rows');
+
+	// Test 3: the preview mutates nothing (schema + rows + total_changes byte-identical).
+	$beforePreview = bulkRollbackStateSnapshot($pdo);
+	$service->PreviewRollback($planId);
+	$afterPreview = bulkRollbackStateSnapshot($pdo);
+	bulkAssert($beforePreview['schema'] === $afterPreview['schema'], BULK_ROLLBACK_MARKER, 'The rollback preview created, altered, or dropped a database object');
+	bulkAssert($beforePreview['rows'] === $afterPreview['rows'], BULK_ROLLBACK_MARKER, 'The rollback preview mutated a persistent table');
+	bulkAssert($beforePreview['total_changes'] === $afterPreview['total_changes'], BULK_ROLLBACK_MARKER, 'The rollback preview issued a row change');
+
+	// Test 4: an unknown plan fails closed (no write); a never-applied plan has no reversible items.
+	try
+	{
+		$service->PreviewRollback(987654321);
+		bulkAssert(false, BULK_ROLLBACK_MARKER, 'A preview over an unknown plan did not fail closed');
+	}
+	catch (RuntimeException)
+	{
+	}
+	$naPdo = bulkGenerationPdo();
+	$naService = new GrocyAiBulkService($naPdo);
+	bulkSeedApplyFixture($naPdo);
+	$naPlanId = (int)$naService->GeneratePlan([])['id'];
+	$naPreview = $naService->PreviewRollback($naPlanId);
+	bulkAssert($naPreview['reversible'] === [] && $naPreview['refused'] === [], BULK_ROLLBACK_MARKER, 'A never-applied plan reported reversible items');
+
+	// ---- Task 1/2: a field manually changed after apply is REFUSED and never overwritten -------------
+	$mePdo = bulkGenerationPdo();
+	[$meService, $mePlanId] = bulkRollbackAppliedPlan($mePdo);
+	// Simulate a manual post-apply edit: hand-change P1's written leaf to a different value.
+	(new GrocyAiTaxonomyService($mePdo))->AssignProductTaxonomy(1, ['leaf_slug' => 'dairy-eggs', 'ruleset_version' => 'v1']);
+	$mePreview = $meService->PreviewRollback($mePlanId);
+	$meRefusedByObject = [];
+	foreach ($mePreview['refused'] as $entry)
+	{
+		$meRefusedByObject[(int)$entry['object_id']] = $entry;
+	}
+	bulkAssert(count($mePreview['refused']) === 1 && isset($meRefusedByObject[1]), BULK_ROLLBACK_MARKER, 'A manually-edited item was not refused in the preview');
+	bulkAssert($meRefusedByObject[1]['reversible'] === false && $meRefusedByObject[1]['blocker'] === 'manual_edit_after_apply', BULK_ROLLBACK_MARKER, 'A drifted item did not carry the pinned manual_edit_after_apply blocker');
+	bulkAssert($meRefusedByObject[1]['inverse_operation'] === null, BULK_ROLLBACK_MARKER, 'A refused item still emitted an inverse operation');
+	bulkAssert($meRefusedByObject[1]['current_value'] === 'dairy-eggs' && $meRefusedByObject[1]['after_image'] === 'produce', BULK_ROLLBACK_MARKER, 'The refused item did not reflect the live drift against the audited after-image');
+	bulkAssert(count($mePreview['reversible']) === 1 && (int)$mePreview['reversible'][0]['object_id'] === 2, BULK_ROLLBACK_MARKER, 'The non-drifted sibling was not still reversible');
+	// Executing the rollback must NOT overwrite the manually-edited field, only revert the eligible sibling.
+	$meResult = $meService->RollbackPlan($mePlanId, 'roller-1', (string)$mePreview['checksum']);
+	bulkAssert($meResult['outcomes'] === ['rolled_back' => 1, 'conflict' => 1, 'skipped' => 0], BULK_ROLLBACK_MARKER, 'The rollback did not revert the eligible item while refusing the drifted one');
+	bulkAssert(bulkApplyCurrentLeaf($mePdo, 1) === 'dairy-eggs', BULK_ROLLBACK_MARKER, 'A manually-edited field was overwritten by the rollback');
+	bulkAssert(bulkApplyCurrentLeaf($mePdo, 2) === null, BULK_ROLLBACK_MARKER, 'The eligible sibling was not reverted to its before-image');
+	$meItems = $mePdo->query('SELECT object_id, outcome FROM grocy_ai_bulk_plan_items WHERE plan_id = ' . $mePlanId . ' ORDER BY object_id')->fetchAll(PDO::FETCH_KEY_PAIR);
+	bulkAssert((string)$meItems[1] === 'conflict' && (string)$meItems[2] === 'rolled_back', BULK_ROLLBACK_MARKER, 'The drifted/eligible items were not stamped conflict/rolled_back respectively');
+
+	// ---- Task 2 Test 1: rollback-execute reverts eligible items in one BEGIN IMMEDIATE transaction ----
+	$exPdo = bulkGenerationPdo();
+	[$exService, $exPlanId] = bulkRollbackAppliedPlan($exPdo);
+	$exPreview = $exService->PreviewRollback($exPlanId);
+	$exResult = $exService->RollbackPlan($exPlanId, 'roller-1', (string)$exPreview['checksum']);
+	$expectedResultKeys = ['plan_id', 'checksum', 'status', 'blockers', 'outcomes', 'actor'];
+	bulkAssert(array_keys($exResult) === $expectedResultKeys, BULK_ROLLBACK_MARKER, 'The rollback result is outside the closed shape');
+	bulkAssert($exResult['status'] === 'rolled_back' && $exResult['blockers'] === [], BULK_ROLLBACK_MARKER, 'A clean rollback did not reach rolled_back status with no blocker');
+	bulkAssert($exResult['outcomes'] === ['rolled_back' => 2, 'conflict' => 0, 'skipped' => 0], BULK_ROLLBACK_MARKER, 'A clean rollback did not revert exactly the two eligible items');
+	bulkAssert($exResult['actor'] === 'roller-1', BULK_ROLLBACK_MARKER, 'RollbackPlan did not thread the actor');
+	bulkAssert(bulkApplyCurrentLeaf($exPdo, 1) === null && bulkApplyCurrentLeaf($exPdo, 2) === null, BULK_ROLLBACK_MARKER, 'The rollback did not restore both before-images');
+	bulkAssert((string)$exPdo->query('SELECT status FROM grocy_ai_bulk_plans WHERE id = ' . $exPlanId)->fetchColumn() === 'rolled_back', BULK_ROLLBACK_MARKER, 'The plan status did not transition to rolled_back');
+	// The single BEGIN IMMEDIATE / COMMIT / ROLLBACK idiom, scoped to the RollbackPlan method body.
+	$src = (string)file_get_contents(__DIR__ . '/../src/GrocyAiBulkService.php');
+	$rbStart = strpos($src, 'public function RollbackPlan');
+	$rbEnd = strpos($src, 'private function RollbackAppliedLedger');
+	bulkAssert($rbStart !== false && $rbEnd !== false && $rbStart < $rbEnd, BULK_ROLLBACK_MARKER, 'The RollbackPlan method could not be isolated');
+	$rbBody = substr($src, $rbStart, $rbEnd - $rbStart);
+	bulkAssert(substr_count($rbBody, "\$this->Db->exec('BEGIN IMMEDIATE')") === 1, BULK_ROLLBACK_MARKER, 'Rollback must open exactly one BEGIN IMMEDIATE');
+	bulkAssert(substr_count($rbBody, "\$this->Db->exec('COMMIT')") === 1, BULK_ROLLBACK_MARKER, 'Rollback must have exactly one COMMIT path');
+	bulkAssert(substr_count($rbBody, "\$this->Db->exec('ROLLBACK')") === 1, BULK_ROLLBACK_MARKER, 'Rollback must have exactly one ROLLBACK path');
+	foreach (['beginTransaction', '->commit(', '->rollBack(', 'inTransaction'] as $forbidden)
+	{
+		bulkAssert(!str_contains($rbBody, $forbidden), BULK_ROLLBACK_MARKER, "RollbackPlan uses the forbidden PDO transaction idiom {$forbidden}");
+	}
+	// The rollback delegates every durable write to AssignProductTaxonomy joining the outer transaction.
+	bulkAssert(str_contains($rbBody, "\$resolution['delegate']"), BULK_ROLLBACK_MARKER, 'Rollback does not delegate through the named-operation registry');
+
+	// ---- Task 2 Test 3a: append-only audit gains rolled_back rows (and a conflict on drift) -----------
+	$exAudit = $exService->ReadPlanAudit($exPlanId)['records'];
+	$rolledBackItemRows = array_values(array_filter($exAudit, static fn(array $r): bool => $r['plan_item_id'] !== null && $r['event'] === 'rolled_back' && $r['outcome'] === 'rolled_back'));
+	bulkAssert(count($rolledBackItemRows) === 2, BULK_ROLLBACK_MARKER, 'A clean rollback did not append one rolled_back item row per reverted item');
+	foreach ($rolledBackItemRows as $record)
+	{
+		bulkAssert((string)$record['actor'] === 'roller-1', BULK_ROLLBACK_MARKER, 'A rolled_back item row did not record the rollback actor');
+		// before = the value that stood before the reversal (produce/dairy-eggs); after = the restored image (null).
+		bulkAssert((string)$record['after_json'] === '{"leaf_slug":null}', BULK_ROLLBACK_MARKER, 'A rolled_back item row did not record the restored before-image as after_json');
+	}
+	// The original applied rows remain (append-only), so the ledger only grows.
+	$stillApplied = array_values(array_filter($exAudit, static fn(array $r): bool => $r['plan_item_id'] !== null && $r['event'] === 'applied' && $r['outcome'] === 'applied'));
+	bulkAssert(count($stillApplied) === 2, BULK_ROLLBACK_MARKER, 'The rollback removed the original applied audit rows (ledger must be append-only)');
+	// Source-level append-only guard: no row-rewriting path against the audit ledger.
+	bulkAssert(preg_match_all('/(?:UPDATE|DELETE|REPLACE)[^;\']*grocy_ai_bulk_audit/i', $src) === 0, BULK_ROLLBACK_MARKER, 'The service exposes a row-rewriting path against the audit ledger');
+
+	// ---- Task 2 Test 3b: idempotent re-rollback repeats nothing --------------------------------------
+	$idemBefore = bulkRollbackStateSnapshot($exPdo);
+	$exSecond = $exService->RollbackPlan($exPlanId, 'roller-1', (string)$exPreview['checksum']);
+	$idemAfter = bulkRollbackStateSnapshot($exPdo);
+	bulkAssert($exSecond['status'] === 'rolled_back' && $exSecond['blockers'] === [], BULK_ROLLBACK_MARKER, 'A re-rollback did not report the plan already rolled back');
+	bulkAssert($exSecond['outcomes'] === ['rolled_back' => 0, 'conflict' => 0, 'skipped' => 2], BULK_ROLLBACK_MARKER, 'A re-rollback did not skip both already-reversed items');
+	bulkAssert($idemBefore['rows'] === $idemAfter['rows'], BULK_ROLLBACK_MARKER, 'A re-rollback mutated persistent state');
+	bulkAssert($idemBefore['total_changes'] === $idemAfter['total_changes'], BULK_ROLLBACK_MARKER, 'A re-rollback issued a row change (a completed reversal repeated)');
+
+	// ---- Task 2 Test 3c: a mid-rollback write fault rolls back byte-identical (audit + revert together)
+	$tPdo = bulkGenerationPdo();
+	[$tService, $tPlanId] = bulkRollbackAppliedPlan($tPdo);
+	$tPreview = $tService->PreviewRollback($tPlanId);
+	// Force the SECOND item's restore write to throw AFTER the first item's revert (and its audit row) have
+	// landed. The reversal upserts the classification row (leaf_id -> NULL), so it resolves to an UPDATE for
+	// the rows apply created; a BEFORE UPDATE/INSERT trigger for product 2 aborts the write path only, so every
+	// read (including the optimistic-concurrency re-read) still passes and the throw happens genuinely mid-rollback.
+	$tPdo->exec("CREATE TRIGGER bulk_rollback_fault_u BEFORE UPDATE ON grocy_ai_taxonomy_classifications WHEN NEW.product_id = 2 BEGIN SELECT RAISE(ABORT, 'fault_injected'); END");
+	$tPdo->exec("CREATE TRIGGER bulk_rollback_fault_i BEFORE INSERT ON grocy_ai_taxonomy_classifications WHEN NEW.product_id = 2 BEGIN SELECT RAISE(ABORT, 'fault_injected'); END");
+	$tBefore = bulkRollbackStateSnapshot($tPdo);
+	$failed = $tService->RollbackPlan($tPlanId, 'roller-1', (string)$tPreview['checksum']);
+	$tAfter = bulkRollbackStateSnapshot($tPdo);
+	bulkAssert($failed['blockers'] === ['rollback_transaction_failed'] && $failed['outcomes'] === ['rolled_back' => 0, 'conflict' => 0, 'skipped' => 0], BULK_ROLLBACK_MARKER, 'A mid-rollback throw did not return the bounded rollback outcome');
+	bulkAssert($tBefore['rows'] === $tAfter['rows'], BULK_ROLLBACK_MARKER, 'A mid-rollback throw left a partial write (state not byte-identical)');
+	bulkAssert($tBefore['schema'] === $tAfter['schema'], BULK_ROLLBACK_MARKER, 'A mid-rollback throw altered the schema');
+	// The first item's already-succeeded revert was undone with its audit row: still applied, no rolled_back row.
+	bulkAssert(bulkApplyCurrentLeaf($tPdo, 1) === 'produce', BULK_ROLLBACK_MARKER, 'The first reverted item was not rolled back after a later throw (no per-item commit)');
+	bulkAssert((string)$tPdo->query('SELECT status FROM grocy_ai_bulk_plans WHERE id = ' . $tPlanId)->fetchColumn() === 'applied', BULK_ROLLBACK_MARKER, 'An interrupted rollback advanced the plan status');
+	bulkAssert((int)$tPdo->query("SELECT COUNT(*) FROM grocy_ai_bulk_audit WHERE plan_id = " . $tPlanId . " AND event = 'rolled_back'")->fetchColumn() === 0, BULK_ROLLBACK_MARKER, 'An interrupted rollback left rolled_back audit rows (audit written outside the transaction)');
+	// Resume: clear the fault and re-run; the whole eligible set reverts and the ledger is written once.
+	$tPdo->exec('DROP TRIGGER bulk_rollback_fault_u');
+	$tPdo->exec('DROP TRIGGER bulk_rollback_fault_i');
+	$resume = $tService->RollbackPlan($tPlanId, 'roller-1', (string)$tPreview['checksum']);
+	bulkAssert($resume['outcomes'] === ['rolled_back' => 2, 'conflict' => 0, 'skipped' => 0], BULK_ROLLBACK_MARKER, 'A resumed rollback did not cleanly revert the whole eligible set');
+	bulkAssert(bulkApplyCurrentLeaf($tPdo, 1) === null && bulkApplyCurrentLeaf($tPdo, 2) === null, BULK_ROLLBACK_MARKER, 'A resumed rollback did not restore both before-images');
+
+	// ---- Task 3: the two endpoints are owned here, MASTER_DATA_EDIT-gated, closed-body, single each ---
+	bulkSelectionRuntime();
+
+	$container = new DI\Container();
+	$app = Slim\Factory\AppFactory::createFromContainer($container);
+	require dirname(__DIR__) . '/routes.php';
+	$found = [];
+	$previewRoutes = 0;
+	$rollbackRoutes = 0;
+	foreach ($app->getRouteCollector()->getRoutes() as $route)
+	{
+		$found[$route->getPattern()] = $route->getMethods();
+		if (str_contains($route->getPattern(), '/rollback-preview'))
+		{
+			$previewRoutes++;
+		}
+		elseif (str_contains($route->getPattern(), '/rollback'))
+		{
+			$rollbackRoutes++;
+		}
+	}
+	bulkAssert(($found['/api/grocy-ai/bulk/plans/{planId}/rollback-preview'] ?? null) === ['GET'], BULK_ROLLBACK_MARKER, 'The rollback-preview route is not registered exactly as GET');
+	bulkAssert(($found['/api/grocy-ai/bulk/plans/{planId}/rollback'] ?? null) === ['POST'], BULK_ROLLBACK_MARKER, 'The rollback route is not registered exactly as POST');
+	bulkAssert($previewRoutes === 1 && $rollbackRoutes === 1, BULK_ROLLBACK_MARKER, 'The rollback routes are not each registered exactly once');
+	// No CLI rollback path.
+	foreach (glob(dirname(__DIR__) . '/bin/*.php') as $binFile)
+	{
+		bulkAssert(!str_contains((string)file_get_contents($binFile), 'RollbackPlan') && !str_contains((string)file_get_contents($binFile), 'PreviewRollback'), BULK_ROLLBACK_MARKER, 'A maintainer CLI invokes the rollback engine: ' . basename((string)$binFile));
+	}
+
+	$apiPdo = bulkGenerationPdo();
+	$apiPdo->exec('CREATE TABLE user_permissions_resolved (id INTEGER NOT NULL PRIMARY KEY, user_id INTEGER NOT NULL, permission_name TEXT NOT NULL)');
+	$apiPdo->exec("INSERT INTO user_permissions_resolved (id, user_id, permission_name) VALUES (1, 1, 'MASTER_DATA_EDIT')");
+	[$apiService, $apiPlanId] = bulkRollbackAppliedPlan($apiPdo);
+	$apiRollbackChecksum = (string)$apiService->PreviewRollback($apiPlanId)['checksum'];
+	bulkInstallDatabase($apiPdo);
+	$controller = (new ReflectionClass(GrocyAI\Controllers\Api\GrocyAiApiController::class))->newInstanceWithoutConstructor();
+
+	// Test 1: the preview endpoint enforces MASTER_DATA_EDIT before any read and is zero-write.
+	$apiPdo->exec("DELETE FROM user_permissions_resolved WHERE permission_name = 'MASTER_DATA_EDIT'");
+	$permBefore = bulkRollbackStateSnapshot($apiPdo);
+	try
+	{
+		$controller->BulkPlanRollbackPreview(bulkSelectionRequest('GET', '/x'), bulkSelectionResponse(), ['planId' => (string)$apiPlanId]);
+		bulkAssert(false, BULK_ROLLBACK_MARKER, 'BulkPlanRollbackPreview did not enforce MASTER_DATA_EDIT');
+	}
+	catch (Grocy\Controllers\Users\PermissionMissingException)
+	{
+	}
+	bulkAssert($permBefore['total_changes'] === (int)$apiPdo->query('SELECT total_changes()')->fetchColumn(), BULK_ROLLBACK_MARKER, 'An unauthorized rollback preview issued a write');
+	$apiPdo->exec("INSERT INTO user_permissions_resolved (id, user_id, permission_name) VALUES (1, 1, 'MASTER_DATA_EDIT')");
+
+	$previewResponse = $controller->BulkPlanRollbackPreview(bulkSelectionRequest('GET', '/x'), bulkSelectionResponse(), ['planId' => (string)$apiPlanId]);
+	bulkAssert($previewResponse->getStatusCode() === 200, BULK_ROLLBACK_MARKER, 'An authorized rollback preview did not return 200');
+	$previewBody = bulkSelectionBody($previewResponse);
+	bulkAssert(array_keys($previewBody) === ['plan_id', 'plan_checksum', 'checksum', 'items', 'reversible', 'refused'] && count($previewBody['reversible']) === 2, BULK_ROLLBACK_MARKER, 'The preview endpoint did not return the closed reversible/refused breakdown');
+	$previewMissing = $controller->BulkPlanRollbackPreview(bulkSelectionRequest('GET', '/x'), bulkSelectionResponse(), ['planId' => '987654321']);
+	bulkAssert($previewMissing->getStatusCode() === 404, BULK_ROLLBACK_MARKER, 'An unknown plan id did not return 404 from the rollback preview');
+
+	// Test 2: the rollback endpoint enforces MASTER_DATA_EDIT before any write.
+	$apiPdo->exec("DELETE FROM user_permissions_resolved WHERE permission_name = 'MASTER_DATA_EDIT'");
+	$execPermBefore = bulkRollbackStateSnapshot($apiPdo);
+	try
+	{
+		$controller->BulkPlanRollback(bulkSelectionRequest('POST', '/x', ['checksum' => $apiRollbackChecksum]), bulkSelectionResponse(), ['planId' => (string)$apiPlanId]);
+		bulkAssert(false, BULK_ROLLBACK_MARKER, 'BulkPlanRollback did not enforce MASTER_DATA_EDIT');
+	}
+	catch (Grocy\Controllers\Users\PermissionMissingException)
+	{
+	}
+	$execPermAfter = bulkRollbackStateSnapshot($apiPdo);
+	bulkAssert($execPermBefore['rows'] === $execPermAfter['rows'] && $execPermBefore['total_changes'] === $execPermAfter['total_changes'], BULK_ROLLBACK_MARKER, 'An unauthorized rollback issued a write');
+	$apiPdo->exec("INSERT INTO user_permissions_resolved (id, user_id, permission_name) VALUES (1, 1, 'MASTER_DATA_EDIT')");
+
+	// Test 2 (cont.): only the closed confirmation body is accepted; an item list/value/SQL is a bounded 400.
+	$badBodies = [
+		['checksum' => $apiRollbackChecksum, 'entity' => 'products'],
+		['items' => [['object_id' => 1, 'leaf_slug' => 'produce']]],
+		['object_id' => 1, 'value' => 'produce'],
+		['checksum' => 'not-a-sha256'],
+		['checksum' => 123],
+		['sql' => 'DROP TABLE products']
+	];
+	foreach ($badBodies as $bad)
+	{
+		$before = bulkRollbackStateSnapshot($apiPdo);
+		$badResponse = $controller->BulkPlanRollback(bulkSelectionRequest('POST', '/x', $bad), bulkSelectionResponse(), ['planId' => (string)$apiPlanId]);
+		bulkAssert($badResponse->getStatusCode() === 400, BULK_ROLLBACK_MARKER, 'A non-closed rollback body was not rejected with 400');
+		bulkAssert(bulkSelectionBody($badResponse) === ['error_message' => 'Invalid rollback request'], BULK_ROLLBACK_MARKER, 'A rejected rollback body did not return the bounded error');
+		$after = bulkRollbackStateSnapshot($apiPdo);
+		bulkAssert($before['rows'] === $after['rows'] && $before['total_changes'] === $after['total_changes'], BULK_ROLLBACK_MARKER, 'A rejected rollback body issued a write');
+	}
+
+	// Test 2 (cont.): a valid rollback delegates with the session actor and returns the rolled_back outcome.
+	$okResponse = $controller->BulkPlanRollback(bulkSelectionRequest('POST', '/x', ['checksum' => $apiRollbackChecksum]), bulkSelectionResponse(), ['planId' => (string)$apiPlanId]);
+	bulkAssert($okResponse->getStatusCode() === 200, BULK_ROLLBACK_MARKER, 'A valid rollback did not return 200');
+	$okBody = bulkSelectionBody($okResponse);
+	bulkAssert(array_keys($okBody) === $expectedResultKeys, BULK_ROLLBACK_MARKER, 'The rollback endpoint response is not the closed outcome shape');
+	bulkAssert($okBody['status'] === 'rolled_back' && $okBody['outcomes'] === ['rolled_back' => 2, 'conflict' => 0, 'skipped' => 0], BULK_ROLLBACK_MARKER, 'The rollback endpoint did not report the rolled_back outcome');
+	bulkAssert($okBody['actor'] === (string)GROCY_USER_ID, BULK_ROLLBACK_MARKER, 'The rollback endpoint did not record the authenticated session user as actor');
+	bulkAssert(bulkApplyCurrentLeaf($apiPdo, 1) === null && bulkApplyCurrentLeaf($apiPdo, 2) === null, BULK_ROLLBACK_MARKER, 'The endpoint rollback did not restore the before-images');
+
+	// Test 2 (cont.): re-running via the endpoint is idempotent (zero new writes) with a bounded outcome.
+	$reBefore = bulkRollbackStateSnapshot($apiPdo);
+	$reResponse = $controller->BulkPlanRollback(bulkSelectionRequest('POST', '/x', ['checksum' => $apiRollbackChecksum]), bulkSelectionResponse(), ['planId' => (string)$apiPlanId]);
+	$reAfter = bulkRollbackStateSnapshot($apiPdo);
+	bulkAssert($reResponse->getStatusCode() === 200, BULK_ROLLBACK_MARKER, 'An idempotent re-rollback did not return 200');
+	bulkAssert(bulkSelectionBody($reResponse)['outcomes'] === ['rolled_back' => 0, 'conflict' => 0, 'skipped' => 2], BULK_ROLLBACK_MARKER, 'An idempotent re-rollback via the endpoint did not skip both reversed items');
+	bulkAssert($reBefore['rows'] === $reAfter['rows'] && $reBefore['total_changes'] === $reAfter['total_changes'], BULK_ROLLBACK_MARKER, 'An idempotent re-rollback via the endpoint issued a write');
+
+	// Test 2 (cont.): a confirmed checksum mismatch is a bounded 409 with no partial write; unknown plan → 404.
+	$mmPdo = bulkGenerationPdo();
+	$mmPdo->exec('CREATE TABLE user_permissions_resolved (id INTEGER NOT NULL PRIMARY KEY, user_id INTEGER NOT NULL, permission_name TEXT NOT NULL)');
+	$mmPdo->exec("INSERT INTO user_permissions_resolved (id, user_id, permission_name) VALUES (1, 1, 'MASTER_DATA_EDIT')");
+	[, $mmPlanId] = bulkRollbackAppliedPlan($mmPdo);
+	bulkInstallDatabase($mmPdo);
+	$mmBefore = bulkRollbackStateSnapshot($mmPdo);
+	$mmResponse = $controller->BulkPlanRollback(bulkSelectionRequest('POST', '/x', ['checksum' => str_repeat('b', 64)]), bulkSelectionResponse(), ['planId' => (string)$mmPlanId]);
+	$mmAfter = bulkRollbackStateSnapshot($mmPdo);
+	bulkAssert($mmResponse->getStatusCode() === 409, BULK_ROLLBACK_MARKER, 'A confirmed-checksum mismatch did not return the bounded 409 engine outcome');
+	bulkAssert(bulkSelectionBody($mmResponse)['blockers'] === ['plan_checksum_mismatch'], BULK_ROLLBACK_MARKER, 'A confirmed-checksum mismatch did not return the bounded engine blocker');
+	bulkAssert($mmBefore['rows'] === $mmAfter['rows'], BULK_ROLLBACK_MARKER, 'A checksum-mismatch rollback issued a partial write');
+	bulkAssert(bulkApplyCurrentLeaf($mmPdo, 1) === 'produce', BULK_ROLLBACK_MARKER, 'A checksum-mismatch rollback reverted a classification');
+	$missingExec = $controller->BulkPlanRollback(bulkSelectionRequest('POST', '/x', ['checksum' => str_repeat('c', 64)]), bulkSelectionResponse(), ['planId' => '987654321']);
+	bulkAssert($missingExec->getStatusCode() === 404, BULK_ROLLBACK_MARKER, 'An unknown plan id did not return 404 from the rollback execute');
+
+	fwrite(STDOUT, "Bulk rollback tests passed\n");
 	exit(0);
 }

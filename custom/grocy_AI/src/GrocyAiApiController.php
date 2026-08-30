@@ -553,6 +553,98 @@ class GrocyAiApiController extends BaseApiController
 		}
 	}
 
+	/**
+	 * Zero-write rollback preview (D-11/D-13). MASTER_DATA_EDIT-gated read: the permission is checked before
+	 * any read, then `PreviewRollback` returns the audit-derived reversible/refused breakdown without any
+	 * write. An unknown plan id returns a bounded 404; a non-integer id a bounded 400.
+	 */
+	public function BulkPlanRollbackPreview(Request $request, Response $response, array $args): Response
+	{
+		User::CheckPermission($request, User::PERMISSION_MASTER_DATA_EDIT);
+		$planId = $args['planId'] ?? null;
+		if (!is_string($planId) || preg_match('/^[1-9][0-9]{0,9}$/D', $planId) !== 1)
+		{
+			return $this->GenericErrorResponse($response, 'Invalid plan', 400);
+		}
+
+		try
+		{
+			$service = new GrocyAiBulkService(DatabaseService::GetInstance()->GetDbConnectionRaw(), false);
+			return $this->ApiResponse($response, $service->PreviewRollback((int)$planId));
+		}
+		catch (\InvalidArgumentException)
+		{
+			return $this->GenericErrorResponse($response, 'Invalid plan', 400);
+		}
+		catch (\RuntimeException)
+		{
+			return $this->GenericErrorResponse($response, 'Plan unavailable', 404);
+		}
+	}
+
+	/**
+	 * Execute a guarded rollback (D-11/D-13): an authenticated, MASTER_DATA_EDIT-gated, audited durable
+	 * action. The permission is checked before any write. The body is the closed, optional confirmation
+	 * `{ "checksum": "<sha256>" }` only — any extra key (an item list, an entity/field/value, or SQL) or a
+	 * non-64-hex value is a bounded 400, so no free-form target and no per-item value can reach the engine.
+	 * The authenticated session user (`GROCY_USER_ID`) is resolved as the actor and threaded to
+	 * `RollbackPlan`, which reuses the single-transaction, optimistic-concurrency, idempotent, append-only
+	 * forward-apply path and returns a bounded outcome (never a partial write) — a refusal or a rolled-back
+	 * transaction maps to 409.
+	 */
+	public function BulkPlanRollback(Request $request, Response $response, array $args): Response
+	{
+		User::CheckPermission($request, User::PERMISSION_MASTER_DATA_EDIT);
+		$planId = $args['planId'] ?? null;
+		if (!is_string($planId) || preg_match('/^[1-9][0-9]{0,9}$/D', $planId) !== 1)
+		{
+			return $this->GenericErrorResponse($response, 'Invalid rollback request', 400);
+		}
+
+		$body = $request->getParsedBody() ?? [];
+		if (!is_array($body))
+		{
+			return $this->GenericErrorResponse($response, 'Invalid rollback request', 400);
+		}
+		// Closed candidate-key set: only the optional reviewed 64-hex checksum. Any other key makes the
+		// intersected candidate differ from the raw body and is refused before the engine.
+		$candidate = array_intersect_key($body, array_flip(['checksum']));
+		if ($candidate !== $body)
+		{
+			return $this->GenericErrorResponse($response, 'Invalid rollback request', 400);
+		}
+		$confirmedChecksum = null;
+		if (array_key_exists('checksum', $candidate))
+		{
+			if (!is_string($candidate['checksum']) || preg_match('/^[0-9a-f]{64}$/D', $candidate['checksum']) !== 1)
+			{
+				return $this->GenericErrorResponse($response, 'Invalid rollback request', 400);
+			}
+			$confirmedChecksum = $candidate['checksum'];
+		}
+
+		try
+		{
+			$service = new GrocyAiBulkService(DatabaseService::GetInstance()->GetDbConnectionRaw(), false);
+			$result = $service->RollbackPlan((int)$planId, (string)GROCY_USER_ID, $confirmedChecksum);
+			// The engine returns a bounded outcome; a refusal or a rolled-back transaction maps to 409,
+			// never a partial write.
+			if ($result['blockers'] !== [])
+			{
+				return $this->ApiResponse($response->withStatus(409), $result);
+			}
+			return $this->ApiResponse($response, $result);
+		}
+		catch (\InvalidArgumentException)
+		{
+			return $this->GenericErrorResponse($response, 'Invalid rollback request', 400);
+		}
+		catch (\RuntimeException)
+		{
+			return $this->GenericErrorResponse($response, 'Plan unavailable', 404);
+		}
+	}
+
 	private static function CountScopeInspectionDto(): array
 	{
 		return [
