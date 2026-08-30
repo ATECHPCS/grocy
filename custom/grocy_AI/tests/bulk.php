@@ -1921,3 +1921,275 @@ function runBulkRollback(): never
 	fwrite(STDOUT, "Bulk rollback tests passed\n");
 	exit(0);
 }
+
+const BULK_EXPORT_MARKER = 'EXPECTED_RED: bulk.export';
+
+/**
+ * A full persistent-state snapshot (native + resolved-cache + module taxonomy + the three bulk tables)
+ * plus `total_changes()`, for proving the export is a byte-identical zero-write read.
+ */
+function bulkExportStateSnapshot(PDO $pdo): array
+{
+	$tables = ['products', 'product_groups', 'quantity_unit_conversions', 'cache__quantity_unit_conversions_resolved', 'grocy_ai_taxonomy_classifications', 'grocy_ai_taxonomy_evidence', 'grocy_ai_bulk_plans', 'grocy_ai_bulk_plan_items', 'grocy_ai_bulk_audit'];
+	return [
+		'rows' => bulkSnapshotTables($pdo, $tables),
+		'schema' => $pdo->query("SELECT type, name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name")->fetchAll(PDO::FETCH_ASSOC),
+		'total_changes' => (int)$pdo->query('SELECT total_changes()')->fetchColumn()
+	];
+}
+
+/** Index an export items list (JSON or CSV-derived) by its object_id. */
+function bulkExportByObject(array $items, string $idKey = 'object_id'): array
+{
+	$byId = [];
+	foreach ($items as $item)
+	{
+		$byId[(int)$item[$idKey]] = $item;
+	}
+	return $byId;
+}
+
+/**
+ * Plan 05-10: a redacted, explicitly non-authoritative JSON and CSV snapshot of a plan/preview for
+ * independent human review and recovery evidence (D-12/BULK-10). Proves both formats emit ONLY the
+ * closed allowlisted fields; injected secrets/tokens/media handles/session ids/prices/stock never
+ * appear in either; the non-authoritative / no-re-import marker is present; there is no import-as-
+ * authority path; export is a permission-checked zero-write read.
+ */
+function runBulkExport(): never
+{
+	if (!class_exists(GrocyAiBulkService::class) || !method_exists(GrocyAiBulkService::class, 'ExportPlan'))
+	{
+		expectedRed(BULK_EXPORT_MARKER, 'ExportPlan is not implemented');
+	}
+
+	$expectedEnvelopeKeys = ['snapshot_version', 'authoritative', 'reimport_supported', 'non_authoritative_note', 'plan', 'items'];
+	$expectedPlanKeys = ['plan_checksum', 'operation_type', 'ruleset_version', 'generated_at', 'module_version', 'counts'];
+	$expectedCountKeys = ['included', 'excluded', 'skipped', 'conflicted', 'changed', 'unchanged'];
+	$expectedItemFields = GrocyAiBulkService::EXPORT_ITEM_FIELDS;
+
+	// ---- Part A: JSON + CSV shape/values over the closed allowlist, plus escaping and zero-write -------
+	$pdo = bulkGenerationPdo();
+	$service = new GrocyAiBulkService($pdo);
+	bulkSeedGenerationFixture($pdo, $service);
+	$generated = $service->GeneratePlan([]);
+	$planId = (int)$generated['id'];
+	$checksum = (string)$generated['checksum'];
+
+	// A hostile product name proves CSV quoting/escaping and JSON verbatim carry-through.
+	$hostileName = 'Weird, "name"';
+	$pdo->prepare('UPDATE products SET name = ? WHERE id = 1')->execute([$hostileName]);
+
+	// Test 1: the JSON envelope carries the fixed metadata header, the closed counts, the closed item
+	// allowlist, and the explicit non-authoritative / no-re-import marker.
+	$json = $service->ExportPlan($planId, 'json');
+	bulkAssert(is_array($json) && array_keys($json) === $expectedEnvelopeKeys, BULK_EXPORT_MARKER, 'The JSON export envelope is outside the closed shape');
+	bulkAssert($json['authoritative'] === false && $json['reimport_supported'] === false, BULK_EXPORT_MARKER, 'The JSON export is not marked non-authoritative / no-re-import');
+	bulkAssert(is_string($json['non_authoritative_note']) && str_contains($json['non_authoritative_note'], 'V2-03') && stripos($json['non_authoritative_note'], 'authoritative') !== false, BULK_EXPORT_MARKER, 'The JSON export lacks a human-readable non-authoritative note referencing the deferred re-import');
+	bulkAssert(array_keys($json['plan']) === $expectedPlanKeys, BULK_EXPORT_MARKER, 'The JSON export plan header is outside the closed metadata shape');
+	bulkAssert((string)$json['plan']['plan_checksum'] === $checksum, BULK_EXPORT_MARKER, 'The JSON export does not bind to the plan checksum');
+	bulkAssert((string)$json['plan']['ruleset_version'] === 'v1' && (string)$json['plan']['operation_type'] === 'taxonomy_assignment', BULK_EXPORT_MARKER, 'The JSON export plan metadata is wrong');
+	bulkAssert(array_keys($json['plan']['counts']) === $expectedCountKeys, BULK_EXPORT_MARKER, 'The JSON export counts are outside the closed count set');
+	bulkAssert($json['plan']['counts'] === ['included' => 2, 'excluded' => 1, 'skipped' => 3, 'conflicted' => 0, 'changed' => 1, 'unchanged' => 1], BULK_EXPORT_MARKER, 'The JSON export counts do not match the fixture');
+	bulkAssert(count($json['items']) === 2, BULK_EXPORT_MARKER, 'The JSON export did not carry one row per plan item');
+	foreach ($json['items'] as $item)
+	{
+		bulkAssert(array_keys($item) === $expectedItemFields, BULK_EXPORT_MARKER, 'A JSON export item is outside the closed allowlist / order');
+	}
+	$jsonByObject = bulkExportByObject($json['items']);
+	bulkAssert($jsonByObject[1]['product_name'] === $hostileName, BULK_EXPORT_MARKER, 'The JSON export did not carry the product name verbatim');
+	bulkAssert($jsonByObject[1]['before_value'] === null && $jsonByObject[1]['proposed_or_after_value'] === 'produce', BULK_EXPORT_MARKER, 'P1 before/proposed values are wrong in the JSON export');
+	bulkAssert($jsonByObject[1]['selection_state'] === 'selected' && $jsonByObject[1]['outcome'] === 'pending' && $jsonByObject[1]['operation'] === 'assign_taxonomy_leaf', BULK_EXPORT_MARKER, 'P1 selection/outcome/operation are wrong in the JSON export');
+	bulkAssert($jsonByObject[2]['product_name'] === 'P2' && $jsonByObject[2]['before_value'] === 'dairy-eggs' && $jsonByObject[2]['proposed_or_after_value'] === 'dairy-eggs' && $jsonByObject[2]['selection_state'] === 'not_selected', BULK_EXPORT_MARKER, 'P2 fields are wrong in the JSON export');
+	bulkAssert($jsonByObject[1]['plan_checksum'] === $checksum && $jsonByObject[1]['ruleset_version'] === 'v1', BULK_EXPORT_MARKER, 'A JSON export item is not bound to the plan checksum/ruleset');
+
+	// Test 2: the CSV export uses the same closed column set, a non-authoritative comment header, and
+	// correct RFC 4180 quoting/escaping.
+	$csv = $service->ExportPlan($planId, 'csv');
+	bulkAssert(is_string($csv), BULK_EXPORT_MARKER, 'The CSV export did not return a string');
+	$csvLines = explode("\r\n", rtrim($csv, "\r\n"));
+	bulkAssert(count($csvLines) === 7, BULK_EXPORT_MARKER, 'The CSV export did not produce 4 comment rows + header + 2 data rows');
+	bulkAssert(str_starts_with($csvLines[0], '# NON-AUTHORITATIVE') && str_contains($csvLines[0], 'V2-03'), BULK_EXPORT_MARKER, 'The CSV export lacks the leading non-authoritative marker comment');
+	bulkAssert(str_contains($csvLines[1], 'authoritative=false') && str_contains($csvLines[1], 'reimport_supported=false'), BULK_EXPORT_MARKER, 'The CSV export lacks the non-authoritative metadata comment');
+	bulkAssert(str_contains($csvLines[2], 'plan_checksum=' . $checksum), BULK_EXPORT_MARKER, 'The CSV export metadata does not bind to the plan checksum');
+	$expectedHeader = implode(',', array_map(static fn(string $field): string => '"' . $field . '"', $expectedItemFields));
+	bulkAssert($csvLines[4] === $expectedHeader, BULK_EXPORT_MARKER, 'The CSV header row is not the closed column set');
+	// The hostile product name is escaped (quotes doubled) and never breaks the row shape.
+	bulkAssert(str_contains($csvLines[5], '"Weird, ""name"""'), BULK_EXPORT_MARKER, 'The CSV export did not RFC-4180-escape the hostile product name');
+	// Every data row parses back to exactly the 12 allowlisted columns.
+	foreach ([$csvLines[5], $csvLines[6]] as $dataLine)
+	{
+		bulkAssert(str_getcsv($dataLine) !== null && count(str_getcsv($dataLine)) === count($expectedItemFields), BULK_EXPORT_MARKER, 'A CSV data row does not carry exactly the closed column count');
+	}
+
+	// Test 4: export is a provable zero-write read (schema + rows + total_changes byte-identical).
+	$before = bulkExportStateSnapshot($pdo);
+	$service->ExportPlan($planId, 'json');
+	$service->ExportPlan($planId, 'csv');
+	$after = bulkExportStateSnapshot($pdo);
+	bulkAssert($before['schema'] === $after['schema'], BULK_EXPORT_MARKER, 'Export created, altered, or dropped a database object');
+	bulkAssert($before['rows'] === $after['rows'], BULK_EXPORT_MARKER, 'Export mutated a persistent table');
+	bulkAssert($before['total_changes'] === $after['total_changes'], BULK_EXPORT_MARKER, 'Export issued a row change');
+
+	// Test 4: an unsupported format is rejected with a bounded error and no write.
+	$fmtBefore = bulkExportStateSnapshot($pdo);
+	try
+	{
+		$service->ExportPlan($planId, 'xml');
+		bulkAssert(false, BULK_EXPORT_MARKER, 'An unsupported export format was accepted');
+	}
+	catch (InvalidArgumentException)
+	{
+	}
+	bulkAssert($fmtBefore['total_changes'] === (int)$pdo->query('SELECT total_changes()')->fetchColumn(), BULK_EXPORT_MARKER, 'An unsupported-format export issued a write');
+
+	// Test 4: an unknown plan id fails closed with no write.
+	$unknownBefore = bulkExportStateSnapshot($pdo);
+	try
+	{
+		$service->ExportPlan(987654321, 'json');
+		bulkAssert(false, BULK_EXPORT_MARKER, 'An unknown plan id was accepted for export');
+	}
+	catch (RuntimeException)
+	{
+	}
+	bulkAssert($unknownBefore['total_changes'] === (int)$pdo->query('SELECT total_changes()')->fetchColumn(), BULK_EXPORT_MARKER, 'An unknown-plan export issued a write');
+
+	// ---- Part B: injected secrets/tokens/media/session/price/stock are ABSENT from both formats -------
+	$injPdo = bulkGenerationPdo();
+	$injService = new GrocyAiBulkService($injPdo);
+	bulkSeedApplyFixture($injPdo);
+	$injGen = $injService->GeneratePlan(['actor' => 'previewer-1']);
+	$injPlanId = (int)$injGen['id'];
+	// Apply so the plan carries audit rows and applied outcomes — the "when applied" export path.
+	$injService->ApplyPlan($injPlanId, 'session-actor-42', (string)$injGen['checksum']);
+
+	// Inject non-allowlisted secret/token/media/session/household columns across every source table a
+	// naive exporter might dump. A closed default-deny projection must drop them all.
+	$injPdo->exec('ALTER TABLE grocy_ai_bulk_plans ADD COLUMN service_secret TEXT');
+	$injPdo->exec("UPDATE grocy_ai_bulk_plans SET service_secret = 'SVCSECRET_CANARY' WHERE id = " . $injPlanId);
+	$injPdo->exec('ALTER TABLE grocy_ai_bulk_plan_items ADD COLUMN companion_api_key TEXT');
+	$injPdo->exec('ALTER TABLE grocy_ai_bulk_plan_items ADD COLUMN media_handle TEXT');
+	$injPdo->exec("UPDATE grocy_ai_bulk_plan_items SET companion_api_key = 'APIKEY_CANARY', media_handle = 'MEDIAHANDLE_CANARY' WHERE plan_id = " . $injPlanId);
+	$injPdo->exec('ALTER TABLE grocy_ai_bulk_audit ADD COLUMN session_id TEXT');
+	$injPdo->exec("UPDATE grocy_ai_bulk_audit SET session_id = 'SESSION_CANARY' WHERE plan_id = " . $injPlanId);
+	$injPdo->exec('ALTER TABLE products ADD COLUMN purchase_price TEXT');
+	$injPdo->exec('ALTER TABLE products ADD COLUMN stock_level TEXT');
+	$injPdo->exec('ALTER TABLE products ADD COLUMN location_name TEXT');
+	$injPdo->exec('ALTER TABLE products ADD COLUMN api_key TEXT');
+	$injPdo->exec('ALTER TABLE products ADD COLUMN image_handle TEXT');
+	$injPdo->exec("UPDATE products SET purchase_price = 'PRICE_CANARY_1299', stock_level = 'STOCK_CANARY_42', location_name = 'LOCATION_CANARY', api_key = 'PRODKEY_CANARY', image_handle = 'IMGHANDLE_CANARY' WHERE id IN (1, 2)");
+
+	$canaries = ['SVCSECRET_CANARY', 'APIKEY_CANARY', 'MEDIAHANDLE_CANARY', 'SESSION_CANARY', 'PRICE_CANARY_1299', 'STOCK_CANARY_42', 'LOCATION_CANARY', 'PRODKEY_CANARY', 'IMGHANDLE_CANARY'];
+
+	$injJson = $injService->ExportPlan($injPlanId, 'json');
+	$injJsonSerialized = json_encode($injJson, JSON_THROW_ON_ERROR);
+	$injCsv = $injService->ExportPlan($injPlanId, 'csv');
+	foreach ($canaries as $canary)
+	{
+		bulkAssert(!str_contains($injJsonSerialized, $canary), BULK_EXPORT_MARKER, "The JSON export leaked the redacted value {$canary}");
+		bulkAssert(!str_contains($injCsv, $canary), BULK_EXPORT_MARKER, "The CSV export leaked the redacted value {$canary}");
+	}
+	// The allowlisted, reviewed content is still present (proving redaction is not vacuous): product
+	// name, checksum, the reviewed leaf values, and the non-authoritative marker.
+	$injByObject = bulkExportByObject($injJson['items']);
+	bulkAssert($injByObject[1]['product_name'] === 'P1' && $injByObject[1]['proposed_or_after_value'] === 'produce' && $injByObject[1]['outcome'] === 'applied', BULK_EXPORT_MARKER, 'The applied-plan JSON export dropped allowlisted reviewed content');
+	bulkAssert(str_contains($injCsv, '"P1"') && str_contains($injCsv, '"produce"') && str_contains($injCsv, (string)$injGen['checksum']), BULK_EXPORT_MARKER, 'The applied-plan CSV export dropped allowlisted reviewed content');
+	bulkAssert($injJson['authoritative'] === false && str_contains($injCsv, 'NON-AUTHORITATIVE'), BULK_EXPORT_MARKER, 'The applied-plan export dropped the non-authoritative marker');
+
+	// ---- Part C: no import-as-authority path exists, and the export methods are read-only -------------
+	bulkAssert(!method_exists(GrocyAiBulkService::class, 'ImportPlan') && !method_exists(GrocyAiBulkService::class, 'ImportSnapshot'), BULK_EXPORT_MARKER, 'The bulk service exposes a snapshot re-import method (re-import is deferred to V2-03)');
+	$serviceSrc = (string)file_get_contents(__DIR__ . '/../src/GrocyAiBulkService.php');
+	$exportStart = strpos($serviceSrc, 'public function ExportPlan');
+	$exportEnd = strpos($serviceSrc, 'private function ExportItemRow');
+	bulkAssert($exportStart !== false && $exportEnd !== false && $exportStart < $exportEnd, BULK_EXPORT_MARKER, 'The ExportPlan method could not be isolated');
+	$exportBody = substr($serviceSrc, $exportStart, $exportEnd - $exportStart);
+	foreach (['INSERT', 'UPDATE', 'DELETE', 'REPLACE', 'BEGIN IMMEDIATE'] as $writeToken)
+	{
+		bulkAssert(!str_contains($exportBody, $writeToken), BULK_EXPORT_MARKER, "ExportPlan contains the write token {$writeToken}");
+	}
+
+	// ---- Part D: the MASTER_DATA_EDIT-gated read endpoint, content types, and bounded errors ----------
+	bulkSelectionRuntime();
+	bulkAssert(method_exists(GrocyAI\Controllers\Api\GrocyAiApiController::class, 'ExportBulkPlan'), BULK_EXPORT_MARKER, 'The export controller method is not implemented');
+	bulkAssert(!method_exists(GrocyAI\Controllers\Api\GrocyAiApiController::class, 'ImportBulkPlan'), BULK_EXPORT_MARKER, 'The controller exposes a snapshot import endpoint (re-import is deferred to V2-03)');
+	// The export controller method consumes NO request body — it is a GET-shaped read only.
+	$controllerSrc = (string)file_get_contents(__DIR__ . '/../src/GrocyAiApiController.php');
+	$ctrlStart = strpos($controllerSrc, 'public function ExportBulkPlan');
+	$ctrlEnd = strpos($controllerSrc, 'private static function CountScopeInspectionDto');
+	bulkAssert($ctrlStart !== false && $ctrlEnd !== false && $ctrlStart < $ctrlEnd, BULK_EXPORT_MARKER, 'The ExportBulkPlan controller method could not be isolated');
+	$ctrlBody = substr($controllerSrc, $ctrlStart, $ctrlEnd - $ctrlStart);
+	bulkAssert(!str_contains($ctrlBody, 'getParsedBody'), BULK_EXPORT_MARKER, 'The export endpoint reads a request body (it must be a read-only export, never a re-import)');
+
+	$apiPdo = bulkGenerationPdo();
+	$apiPdo->exec('CREATE TABLE user_permissions_resolved (id INTEGER NOT NULL PRIMARY KEY, user_id INTEGER NOT NULL, permission_name TEXT NOT NULL)');
+	$apiPdo->exec("INSERT INTO user_permissions_resolved (id, user_id, permission_name) VALUES (1, 1, 'MASTER_DATA_EDIT')");
+	$apiService = new GrocyAiBulkService($apiPdo);
+	bulkSeedGenerationFixture($apiPdo, $apiService);
+	$apiPlanId = (int)$apiService->GeneratePlan([])['id'];
+	bulkInstallDatabase($apiPdo);
+	$controller = (new ReflectionClass(GrocyAI\Controllers\Api\GrocyAiApiController::class))->newInstanceWithoutConstructor();
+
+	// Test 1: the permission is enforced before any read, and the rejected call writes nothing.
+	$apiPdo->exec("DELETE FROM user_permissions_resolved WHERE permission_name = 'MASTER_DATA_EDIT'");
+	$permBefore = bulkExportStateSnapshot($apiPdo);
+	try
+	{
+		$controller->ExportBulkPlan(bulkSelectionRequest('GET', '/x'), bulkSelectionResponse(), ['planId' => (string)$apiPlanId]);
+		bulkAssert(false, BULK_EXPORT_MARKER, 'ExportBulkPlan did not enforce MASTER_DATA_EDIT');
+	}
+	catch (Grocy\Controllers\Users\PermissionMissingException)
+	{
+	}
+	bulkAssert($permBefore['total_changes'] === (int)$apiPdo->query('SELECT total_changes()')->fetchColumn(), BULK_EXPORT_MARKER, 'An unauthorized export issued a write');
+	$apiPdo->exec("INSERT INTO user_permissions_resolved (id, user_id, permission_name) VALUES (1, 1, 'MASTER_DATA_EDIT')");
+
+	// Test 1: an authorized JSON export returns the redacted snapshot as a non-authoritative download.
+	$jsonResponse = $controller->ExportBulkPlan(bulkSelectionRequest('GET', '/x'), bulkSelectionResponse(), ['planId' => (string)$apiPlanId]);
+	bulkAssert($jsonResponse->getStatusCode() === 200, BULK_EXPORT_MARKER, 'A valid JSON export did not return 200');
+	bulkAssert(str_contains($jsonResponse->getHeaderLine('Content-Type'), 'application/json'), BULK_EXPORT_MARKER, 'The JSON export did not use a JSON content type');
+	bulkAssert(str_contains($jsonResponse->getHeaderLine('Content-Disposition'), 'non-authoritative.json'), BULK_EXPORT_MARKER, 'The JSON export was not offered as a non-authoritative download');
+	$jsonBody = bulkSelectionBody($jsonResponse);
+	bulkAssert(array_keys($jsonBody) === $expectedEnvelopeKeys && $jsonBody['authoritative'] === false, BULK_EXPORT_MARKER, 'The JSON export endpoint body is not the closed non-authoritative snapshot');
+
+	// Test 1: an authorized CSV export returns a text/csv download carrying the marker + header row.
+	$csvRequest = bulkSelectionRequest('GET', '/x')->withQueryParams(['format' => 'csv']);
+	$csvResponse = $controller->ExportBulkPlan($csvRequest, bulkSelectionResponse(), ['planId' => (string)$apiPlanId]);
+	bulkAssert($csvResponse->getStatusCode() === 200, BULK_EXPORT_MARKER, 'A valid CSV export did not return 200');
+	bulkAssert($csvResponse->getHeaderLine('Content-Type') === 'text/csv; charset=utf-8', BULK_EXPORT_MARKER, 'The CSV export did not use the text/csv content type');
+	bulkAssert(str_contains($csvResponse->getHeaderLine('Content-Disposition'), 'non-authoritative.csv'), BULK_EXPORT_MARKER, 'The CSV export was not offered as a non-authoritative download');
+	$csvResponseBody = (string)$csvResponse->getBody();
+	bulkAssert(str_contains($csvResponseBody, 'NON-AUTHORITATIVE') && str_contains($csvResponseBody, $expectedHeader), BULK_EXPORT_MARKER, 'The CSV export endpoint body is not the marked, closed-column snapshot');
+
+	// Test 2: an unsupported format and a non-integer plan id are each a bounded 400 with no write.
+	$badFormatRequest = bulkSelectionRequest('GET', '/x')->withQueryParams(['format' => 'pdf']);
+	$badFmtBefore = bulkExportStateSnapshot($apiPdo);
+	$badFormatResponse = $controller->ExportBulkPlan($badFormatRequest, bulkSelectionResponse(), ['planId' => (string)$apiPlanId]);
+	bulkAssert($badFormatResponse->getStatusCode() === 400, BULK_EXPORT_MARKER, 'An unsupported export format was not rejected with 400');
+	bulkAssert(bulkSelectionBody($badFormatResponse) === ['error_message' => 'Invalid export request'], BULK_EXPORT_MARKER, 'A rejected export format did not return the bounded error');
+	bulkAssert($badFmtBefore['total_changes'] === (int)$apiPdo->query('SELECT total_changes()')->fetchColumn(), BULK_EXPORT_MARKER, 'A rejected-format export issued a write');
+	$badIdResponse = $controller->ExportBulkPlan(bulkSelectionRequest('GET', '/x'), bulkSelectionResponse(), ['planId' => 'abc']);
+	bulkAssert($badIdResponse->getStatusCode() === 400, BULK_EXPORT_MARKER, 'A non-integer plan id was not rejected by the export endpoint');
+
+	// Test 2: an unknown plan id is a bounded 404.
+	$missingResponse = $controller->ExportBulkPlan(bulkSelectionRequest('GET', '/x'), bulkSelectionResponse(), ['planId' => '987654321']);
+	bulkAssert($missingResponse->getStatusCode() === 404, BULK_EXPORT_MARKER, 'An unknown plan id did not return 404 from the export endpoint');
+
+	// Test 3 / zero-write endpoint: reading the export under query_only performs no write.
+	$readBefore = bulkExportStateSnapshot($apiPdo);
+	$apiPdo->exec('PRAGMA query_only = ON');
+	try
+	{
+		$controller->ExportBulkPlan(bulkSelectionRequest('GET', '/x'), bulkSelectionResponse(), ['planId' => (string)$apiPlanId]);
+		$controller->ExportBulkPlan(bulkSelectionRequest('GET', '/x')->withQueryParams(['format' => 'csv']), bulkSelectionResponse(), ['planId' => (string)$apiPlanId]);
+	}
+	finally
+	{
+		$apiPdo->exec('PRAGMA query_only = OFF');
+	}
+	$readAfter = bulkExportStateSnapshot($apiPdo);
+	bulkAssert($readBefore['rows'] === $readAfter['rows'] && $readBefore['total_changes'] === $readAfter['total_changes'], BULK_EXPORT_MARKER, 'The export endpoint issued a write');
+
+	fwrite(STDOUT, "Bulk export tests passed\n");
+	exit(0);
+}

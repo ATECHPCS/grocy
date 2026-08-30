@@ -27,6 +27,41 @@ class GrocyAiBulkService
 
 	public const OPERATION_TYPE = 'taxonomy_assignment';
 
+	/**
+	 * The closed, default-deny export field allowlist (D-12/BULK-10). `ExportPlan` emits ONLY these
+	 * per-item fields in EXACTLY this order, in both JSON and CSV. Redaction is default-deny: the
+	 * snapshot is projected field-by-field through this constant, so a future column added to any bulk
+	 * DTO — or an unrelated native column (companion API keys, service secrets/tokens, opaque media/
+	 * image handles, session identifiers, raw actor credentials, and unrelated household detail such as
+	 * stock levels, prices, purchase/consumption history, and locations) — can never auto-leak into the
+	 * export. `object identity` is emitted as `object_type` + `object_id`; `product_name` is the object's
+	 * human-readable identity (a bounded read-only `id, name` lookup, never any other product column).
+	 */
+	public const EXPORT_ITEM_FIELDS = [
+		'plan_checksum',
+		'object_type',
+		'object_id',
+		'product_name',
+		'operation',
+		'before_value',
+		'proposed_or_after_value',
+		'reason',
+		'provenance',
+		'ruleset_version',
+		'selection_state',
+		'outcome'
+	];
+
+	/** The snapshot schema version, so a reviewer can bind the file shape to this contract. */
+	public const EXPORT_SNAPSHOT_VERSION = 1;
+
+	/**
+	 * The explicit non-authoritative marker text (D-12). The snapshot is recovery evidence for
+	 * independent human review only; it is NOT authoritative and offers NO re-import authority (re-import
+	 * after a fresh conflict check is the deferred v2 item V2-03). No controller path consumes it back.
+	 */
+	public const EXPORT_NON_AUTHORITATIVE_NOTE = 'Non-authoritative recovery snapshot for independent human review only. It is NOT authoritative and cannot be re-imported to change data (re-import is deferred to V2-03). Grocy remains the sole durable mutation authority.';
+
 	private PDO $Db;
 	private GrocyAiTaxonomyService $Taxonomy;
 
@@ -384,6 +419,202 @@ class GrocyAiBulkService
 		}
 
 		return ['plan_id' => (int)$plan['id'], 'records' => $records];
+	}
+
+	/**
+	 * Produce a redacted, explicitly non-authoritative JSON or CSV snapshot of a stored plan/preview for
+	 * independent human review and recovery evidence (D-12/BULK-10). Zero-write: it only SELECTs.
+	 *
+	 * Redaction is default-deny. Every emitted per-item field is projected through the closed
+	 * `EXPORT_ITEM_FIELDS` allowlist, the plan header is read field-by-named-field (never the raw
+	 * `SELECT *` row, so an injected header column cannot leak), the plan-item rows are read via an
+	 * EXPLICIT column list (never `SELECT *`), and product names come from a bounded read-only `id, name`
+	 * lookup (never any other product column). Companion API keys, service secrets/tokens, opaque media/
+	 * image handles, session identifiers, raw actor credentials, and unrelated household detail (stock,
+	 * prices, purchase/consumption history, locations) are therefore never emitted in either format.
+	 *
+	 * The snapshot binds to the reviewed artifact via the plan checksum + closed counts, is marked
+	 * `authoritative: false` / `reimport_supported: false` with a human-readable note, and offers NO
+	 * re-import authority — there is no import path anywhere (re-import is the deferred v2 item V2-03).
+	 *
+	 * @return array<string, mixed>|string a JSON-ready array for `json`, a CSV document string for `csv`
+	 */
+	public function ExportPlan(int|string $planId, string $format): array|string
+	{
+		// Fail closed on any format outside the two supported snapshots, before any read.
+		if ($format !== 'json' && $format !== 'csv')
+		{
+			throw new \InvalidArgumentException('unsupported_export_format');
+		}
+
+		$planIdInt = (int)$planId;
+		$plan = $this->LoadPlanHeader($planIdInt);
+
+		// Plan metadata: read ONLY named header fields — never the whole row — so an injected header
+		// column can never leak. Counts are projected onto exactly the closed count vocabulary.
+		$checksum = (string)$plan['checksum'];
+		$rulesetVersion = (string)$plan['ruleset_version'];
+		$rawCounts = json_decode((string)$plan['counts_json'], true, 512, JSON_THROW_ON_ERROR);
+		$counts = [];
+		foreach (['included', 'excluded', 'skipped', 'conflicted', 'changed', 'unchanged'] as $countKey)
+		{
+			$counts[$countKey] = (int)(is_array($rawCounts) ? ($rawCounts[$countKey] ?? 0) : 0);
+		}
+
+		// Items: an EXPLICIT column projection (default-deny) — never SELECT *. Only the columns that feed
+		// the closed allowlist are read; an injected plan-item column is never selected.
+		$statement = $this->Db->prepare('SELECT seq, object_type, object_id, operation, before_image_json, proposed_value_json, reason, provenance, selected, outcome FROM grocy_ai_bulk_plan_items WHERE plan_id = ? ORDER BY seq');
+		$statement->execute([$planIdInt]);
+		$rows = $statement->fetchAll(PDO::FETCH_ASSOC);
+
+		$productNames = $this->ExportProductNames($rows);
+
+		$items = [];
+		foreach ($rows as $row)
+		{
+			$items[] = $this->ExportItemRow($checksum, $rulesetVersion, $row, $productNames);
+		}
+
+		$snapshot = [
+			'snapshot_version' => self::EXPORT_SNAPSHOT_VERSION,
+			// The explicit non-authoritative / no-re-import marker (D-12).
+			'authoritative' => false,
+			'reimport_supported' => false,
+			'non_authoritative_note' => self::EXPORT_NON_AUTHORITATIVE_NOTE,
+			'plan' => [
+				'plan_checksum' => $checksum,
+				'operation_type' => (string)$plan['operation_type'],
+				'ruleset_version' => $rulesetVersion,
+				'generated_at' => (string)$plan['created_at'],
+				'module_version' => (string)$plan['module_version'],
+				'counts' => $counts
+			],
+			'items' => $items
+		];
+
+		return $format === 'json' ? $snapshot : $this->ExportCsv($snapshot);
+	}
+
+	/**
+	 * Project one stored plan-item row onto the closed export allowlist (D-12). The before/proposed images
+	 * are decoded to their single written field (the leaf slug / null); the proposed value is the reviewed
+	 * proposal, which for an applied item equals the value the apply wrote (its audited after-image). The
+	 * per-item outcome column carries the applied/conflict/rolled_back story, so the snapshot needs no raw
+	 * audit dump. Only allowlisted keys are ever set here.
+	 *
+	 * @param array<string, mixed> $row
+	 * @param array<int, string> $productNames
+	 * @return array<string, mixed>
+	 */
+	private function ExportItemRow(string $checksum, string $rulesetVersion, array $row, array $productNames): array
+	{
+		$before = json_decode((string)$row['before_image_json'], true, 512, JSON_THROW_ON_ERROR);
+		$proposed = json_decode((string)$row['proposed_value_json'], true, 512, JSON_THROW_ON_ERROR);
+		$objectId = (int)$row['object_id'];
+
+		return [
+			'plan_checksum' => $checksum,
+			'object_type' => (string)$row['object_type'],
+			'object_id' => $objectId,
+			'product_name' => $productNames[$objectId] ?? null,
+			'operation' => (string)$row['operation'],
+			'before_value' => is_array($before) ? ($before['leaf_slug'] ?? null) : null,
+			'proposed_or_after_value' => is_array($proposed) ? ($proposed['leaf_slug'] ?? null) : null,
+			'reason' => (string)$row['reason'],
+			'provenance' => (string)$row['provenance'],
+			'ruleset_version' => $rulesetVersion,
+			'selection_state' => (int)$row['selected'] === 1 ? 'selected' : 'not_selected',
+			'outcome' => (string)$row['outcome']
+		];
+	}
+
+	/**
+	 * The human-readable product identities for the plan's product items: a bounded, read-only lookup of
+	 * ONLY the native `id, name` columns keyed by the plan items' stored object ids. No other product
+	 * column (stock, price, purchase history, image handle, …) is ever read, so no unrelated household
+	 * detail can enter the snapshot; a since-deleted product simply yields no name. This mirrors the
+	 * direct products read `GeneratePlan` already performs and issues no write and no cache SQL.
+	 *
+	 * @param array<int, array<string, mixed>> $rows
+	 * @return array<int, string>
+	 */
+	private function ExportProductNames(array $rows): array
+	{
+		$ids = [];
+		foreach ($rows as $row)
+		{
+			if ((string)$row['object_type'] === 'product')
+			{
+				$ids[(int)$row['object_id']] = true;
+			}
+		}
+		if ($ids === [])
+		{
+			return [];
+		}
+
+		$ids = array_keys($ids);
+		$placeholders = implode(',', array_fill(0, count($ids), '?'));
+		$statement = $this->Db->prepare('SELECT id, name FROM products WHERE id IN (' . $placeholders . ')');
+		$statement->execute($ids);
+
+		$names = [];
+		foreach ($statement->fetchAll(PDO::FETCH_ASSOC) as $productRow)
+		{
+			$names[(int)$productRow['id']] = (string)$productRow['name'];
+		}
+
+		return $names;
+	}
+
+	/**
+	 * Render the snapshot as an RFC 4180 CSV document over the SAME closed column set as the JSON items,
+	 * with the non-authoritative marker + checksum-binding metadata in leading `#` comment rows. Every
+	 * field is quoted and its quotes doubled, so a comma/quote/newline in a value cannot break the shape.
+	 *
+	 * @param array<string, mixed> $snapshot
+	 */
+	private function ExportCsv(array $snapshot): string
+	{
+		$plan = $snapshot['plan'];
+		$counts = $plan['counts'];
+
+		$lines = [];
+		$lines[] = '# NON-AUTHORITATIVE RECOVERY SNAPSHOT — not re-importable (re-import is deferred to V2-03). Grocy remains the sole durable authority.';
+		$lines[] = '# authoritative=false reimport_supported=false snapshot_version=' . self::EXPORT_SNAPSHOT_VERSION;
+		$lines[] = '# plan_checksum=' . $plan['plan_checksum'] . ' operation_type=' . $plan['operation_type'] . ' ruleset_version=' . $plan['ruleset_version'] . ' generated_at=' . $plan['generated_at'] . ' module_version=' . $plan['module_version'];
+		$lines[] = '# counts included=' . $counts['included'] . ' excluded=' . $counts['excluded'] . ' skipped=' . $counts['skipped'] . ' conflicted=' . $counts['conflicted'] . ' changed=' . $counts['changed'] . ' unchanged=' . $counts['unchanged'];
+		$lines[] = $this->ExportCsvRow(self::EXPORT_ITEM_FIELDS);
+
+		foreach ($snapshot['items'] as $item)
+		{
+			$ordered = [];
+			foreach (self::EXPORT_ITEM_FIELDS as $field)
+			{
+				$value = $item[$field] ?? null;
+				$ordered[] = $value === null ? '' : (string)$value;
+			}
+			$lines[] = $this->ExportCsvRow($ordered);
+		}
+
+		return implode("\r\n", $lines) . "\r\n";
+	}
+
+	/**
+	 * Escape and join one CSV record: every field is wrapped in double quotes with embedded quotes
+	 * doubled (RFC 4180), so no value can inject a delimiter, row break, or leading `#` comment marker.
+	 *
+	 * @param array<int, string> $fields
+	 */
+	private function ExportCsvRow(array $fields): string
+	{
+		$escaped = [];
+		foreach ($fields as $field)
+		{
+			$escaped[] = '"' . str_replace('"', '""', (string)$field) . '"';
+		}
+
+		return implode(',', $escaped);
 	}
 
 	/**

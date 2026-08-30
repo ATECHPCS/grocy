@@ -645,6 +645,65 @@ class GrocyAiApiController extends BaseApiController
 		}
 	}
 
+	/**
+	 * Export a redacted, non-authoritative JSON or CSV snapshot of a stored plan (D-12/D-13). This is a
+	 * MASTER_DATA_EDIT-gated read: the permission is checked before any read, and the export writes
+	 * nothing. The `format` query param selects `json` (default) or `csv`; any other value — like a
+	 * non-integer plan id — is a bounded 400, and an unknown plan is a bounded 404. The response is a file
+	 * download marked non-authoritative in its own body/metadata. There is deliberately NO companion
+	 * endpoint that consumes an uploaded snapshot: re-import as authority stays deferred to V2-03, so this
+	 * export can never become a back-door write path.
+	 */
+	public function ExportBulkPlan(Request $request, Response $response, array $args): Response
+	{
+		User::CheckPermission($request, User::PERMISSION_MASTER_DATA_EDIT);
+		$planId = $args['planId'] ?? null;
+		if (!is_string($planId) || preg_match('/^[1-9][0-9]{0,9}$/D', $planId) !== 1)
+		{
+			return $this->GenericErrorResponse($response, 'Invalid export request', 400);
+		}
+
+		$format = $request->getQueryParams()['format'] ?? 'json';
+		if (!is_string($format) || ($format !== 'json' && $format !== 'csv'))
+		{
+			return $this->GenericErrorResponse($response, 'Invalid export request', 400);
+		}
+
+		try
+		{
+			$service = new GrocyAiBulkService(DatabaseService::GetInstance()->GetDbConnectionRaw(), false);
+			$snapshot = $service->ExportPlan((int)$planId, $format);
+			$filename = 'grocy-ai-bulk-plan-' . (int)$planId . '-non-authoritative.' . $format;
+
+			if ($format === 'csv')
+			{
+				$response->getBody()->write((string)$snapshot);
+				return $response
+					->withHeader('Cache-Control', 'private, no-store')
+					->withHeader('Content-Type', 'text/csv; charset=utf-8')
+					->withHeader('Content-Disposition', 'attachment; filename="' . $filename . '"')
+					->withHeader('X-Content-Type-Options', 'nosniff');
+			}
+
+			return $this->ApiResponse(
+				$response
+					->withHeader('Cache-Control', 'private, no-store')
+					->withHeader('Content-Type', 'application/json')
+					->withHeader('Content-Disposition', 'attachment; filename="' . $filename . '"')
+					->withHeader('X-Content-Type-Options', 'nosniff'),
+				$snapshot
+			);
+		}
+		catch (\InvalidArgumentException)
+		{
+			return $this->GenericErrorResponse($response, 'Invalid export request', 400);
+		}
+		catch (\RuntimeException)
+		{
+			return $this->GenericErrorResponse($response, 'Plan unavailable', 404);
+		}
+	}
+
 	private static function CountScopeInspectionDto(): array
 	{
 		return [

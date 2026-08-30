@@ -9,7 +9,7 @@ store, not here.
   IMMEDIATE / COMMIT / ROLLBACK counts, forbidden PDO txn tokens), slice the body between
   `public function X` and the NEXT `function` declaration and grep only that slice; never grep the whole
   file. And never write a banned keyword (UPDATE/DELETE/REPLACE/BEGIN IMMEDIATE) adjacent to the guarded
-  table/identifier name in a docblock or comment — source-grep gates match prose too. (hits: 3)
+  table/identifier name in a docblock or comment — source-grep gates match prose too. (hits: 4)
 
 ## Patterns (promote at 3 hits)
 

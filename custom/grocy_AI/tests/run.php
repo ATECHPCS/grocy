@@ -752,6 +752,12 @@ if (($argv[1] ?? null) === 'bulk-rollback')
 	runBulkRollback();
 }
 
+if (($argv[1] ?? null) === 'bulk-export')
+{
+	require_once __DIR__ . '/bulk.php';
+	runBulkExport();
+}
+
 if (($argv[1] ?? null) === '--list')
 {
 	foreach ([
