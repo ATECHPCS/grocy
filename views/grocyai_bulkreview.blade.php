@@ -26,22 +26,41 @@ $grocyAiAssetVersion = '2.5.0';
 
 <hr class="my-2">
 
-{{-- Placeholder review surface. The per-item select/reject controls and the selected-diff markup are
-     built by the UI Designer against the MASTER_DATA_EDIT-gated read endpoints. This container carries
-     only the server-owned plan id and the read endpoint base; it declares no write action. --}}
+{{-- Read-only bulk review surface. All selection state is read from and written to the
+     MASTER_DATA_EDIT-gated /api/grocy-ai/bulk/plans endpoints by bulk-review.js; this template
+     declares no POST/PUT/DELETE form action of its own. --}}
 <div class="row permission-MASTER_DATA_EDIT"
 	id="grocy-ai-bulk-review"
 	data-plan-id="{{ $planId !== null ? $planId : '' }}"
 	data-plans-endpoint="{{ $U('/api/grocy-ai/bulk/plans', true) }}">
 	<div class="col">
-		<div class="grocy-ai-bulk-summary"
-			id="grocy-ai-bulk-summary"
-			role="status"
-			aria-live="polite"></div>
-		<div class="grocy-ai-bulk-items"
-			id="grocy-ai-bulk-items"></div>
-		<div class="grocy-ai-bulk-selected-diff"
-			id="grocy-ai-bulk-selected-diff"></div>
+		<section class="grocy-ai-bulk-summary-section"
+			aria-labelledby="grocy-ai-bulk-summary-heading">
+			<h3 id="grocy-ai-bulk-summary-heading">{{ $__t('Plan summary') }}</h3>
+			<div class="grocy-ai-bulk-summary"
+				id="grocy-ai-bulk-summary"
+				role="status"
+				aria-live="polite"
+				aria-labelledby="grocy-ai-bulk-summary-heading"></div>
+		</section>
+
+		<section class="grocy-ai-bulk-items-section"
+			aria-labelledby="grocy-ai-bulk-items-heading">
+			<h3 id="grocy-ai-bulk-items-heading">{{ $__t('Plan items') }}</h3>
+			<div class="grocy-ai-bulk-items"
+				id="grocy-ai-bulk-items"
+				aria-labelledby="grocy-ai-bulk-items-heading"></div>
+		</section>
+
+		<section class="grocy-ai-bulk-diff-section"
+			aria-labelledby="grocy-ai-bulk-selected-diff-heading">
+			<h3 id="grocy-ai-bulk-selected-diff-heading">{{ $__t('Selected diff') }}</h3>
+			<div class="grocy-ai-bulk-selected-diff"
+				id="grocy-ai-bulk-selected-diff"
+				role="status"
+				aria-live="polite"
+				aria-labelledby="grocy-ai-bulk-selected-diff-heading"></div>
+		</section>
 	</div>
 </div>
 @stop
