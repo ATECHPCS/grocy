@@ -1,13 +1,13 @@
 {
   "version": "1.0",
-  "timestamp": "2026-08-28T00:00:00.000Z",
+  "timestamp": "2026-08-29T00:00:00.000Z",
   "phase": "04",
   "phase_name": "reusable-conversion-model",
   "phase_dir": ".planning/phases/04-reusable-conversion-model",
-  "plan": "04-08",
-  "task": 1,
+  "plan": "04-10",
+  "task": 2,
   "total_tasks": 20,
-  "status": "paused",
+  "status": "phase_complete",
   "completed_tasks": [
     {
       "id": 1,
@@ -56,29 +56,75 @@
       "name": "04-07 read-only conversion coverage diagnostics, page, and CLI",
       "status": "done",
       "commit": "f955563f"
-    }
-  ],
-  "remaining_tasks": [
+    },
     {
       "id": 9,
       "name": "04-08 evidence-gated activation and release parity",
-      "status": "not_started"
+      "status": "done",
+      "commit": "f8505f57"
     },
     {
       "id": 10,
       "name": "04-10 maintainer-only evidence-gated promotion command",
-      "status": "not_started"
+      "status": "done",
+      "commit": "726db0a2"
     }
   ],
+  "remaining_tasks": [],
   "blockers": [],
   "human_actions_pending": [
     {
-      "action": "Review and approve Plan 04-08 before it runs.",
-      "context": "04-08-PLAN.md is autonomous: false. It owns the sole ActivateVerifiedRuleset transaction, the dual-branch evidence relation, portable-files.txt catch-up, and README/CUSTOMIZATIONS updates.",
-      "blocking": true
+      "action": "Create /etc/komodo/grocy/maintainer-auth (0600, one 64-hex secret) and set GROCY_AI_MAINTAINER_AUTH_FILE in the deployment configuration.",
+      "context": "Required only before the promotion command is used on the deployment. Nothing is promotable today because the characterization selects no projection.",
+      "blocking": false
     }
   ],
   "decisions": [
+    {
+      "decision": "The immutable characterization facts are pinned as CHARACTERIZATION_FACTS_SHA256 in GrocyAiConversionService, covering both branch revisions, migration hashes, cache objects, cache key schema, query-plan checksum, and all eight protected-consumer outputs; the selected projection is excluded.",
+      "rationale": "Without it the promotion command built its bundle from the same document ActivateVerifiedRuleset re-read, so a tampered document was self-consistent and promoted successfully. Editing the document now also requires changing the constant, which the release gate re-derives from git.",
+      "phase": "04"
+    },
+    {
+      "decision": "The promotion command reads the deployment-owned secret from the auth file and compares it with the secret presented on standard input.",
+      "rationale": "A constant-time validation needs two values, and stdin is the only channel that keeps the secret out of argv, the environment, and the process listing. Documented as a deliberate-action check rather than a second factor.",
+      "phase": "04"
+    },
+    {
+      "decision": "GROCY_AI_MAINTAINER_AUTH_FILE is /etc/komodo/grocy/maintainer-auth on the deployment.",
+      "rationale": "Approved by the maintainer on 2026-08-29. It sits with the existing persistent Komodo mount, is outside the repository and outside GROCY_DATAPATH, and needs no new volume.",
+      "phase": "04"
+    },
+    {
+      "decision": "Plan 04-08 Task 3 human verification was approved on 2026-08-29; the evidence-gated reusable activation and normal product-scoped native save behavior are confirmed.",
+      "rationale": "All automated gates were green and the maintainer confirmed the fail-closed gate on the conversion coverage and native conversion screens.",
+      "phase": "04"
+    },
+    {
+      "decision": "GrocyAiConversionService::ActivateVerifiedRuleset() is the sole authority that may activate a reusable revision or create the universal native rows a projection needs. It re-reads 04-CHARACTERIZATION.md in one transaction and requires the supplied bundle to equal it in every field.",
+      "rationale": "D-12/D-15: no reusable rule may change the effective cache without current immutable dual-branch evidence, and the document must not be recomputed or guessed by a request.",
+      "phase": "04"
+    },
+    {
+      "decision": "The generic native pre-save hook returns the fixed inactive-revision rejection and writes no module row on a rejected reusable POST/PUT.",
+      "rationale": "The plan allowed either branch; ValidateNativeConversionBeforeWrite is shared with the read-only validation GET whose zero-write contract is asserted on schema, state, and total_changes, and Task 1 excludes the controller from its file list.",
+      "phase": "04"
+    },
+    {
+      "decision": "No projection is selected in production: every real ActivateVerifiedRuleset() call fails closed with selected_projection_absent. The success path is proved against a disposable copy of the characterization document naming universal_native_rows_v1.",
+      "rationale": "Plan 01 selected no projection; the success path must exist and be tested without pretending it was selected.",
+      "phase": "04"
+    },
+    {
+      "decision": "Grocy's quantity_unit_conversions_INS trigger derives the inverse of every conversion, and cache__quantity_unit_conversions_resolved is product-scoped \u2014 a universal rule never produces a product_id IS NULL cache row.",
+      "rationale": "Observed directly against the pinned 0208/0225 migrations; the tests assert this rather than assuming a symmetric universal cache row.",
+      "phase": "04"
+    },
+    {
+      "decision": "portable-files.txt now lists 35 paths including all 15 Phase 4 module artifacts. release-gate.sh candidate/predeploy/evidence modes still hardcode a 12-path count, which fails closed and belongs to Phase 4 stable mirroring.",
+      "rationale": "The manifest catch-up was 04-08 scope; changing the Phase 2 release modes was not.",
+      "phase": "04"
+    },
     {
       "decision": "The five long-standing browser failures were fixture-only divergences from Bootstrap, not production defects: an auto grid track let the enrichment .row force its column wider than the viewport, and a bare file input kept its large intrinsic width. Fixed in quick task 260828-4qc; the full matrix is 184/184.",
       "rationale": "Plan 04-08's release gate requires green deterministic suites, and the failures contradicted the Phase 1 and Phase 2 completion records.",
@@ -111,6 +157,6 @@
     }
   ],
   "uncommitted_files": [],
-  "next_action": "Plan 04-08 is autonomous: false. Confirm its activation-gate design with the user before implementing. It must also add the five missing paths to portable-files.txt and update README/CUSTOMIZATIONS.",
-  "context_notes": "Phase 4 Plans 01-07 and 09 are implemented and merged into atech-main (merge commit 58689741, PR #2). Remaining: 04-08 (autonomous:false, needs the user) and 04-10. portable-files.txt is missing five module files added by 04-06/04-07/04-09. Browser suite is 184/184 after quick task 260828-4qc. GitHub CLI IS authenticated as ATECHPCS. Toolchain: PHP 8.5.10 with composer packages installed, Playwright 1.62.1 with Chromium+WebKit. Do not deploy or touch household data."
+  "next_action": "Phase 4 is complete. Phase 5 (Bulk Maintenance & Recovery Engine) has no plans yet; start with phase planning per the roadmap.",
+  "context_notes": "Phase 4 complete: all ten plans shipped on codex/phase4-characterization. Reusable conversion rules stay inactive because the characterization selects no projection. release-gate.sh conversions and taxonomy both PASS on Linux; run PHP as php8.5 or set GROCY_AI_PHP. Repo-specific traps are in MISTAKES.md. Phase 4 files are not yet mirrored to atech-release. Do not deploy or touch household data."
 }

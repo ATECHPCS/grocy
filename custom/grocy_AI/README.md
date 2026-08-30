@@ -165,12 +165,272 @@ Frozen and preserved are handling/location concerns, not taxonomy identities. Th
 
 When `packages/autoload.php` is present, the native suite also compiles the complete product form and renders the custom asset-version fixture with Grocy's installed Blade engine. To point the same regression at an exact external Composer runtime, set `GROCY_BLADE_AUTOLOAD` to that runtime's `autoload.php`.
 
+## Reusable conversion model
+
+Grocy keeps owning every durable conversion. The module owns only reusable *candidates* and the
+evidence that would let them become real, and it separates the two with one write authority.
+
+### Ownership
+
+- `grocy_ai_conversion_rule_revisions` owns every reusable universal and profile candidate: its
+  source, source version, precise factor, revision hash, and `inactive`/`active` lifecycle. Bootstrap
+  seeds each candidate `inactive`; nothing else may seed one active.
+- `grocy_ai_conversion_activation_evidence` is the immutable ledger. One row records the exact
+  Plan 01 main and stable revisions, the characterization checksum, the selected adapter, the cache
+  key schema, the query-plan checksum, the pinned migration hashes and cache objects, and a checksum
+  over every protected-consumer proof.
+- Native `quantity_unit_conversions` keeps ownership of normal product-scoped conversions plus the
+  universal rows the activation transaction creates. Nothing else writes universal rows.
+
+### The one activation transaction
+
+`GrocyAiConversionService::ActivateVerifiedRuleset()` is the only operation allowed to transition a
+revision active or to produce a reusable cache effect. In one transaction it re-reads
+`.planning/phases/04-reusable-conversion-model/04-CHARACTERIZATION.md`, requires the supplied bundle
+to equal that document in every field, validates every candidate revision hash and the whole rule
+graph, records the evidence row, activates the named revisions, and only then calls the selected
+adapter. Missing, stale, altered, failed, or unequal evidence returns `inactive` with one bounded
+blocker and leaves module records, native rows, and cache snapshots untouched.
+
+The document currently records **no selected projection**, so activation fails closed with
+`selected_projection_absent` on every real call. That is the intended production state: a projection
+becomes possible only when a named candidate has been exercised against current immutable
+dual-branch evidence and the document records it.
+
+### Native trigger and cache behavior
+
+The one supported adapter, `universal_native_rows_v1`, writes universal `quantity_unit_conversions`
+rows for activated mass and volume rules whose units Grocy already has, and stops there. The module
+issues no cache SQL. Everything downstream is Grocy's own characterized behavior:
+
+- `quantity_unit_conversions_INS` derives the inverse row, so five gate-created rows become ten
+  native universal rows.
+- The same trigger rebuilds `cache__quantity_unit_conversions_resolved` from
+  `quantity_unit_conversions_resolved`. That cache is product-scoped: a universal rule appears as
+  resolved rows for each product, never as a `product_id IS NULL` cache row.
+- Cache rows are keyed by `(product_id, from_qu_id, to_qu_id)` through
+  `ix_cache__quantity_unit_conversions_resolved_performance1` on both maintained branches.
+
+### The generic native boundary stays fail-closed
+
+Before and after any activation, every generic reusable-universal `quantity_unit_conversions`
+POST/PUT is rejected by `GenericEntityApiController` before native trigger or cache work, with a
+bounded `conversion_write_blocked:<reason>` error. A request that exactly restates an already
+projected rule is rejected as `reusable_scope_inactive`; a tampered factor is rejected as
+`factor_tolerance`. A generic PUT aimed at a gate-created universal row is rejected the same way.
+Valid product-scoped package/count and measured-density requests keep their normal Grocy Save
+behavior, and existing product conversion rows are never replaced or removed.
+
+### Promoting a revision (the only operational path)
+
+`custom/grocy_AI/bin/activate-verified-conversion-ruleset.php` is the sole operational way to make a
+reusable rule effective. There is **no browser control, no HTTP route, and no API path** — the
+release gate fails if one appears, or if a second command ever calls `ActivateVerifiedRuleset`.
+
+#### One-time deployment setup
+
+Create the maintainer secret outside the repository and outside `GROCY_DATAPATH`, readable only by
+its owner. On this deployment it lives on the existing persistent Komodo mount:
+
+```sh
+umask 077
+openssl rand -hex 32 > /etc/komodo/grocy/maintainer-auth
+chmod 600 /etc/komodo/grocy/maintainer-auth
+```
+
+Then set `GROCY_AI_MAINTAINER_AUTH_FILE=/etc/komodo/grocy/maintainer-auth` in the deployment
+configuration. The path must be absolute; the file must be a readable regular file, must not sit at
+or below `GROCY_DATAPATH`, must not be group- or world-accessible, and must contain exactly one
+64-character hex secret. Never commit the file, the secret, or the path into Git.
+
+#### Invocation
+
+```sh
+php custom/grocy_AI/bin/activate-verified-conversion-ruleset.php \
+  --revision <named-inactive-revision> \
+  --main-proof-artifact <40-hex-main-commit> \
+  --stable-proof-artifact <40-hex-stable-commit>
+```
+
+The command reads the secret from standard input, so present it deliberately — for example by
+pasting it at the prompt. Never pass it as an argument or an environment variable.
+
+The argument schema is closed and exact: those three options, each exactly once, in any order, with
+no positional arguments. `--revision` accepts one lowercase identifier the module owns (for example
+`universal-kg-g`); the two proof artifacts accept one 40-hex immutable commit each and must equal
+the revisions the current characterization names. **No option accepts SQL, a cache key, an adapter
+name, a factor, or a filesystem path.** Everything else — the selected adapter, the factors, the
+projection, and every cache effect — is resolved inside `ActivateVerifiedRuleset` from the current
+immutable ledger.
+
+Standard input is a deliberate-action check, not a second secret: an operator who can read the auth
+file can also supply its contents. Its value is that promotion cannot happen from the web tier, and
+cannot happen by a script that merely inherits the process's file access without being written to do
+so on purpose.
+
+#### Output
+
+Success prints one redacted JSON line and nothing on stderr:
+
+```json
+{"status":"active","result_code":"promoted","revision":"universal-kg-g",
+ "selected_adapter":"universal_native_rows_v1","main_proof_reference":"1f0c2a9b7d34",
+ "stable_proof_reference":"84be0d61c2af","evidence_reference":"c3d9017ab5e2"}
+```
+
+The three references are 12-character digests, never the complete identifiers. The command never
+prints the secret, a full commit, a configured path, a factor, SQL, a cache row, a source URL, a
+household value, or a raw exception.
+
+A refusal prints one redacted JSON line on **stderr** and nothing on stdout:
+
+```json
+{"status":"refused","reason":"immutable_proof_mismatch"}
+```
+
+#### Exit codes
+
+| Code | Meaning | Bounded reasons |
+|---|---|---|
+| `0` | Promoted | — |
+| `1` | Internal failure; nothing was written | `promotion_unavailable` |
+| `2` | Configuration or argument refused before any database work | `cli_only`, `arguments_invalid`, `datapath_unconfigured`, `database_unavailable`, `maintainer_auth_unconfigured`, `maintainer_auth_unavailable` |
+| `3` | Maintainer not authenticated | `maintainer_unauthorized` |
+| `4` | Evidence or revision refused | `immutable_proof_mismatch`, `revision_not_promotable`, `activation_refused` |
+
+Every non-zero exit leaves active revisions, native universal rows, the projection output, the
+resolved cache, and the evidence ledger exactly as they were.
+
+#### Retrying after a refusal
+
+1. `activation_refused` with the current characterization is the normal state: the document records
+   no selected projection, so nothing is promotable yet. Nothing to retry.
+2. `immutable_proof_mismatch` means the characterization has moved. Re-read
+   `04-CHARACTERIZATION.md`, confirm the two revisions it now names, and re-run with those.
+3. `revision_not_promotable` means the name is unknown or already active. Check
+   `bin/validate-conversion-rules.php` output for the current gate state.
+4. `characterization_facts_mismatch` (surfaced as `activation_refused`) means the document no longer
+   matches the facts pinned in `GrocyAiConversionService`. Refresh the evidence properly: re-run the
+   dual-branch characterization, update the document and the pinned constant together, and re-run
+   `release-gate.sh conversions`, which re-derives the facts from the two immutable git revisions.
+5. Never work around a refusal by editing the characterization document alone. The pinned facts
+   constant exists precisely so that editing the document is not enough to widen the gate.
+
+Promote one revision at a time. Each promotion records its own evidence row bound to the revisions
+it activated.
+
+### Cleanup boundary
+
+Activation adds evidence and rows. It never drops a table, trigger, or index, never removes a
+superseded native row, and never reconciles duplicate or redundant product overrides. Coverage
+diagnostics only *count* redundant overrides. All conversion cleanup is Phase 6 work and requires a
+scrubbed production-shaped snapshot.
+
+### Stable-only differences
+
+The Phase 4 module files in `custom/grocy_AI/portable-files.txt` are byte-portable and must be
+mirrored to the stable branch unchanged. Only the documented adapters differ on stable: the
+controller namespace and base class, route registration syntax, the Blade view hooks and their
+`$grocyAiAssetVersion` literals, `custom/grocy_AI/version.json`, and the Docker overlay. The
+conversion release gate proves the immutable dual-branch evidence directly from git, so it runs
+identically whether both maintained branches live in one checkout or two.
+
+## Bulk maintenance & recovery engine
+
+Phase 5 adds a reusable bulk workflow — generate a bounded zero-mutation plan, review and select
+individual items, apply the approved plan once through a short conflict-safe transaction, audit
+exactly what changed, export a redacted snapshot, and preview and execute a guarded rollback. It is
+delivered by `GrocyAiBulkService`, the idempotent namespaced `GrocyAiBulkMigration`
+(`grocy_ai_bulk_plans`, `grocy_ai_bulk_plan_items`, and the append-only `grocy_ai_bulk_audit`), and
+the read-only `grocyai_bulkreview` Blade surface driven by `public/custom/grocy_AI/bulk-review.js`.
+Phase 5 ships the engine and proves it end-to-end against the shipped Phase 3 taxonomy write; the
+full existing-inventory sweep and conversion-cleanup operations remain Phase 6 work.
+
+### The workflow
+
+- **Generate (BULK-01/02/03).** `GeneratePlan` produces a bounded dry-run reporting the exact
+  closed counts (`included`, `excluded`, `skipped`, `conflicted`, `changed`, `unchanged`). It reads
+  current values only through the shipped taxonomy read paths, captures an immutable before-image of
+  the written field once, and writes only the two module plan tables — never a native Grocy row and
+  never ad-hoc cache SQL. Generation is zero-mutation over native/cache state.
+- **Checksum binding (BULK-02).** Each plan carries a deterministic SHA-256 checksum over its
+  immutable content (item identities, before/proposed values, operation types, ruleset version), so
+  the reviewed plan and the applied plan are provably the same artifact.
+- **Review and select (BULK-03).** The user selects or rejects each item and inspects the complete
+  selected diff. Selection state lives with the plan; the apply set is exactly the selected,
+  non-conflicted items, derived server-side and never from a browser-supplied item list.
+- **Named-operation-only apply (BULK-05/06/07).** Apply executes only named typed operations from a
+  closed server-side registry (`assign_taxonomy_leaf`, `set_unclassified`), each of which delegates
+  to the shipped `GrocyAiTaxonomyService::AssignProductTaxonomy` write. It can never execute
+  arbitrary CRUD, free-form entity/field targets, or SQL supplied by the browser or companion;
+  unknown operations fail closed. Before writing each item it re-reads the current value and refuses
+  any item that drifted from the reviewed before-image (optimistic concurrency, recorded as a
+  per-item `conflict` with no partial write). The whole apply runs through one short
+  `BEGIN IMMEDIATE` transaction with no network/provider call while the write lock is held, and is
+  idempotent through a plan-checksum-bound completion ledger — a re-run or a resumed interrupted
+  apply repeats no mutation.
+- **Audit (BULK-08).** Every apply appends immutable `grocy_ai_bulk_audit` rows — actor, previewed
+  and applied timestamps, module version, per-item outcome, and exact before/after values. The
+  ledger is append-only: no service or migration path ever UPDATEs or DELETEs it.
+- **Export (BULK-10).** `ExportPlan` emits a redacted JSON or CSV snapshot through a closed
+  default-deny field allowlist, marked `authoritative: false` / `reimport_supported: false`. It is
+  recovery evidence for independent human review only and offers no re-import path (re-import is the
+  deferred v2 item V2-03); CSV fields are RFC-4180 quoted and formula-injection neutralized.
+- **Rollback (BULK-09).** `PreviewRollback` is a zero-write read that refuses to overwrite any field
+  hand-edited after the original apply (it re-reads current values against the audited after-image,
+  refusing with `manual_edit_after_apply`). `RollbackPlan` reuses the same named-operation,
+  optimistic-concurrency, single-transaction, idempotent, append-only path as forward apply.
+
+### Authority boundary
+
+Grocy remains the sole durable mutation authority. The engine adds no parallel write path and no
+ad-hoc cache SQL; its typed operations delegate to the shipped module write, so Grocy's triggers,
+cache, and consumers stay unchanged. Every read (plan read, selection, selected diff, export,
+rollback preview) and the two durable actions (apply, rollback) are authenticated and permission
+checked with `PERMISSION_MASTER_DATA_EDIT` on the `/api/grocy-ai` group. Unlike the Phase 4
+conversion promotion, the bulk apply is a user-facing, audited in-app action — **not** a maintainer
+CLI; no `bin/` command applies or rolls back a plan.
+
+### Grocy routes (all MASTER_DATA_EDIT-gated)
+
+- `GET /api/grocy-ai/bulk/plans/{planId}` — read the stored plan (header, counts, items)
+- `PUT /api/grocy-ai/bulk/plans/{planId}/items/{seq}/selection` — toggle one item's selection
+- `GET /api/grocy-ai/bulk/plans/{planId}/selected-diff` — the complete selected diff
+- `POST /api/grocy-ai/bulk/plans/{planId}/apply` — the authenticated, audited durable apply
+- `GET /api/grocy-ai/bulk/plans/{planId}/audit` — the append-only audit ledger
+- `GET /api/grocy-ai/bulk/plans/{planId}/rollback-preview` — zero-write rollback preview
+- `POST /api/grocy-ai/bulk/plans/{planId}/rollback` — the guarded, audited rollback
+- `GET /api/grocy-ai/bulk/plans/{planId}/export?format=json|csv` — the non-authoritative snapshot
+- `GET /grocyai/bulkreview` — the read-only review page
+
+Run the engine's unit modes and its release gate with:
+
+```sh
+GROCY_AI_PHP=php8.5 php8.5 custom/grocy_AI/tests/run.php bulk-apply   # and bulk-generate, bulk-registry, …
+GROCY_AI_PHP=php8.5 bash custom/grocy_AI/tests/release-gate.sh bulk
+node --test public/custom/grocy_AI/bulk-review.test.js
+```
+
+The `bulk` gate proves portable-manifest membership and sorted-unique/safe paths for every Phase 5
+file, named-operation-only apply with its sole `AssignProductTaxonomy` delegate, no ad-hoc
+native/cache write, no UPDATE/DELETE against the append-only audit ledger, no network primitive in
+the apply/rollback path, the single `BEGIN IMMEDIATE` transaction and checksum idempotency gate, the
+`MASTER_DATA_EDIT`-checked apply/rollback with no `bin/` CLI apply, and every `bulk-*` unit mode
+(including 05-01's `bulk-contract`/`bulk-invariants`/`bulk-schema`) plus the frontend suite. Like the
+conversion gate it resolves the stable side from `GROCY_AI_STABLE_REPO`/`GROCY_AI_STABLE_REF` with a
+same-checkout fallback and runs PHP through `GROCY_AI_PHP`. `views/grocyai_bulkreview.blade.php` is a
+core-tree Blade view carried by the branch-adapter / changed-paths mechanism (like
+`views/grocyai_conversioncoverage.blade.php`), so it is deliberately NOT in `portable-files.txt`.
+
 ## Deterministic release gates
 
 Run the main-repository contracts from `/Users/ian/Documents/Repos/grocy` on `atech-main`:
 
 ```sh
 php custom/grocy_AI/tests/run.php
+bash custom/grocy_AI/tests/release-gate.sh taxonomy
+bash custom/grocy_AI/tests/release-gate.sh conversions
+npm --prefix custom/grocy_AI/tests/browser test -- --grep @conv04
 npm --prefix custom/grocy_AI/tests/browser test -- --grep '@mob01|@mob02|@mob03|@mob04|@mob05|@mob06|@mob07|@mob08'
 npm --prefix custom/grocy_AI/tests/browser run test:release
 python3 .planning/phases/01-safety-baseline-mobile-diagnostics/evidence/check-phone-timings.py --self-test
@@ -183,6 +443,15 @@ Run the companion contract in its separate repository and working directory:
 cd /Users/ian/Documents/Repos/grocy-mcp
 .venv/bin/python -m unittest tests.test_enrichment tests.test_http_api tests.test_diagnostics
 ```
+
+`release-gate.sh conversions` proves the Phase 4 portable manifest, the immutable main/stable
+revisions and their byte-equal characterized migrations, the cache/trigger adapter contract, the
+eight protected-consumer proofs, the evidence-ledger and single-activation-statement contract, the
+sole-promotion-command contract (CLI-only, one delegate call, no SQL, no relation names, no generic
+option, no HTTP route or API path, no second command, no committed secret or secret path), and the
+full conversion suite. It resolves the stable side from `GROCY_AI_STABLE_REPO` when a separate
+stable checkout exists and otherwise from the same repository, and honours `GROCY_AI_PHP` when the
+required PHP is not the default `php`.
 
 The browser release script runs the complete Chromium/WebKit matrix with Playwright retries disabled. It uses only the loopback fixture and deterministic route envelopes; it must not contact the household deployment or external providers.
 

@@ -428,7 +428,6 @@ function conversionProductStatusContract(): void
 	$pdo->exec(<<<'SQL'
 CREATE TABLE user_permissions_resolved (id INTEGER NOT NULL PRIMARY KEY, user_id INTEGER NOT NULL, permission_name TEXT NOT NULL);
 INSERT INTO user_permissions_resolved (id, user_id, permission_name) VALUES (1, 1, 'MASTER_DATA_EDIT');
-CREATE TABLE grocy_ai_conversion_activation_evidence (id INTEGER NOT NULL PRIMARY KEY, revision_id TEXT NOT NULL, evidence_hash TEXT NOT NULL);
 CREATE TABLE grocy_ai_conversion_projection_spy (id INTEGER NOT NULL PRIMARY KEY, operation TEXT NOT NULL);
 CREATE TABLE grocy_ai_conversion_route_write_spy (id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT, target TEXT NOT NULL, operation TEXT NOT NULL);
 CREATE TRIGGER grocy_ai_conversion_route_products_update AFTER UPDATE ON products BEGIN
@@ -470,7 +469,7 @@ SQL);
 	conversionAssertSame(null, $inactiveBeforeActivation['factor'], 'inactive source must not expose a usable factor through the product status boundary');
 	conversionAssertSame('food_profile', $inactiveBeforeActivation['winner_source'], 'inactive source may retain its bounded provenance category');
 
-	$pdo->exec("INSERT INTO grocy_ai_conversion_activation_evidence (id, revision_id, evidence_hash) VALUES (1, 'conversion-catalog-v1', 'fixture-approved-evidence')");
+	$pdo->exec("INSERT INTO grocy_ai_conversion_activation_evidence (id, main_commit, stable_commit, characterization_sha256, selected_adapter, cache_key_schema, query_plan_sha256, migration_hashes, cache_objects, protected_outputs_sha256, evidence_hash) VALUES (1, 'fixture-main-commit', 'fixture-stable-commit', 'fixture-characterization', 'none', '(product_id, from_qu_id, to_qu_id)', 'fixture-query-plan', '{}', '[]', 'fixture-protected-outputs', 'fixture-approved-evidence')");
 	$pdo->exec("INSERT INTO quantity_unit_conversions (id, product_id, from_qu_id, to_qu_id, factor) VALUES (301, NULL, 1, 4, 236.5882365)");
 	$pdo->exec("INSERT INTO cache__quantity_unit_conversions_resolved (product_id, from_qu_id, to_qu_id, factor, path) VALUES (NULL, 1, 4, 236.5882365, '301')");
 	$pdo->exec("INSERT INTO grocy_ai_conversion_projection_spy (id, operation) VALUES (1, 'fixture_activation_completed')");
@@ -797,9 +796,14 @@ function runConversionResolution(): never
 	exit(0);
 }
 
-function conversionNativeSaveHookPdo(): PDO
+/**
+ * The native conversion fixture: Grocy's real resolver, cache, and cache-maintenance triggers built
+ * from the pinned migrations. Pass a file path when a test needs the same database on disk so a
+ * separate CLI process can open it.
+ */
+function conversionNativeSaveHookPdo(?string $databasePath = null): PDO
 {
-	$pdo = new PDO('sqlite::memory:');
+	$pdo = new PDO('sqlite:' . ($databasePath ?? ':memory:'));
 	$pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 	$pdo->exec(<<<'SQL'
 CREATE TABLE quantity_units (id INTEGER PRIMARY KEY, name TEXT NOT NULL, name_plural TEXT NOT NULL);
@@ -1683,7 +1687,6 @@ function conversionResolvedProvenanceContract(): void
 	$pdo->exec(<<<'SQL'
 CREATE TABLE user_permissions_resolved (id INTEGER NOT NULL PRIMARY KEY, user_id INTEGER NOT NULL, permission_name TEXT NOT NULL);
 INSERT INTO user_permissions_resolved (id, user_id, permission_name) VALUES (1, 1, 'MASTER_DATA_EDIT');
-CREATE TABLE grocy_ai_conversion_activation_evidence (id INTEGER NOT NULL PRIMARY KEY, revision_id TEXT NOT NULL, evidence_hash TEXT NOT NULL);
 CREATE TABLE grocy_ai_conversion_projection_spy (id INTEGER NOT NULL PRIMARY KEY, operation TEXT NOT NULL);
 CREATE TABLE grocy_ai_conversion_route_write_spy (id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT, target TEXT NOT NULL, operation TEXT NOT NULL);
 CREATE TRIGGER grocy_ai_conversion_resolved_products_update AFTER UPDATE ON products BEGIN
@@ -1747,7 +1750,7 @@ SQL);
 	}
 
 	// The activation fixture must not change the closed inspection contract or trigger any write seam.
-	$pdo->exec("INSERT INTO grocy_ai_conversion_activation_evidence (id, revision_id, evidence_hash) VALUES (1, 'conversion-catalog-v1', 'fixture-approved-evidence')");
+	$pdo->exec("INSERT INTO grocy_ai_conversion_activation_evidence (id, main_commit, stable_commit, characterization_sha256, selected_adapter, cache_key_schema, query_plan_sha256, migration_hashes, cache_objects, protected_outputs_sha256, evidence_hash) VALUES (1, 'fixture-main-commit', 'fixture-stable-commit', 'fixture-characterization', 'none', '(product_id, from_qu_id, to_qu_id)', 'fixture-query-plan', '{}', '[]', 'fixture-protected-outputs', 'fixture-approved-evidence')");
 	$pdo->exec("INSERT INTO grocy_ai_conversion_projection_spy (id, operation) VALUES (1, 'fixture_activation_completed')");
 	$pdo->exec('DELETE FROM grocy_ai_conversion_route_write_spy');
 	$afterActivation = conversionProductStatusBody(conversionResolvedProvenanceReadOnlyCall($pdo, $controller, ['product_id' => '1', 'from_qu_id' => '1', 'to_qu_id' => '2']));
@@ -2086,5 +2089,772 @@ function runConversionReadOnlyCli(): never
 {
 	conversionReadOnlyCliContract();
 	fwrite(STDOUT, "Conversion read-only CLI tests passed\n");
+	exit(0);
+}
+
+/**
+ * Plan 04-08 — evidence-gated reusable activation.
+ *
+ * The fixtures below build a native conversion database that owns Grocy's real resolver, cache,
+ * and INSERT/UPDATE/DELETE cache-maintenance triggers so a projection can only reach the resolved
+ * cache the way Plan 01 characterized it. No test writes household data or ad-hoc cache SQL.
+ */
+function conversionActivationPdo(): PDO
+{
+	$pdo = conversionNativeSaveHookPdo();
+	GrocyAiConversionMigration::Bootstrap($pdo);
+	return $pdo;
+}
+
+function conversionActivationCharacterizationPath(): string
+{
+	return dirname(__DIR__, 3) . '/.planning/phases/04-reusable-conversion-model/04-CHARACTERIZATION.md';
+}
+
+/**
+ * The exact immutable facts Plan 01 recorded. A bundle that disagrees with the document on disk
+ * is stale by construction, so these values are read from the document rather than restated.
+ */
+function conversionActivationBundle(string $documentPath, array $overrides = []): array
+{
+	$document = file_get_contents($documentPath);
+	if (!is_string($document))
+	{
+		throw new RuntimeException('conversion_activation_fixture_document_unavailable');
+	}
+	$bundle = [
+		'characterization_path' => $documentPath,
+		'characterization_sha256' => hash('sha256', $document),
+		'main_commit' => 'f53665ca19c0e2abcd095f79a93865cfbf396a1d',
+		'stable_commit' => '6605ae6c2034c6679381de185cc567d80d38db79',
+		'migration_hashes' => [
+			'migrations/0208.sql' => '5f7ce1eca78e557c9fb3114d31c7e340d1d9d00885b7a675dbb79868442add60',
+			'migrations/0225.sql' => 'f937c33c46c8becc38ee26be0db09f8c8de99399e2e3a039a056ccd67e9eff0d'
+		],
+		'cache_objects' => [
+			'cache__quantity_unit_conversions_resolved',
+			'ix_cache__quantity_unit_conversions_resolved_performance1',
+			'quantity_unit_conversions_INS',
+			'quantity_unit_conversions_UPD',
+			'quantity_unit_conversions_DEL'
+		],
+		'cache_key_schema' => '(product_id, from_qu_id, to_qu_id)',
+		'query_plan_sha256' => '419f0d3a2a7e968c252ff3cb8f7463adb4177d8053da4f4efd81bfd4c1583709',
+		'selected_adapter' => 'none',
+		'protected_outputs' => conversionActivationProtectedOutputs(),
+		'revision_ids' => []
+	];
+	foreach ($overrides as $key => $value)
+	{
+		$bundle[$key] = $value;
+	}
+	return $bundle;
+}
+
+function conversionActivationProtectedOutputs(): array
+{
+	$outputs = [];
+	foreach ([
+		['stock', '8', '/1/3/'], ['recipe', '3.5', '/3/1/'], ['purchase', '1', '/2/1/'],
+		['consumption', '4.5', '/3/1/'], ['price', '5.5', '/3/1/'], ['transfer', '6', '/1/3/'],
+		['meal-plan', '6.5', '/3/1/'], ['quantity-display', '1.5', '/2/1/']
+	] as [$category, $value, $path])
+	{
+		$outputs[] = ['category' => $category, 'main' => $value, 'stable' => $value, 'path' => $path];
+	}
+	return $outputs;
+}
+
+/**
+ * A disposable copy of the immutable document whose only difference is that it names a selected
+ * projection. It proves the success path without pretending Plan 01 selected an adapter.
+ */
+function conversionActivationSelectedDocument(string $adapter = 'universal_native_rows_v1'): string
+{
+	$document = file_get_contents(conversionActivationCharacterizationPath());
+	if (!is_string($document) || !str_contains($document, '**No projection is selected.**'))
+	{
+		throw new RuntimeException('conversion_activation_fixture_document_unavailable');
+	}
+	$selected = str_replace('**No projection is selected.**', '**Selected adapter:** `' . $adapter . '`', $document);
+	$path = tempnam(sys_get_temp_dir(), 'grocy-ai-conv-doc-');
+	if ($path === false || file_put_contents($path, $selected) === false)
+	{
+		throw new RuntimeException('conversion_activation_fixture_document_unwritable');
+	}
+	return $path;
+}
+
+function conversionActivationSnapshot(PDO $pdo): array
+{
+	return [
+		'native' => conversionNativeSaveHookSnapshot($pdo),
+		'revisions' => $pdo->query('SELECT id, kind, status, source_name, source_version, from_unit_key, to_unit_key, factor, revision_hash, activation_evidence_id FROM grocy_ai_conversion_rule_revisions ORDER BY id')->fetchAll(PDO::FETCH_ASSOC),
+		'evidence' => $pdo->query('SELECT id, main_commit, stable_commit, characterization_sha256, selected_adapter, cache_key_schema, query_plan_sha256, evidence_hash FROM grocy_ai_conversion_activation_evidence ORDER BY id')->fetchAll(PDO::FETCH_ASSOC),
+		'catalog_rules' => $pdo->query('SELECT revision_id, from_unit_key, to_unit_key, factor FROM grocy_ai_conversion_rules ORDER BY id')->fetchAll(PDO::FETCH_ASSOC),
+		'profiles' => $pdo->query('SELECT profile_key, status, factor FROM grocy_ai_conversion_profiles ORDER BY profile_key')->fetchAll(PDO::FETCH_ASSOC)
+	];
+}
+
+function conversionActivationAssertInactive(PDO $pdo, array $bundle, string $blocker, string $caseName): void
+{
+	$before = conversionActivationSnapshot($pdo);
+	$result = (new GrocyAiConversionService($pdo, false))->ActivateVerifiedRuleset($bundle);
+	conversionAssertSame('inactive', $result['status'] ?? null, $caseName . ' must return inactive');
+	conversionAssertSame([$blocker], $result['blockers'] ?? null, $caseName . ' must report exactly the bounded blocker');
+	conversionAssertSame(null, $result['evidence_hash'], $caseName . ' must record no evidence hash');
+	conversionAssertSame([], $result['activated_revision_ids'] ?? null, $caseName . ' must activate no revision');
+	conversionAssertSame(0, $result['projected_universal_rows'] ?? null, $caseName . ' must project no universal row');
+	conversionAssertSame($before, conversionActivationSnapshot($pdo), $caseName . ' must leave module records, native rows, and cache snapshots unchanged');
+}
+
+function conversionActivationUniversalRevisionIds(PDO $pdo): array
+{
+	return $pdo->query("SELECT id FROM grocy_ai_conversion_rule_revisions WHERE kind = 'universal' ORDER BY id")->fetchAll(PDO::FETCH_COLUMN);
+}
+
+function conversionActivationRuntime(): void
+{
+	if (!defined('GROCY_MODE'))
+	{
+		define('GROCY_MODE', 'production');
+	}
+	if (!defined('GROCY_DATAPATH'))
+	{
+		define('GROCY_DATAPATH', sys_get_temp_dir());
+	}
+	if (!defined('GROCY_USER_ID'))
+	{
+		define('GROCY_USER_ID', 1);
+	}
+	if (!defined('GROCY_FEATURE_FLAG_GROCY_AI'))
+	{
+		define('GROCY_FEATURE_FLAG_GROCY_AI', true);
+	}
+	if (!is_dir(GROCY_DATAPATH . '/viewcache') && !mkdir(GROCY_DATAPATH . '/viewcache', 0700, true) && !is_dir(GROCY_DATAPATH . '/viewcache'))
+	{
+		throw new RuntimeException('conversion_activation_viewcache_unavailable');
+	}
+	require_once dirname(__DIR__, 3) . '/packages/autoload.php';
+	require_once dirname(__DIR__, 3) . '/controllers/Api/GenericEntityApiController.php';
+}
+
+/**
+ * Test 1 — missing, stale, altered, failed, or unequal immutable evidence leaves everything alone.
+ */
+function conversionActivationEvidenceContract(PDO $pdo): void
+{
+	$documentPath = conversionActivationCharacterizationPath();
+	$revisionIds = conversionActivationUniversalRevisionIds($pdo);
+	conversionAssertSame(12, count($revisionIds), 'bootstrap must own one inactive revision per sourced universal rule');
+	$valid = fn(array $overrides = []): array => conversionActivationBundle($documentPath, $overrides + ['revision_ids' => $revisionIds]);
+
+	conversionActivationAssertInactive($pdo, $valid(['characterization_path' => $documentPath . '.absent']), 'characterization_unavailable', 'missing characterization document');
+	conversionActivationAssertInactive($pdo, $valid(['characterization_sha256' => str_repeat('0', 64)]), 'characterization_stale', 'stale characterization checksum');
+	conversionActivationAssertInactive($pdo, $valid(['main_commit' => str_repeat('a', 40)]), 'main_commit_mismatch', 'altered main commit');
+	conversionActivationAssertInactive($pdo, $valid(['stable_commit' => str_repeat('b', 40)]), 'stable_commit_mismatch', 'altered stable commit');
+	conversionActivationAssertInactive($pdo, $valid(['main_commit' => 'f53665ca']), 'main_commit_mismatch', 'abbreviated main commit');
+	conversionActivationAssertInactive($pdo, $valid(['migration_hashes' => ['migrations/0208.sql' => str_repeat('c', 64), 'migrations/0225.sql' => 'f937c33c46c8becc38ee26be0db09f8c8de99399e2e3a039a056ccd67e9eff0d']]), 'migration_hash_mismatch', 'altered cache migration hash');
+	conversionActivationAssertInactive($pdo, $valid(['migration_hashes' => ['migrations/0208.sql' => '5f7ce1eca78e557c9fb3114d31c7e340d1d9d00885b7a675dbb79868442add60']]), 'migration_hash_mismatch', 'incomplete migration evidence');
+	conversionActivationAssertInactive($pdo, $valid(['cache_objects' => ['cache__quantity_unit_conversions_resolved']]), 'cache_contract_mismatch', 'incomplete cache/trigger contract');
+	conversionActivationAssertInactive($pdo, $valid(['cache_key_schema' => '(product_id, from_qu_id)']), 'cache_key_schema_mismatch', 'altered cache key schema');
+	conversionActivationAssertInactive($pdo, $valid(['query_plan_sha256' => str_repeat('d', 64)]), 'query_plan_mismatch', 'altered query plan checksum');
+
+	$short = conversionActivationProtectedOutputs();
+	array_pop($short);
+	conversionActivationAssertInactive($pdo, $valid(['protected_outputs' => $short]), 'protected_outputs_incomplete', 'missing protected consumer proof');
+	$unequal = conversionActivationProtectedOutputs();
+	$unequal[3]['stable'] = '4.6';
+	conversionActivationAssertInactive($pdo, $valid(['protected_outputs' => $unequal]), 'protected_outputs_unequal', 'unequal protected consumer proof');
+	$failed = conversionActivationProtectedOutputs();
+	$failed[0]['path'] = '/9/9/';
+	conversionActivationAssertInactive($pdo, $valid(['protected_outputs' => $failed]), 'protected_outputs_mismatch', 'protected consumer proof that disagrees with the document');
+
+	conversionActivationAssertInactive($pdo, $valid(), 'selected_projection_absent', 'the immutable document selects no projection');
+	conversionActivationAssertInactive($pdo, $valid(['selected_adapter' => 'universal_native_rows_v1']), 'selected_adapter_mismatch', 'a bundle may not invent a selected adapter');
+	conversionActivationAssertInactive($pdo, $valid(['revision_ids' => []]), 'revision_set_empty', 'activation requires at least one named revision');
+	conversionActivationAssertInactive($pdo, $valid(['revision_ids' => ['universal-mg-g', 'no-such-revision']]), 'revision_unknown', 'activation rejects an unknown revision');
+
+	// A document whose immutable facts were edited cannot activate even when the bundle agrees with
+	// it, because the facts are pinned in the service rather than taken from the document.
+	foreach ([
+		['419f0d3a2a7e968c252ff3cb8f7463adb4177d8053da4f4efd81bfd4c1583709', '419f0d3b2a7e968c252ff3cb8f7463adb4177d8053da4f4efd81bfd4c1583709', 'query plan'],
+		['6605ae6c2034c6679381de185cc567d80d38db79', '6605ae6c2034c6679381de185cc567d80d38db78', 'stable revision'],
+		['| stock | 8 |', '| stock | 9 |', 'protected consumer output'],
+		['(product_id, from_qu_id, to_qu_id)', '(product_id, from_qu_id)', 'cache key schema']
+	] as [$search, $replace, $label])
+	{
+		$tampered = tempnam(sys_get_temp_dir(), 'grocy-ai-conv-facts-');
+		$source = (string)file_get_contents($documentPath);
+		conversionAssertSame(true, str_contains($source, $search), 'the facts fixture must find the ' . $label);
+		file_put_contents($tampered, str_replace($search, $replace, $source));
+		try
+		{
+			conversionActivationAssertInactive(
+				$pdo,
+				conversionActivationBundle($tampered, ['revision_ids' => $revisionIds]),
+				'characterization_facts_mismatch',
+				'edited ' . $label . ' in the characterization document'
+			);
+		}
+		finally
+		{
+			unlink($tampered);
+		}
+	}
+
+	$unknownAdapterDocument = conversionActivationSelectedDocument('universal_native_rows_v99');
+	try
+	{
+		conversionActivationAssertInactive(
+			$pdo,
+			conversionActivationBundle($unknownAdapterDocument, ['selected_adapter' => 'universal_native_rows_v99', 'revision_ids' => $revisionIds]),
+			'selected_adapter_unsupported',
+			'an unrecognized adapter name is never invoked'
+		);
+	}
+	finally
+	{
+		unlink($unknownAdapterDocument);
+	}
+}
+
+/**
+ * Test 2 — only ActivateVerifiedRuleset may transition a revision active or write a projection.
+ */
+function conversionActivationSoleAuthorityContract(PDO $pdo, Grocy\Controllers\Api\GenericEntityApiController $controller): void
+{
+	$service = new GrocyAiConversionService($pdo, false);
+	$before = conversionActivationSnapshot($pdo);
+
+	$service->ValidateNativeConversionBeforeWrite(['product_id' => null, 'from_qu_id' => 1, 'to_qu_id' => 7, 'factor' => '1000'], null);
+	$service->InspectConversionResolution(11, 'g', 'kg');
+	$service->InspectSourcedProfile(11, 'cup', 'g');
+	$service->ValidateConversionCoverage();
+	conversionAssertSame($before, conversionActivationSnapshot($pdo), 'no inspection, validation, or coverage read may activate a revision or project a row');
+
+	conversionNativeSaveHookAssertRejectedWithoutWrite($pdo, $controller, ['product_id' => null, 'from_qu_id' => 1, 'to_qu_id' => 7, 'factor' => '1000'], 'reusable_scope_inactive');
+	conversionNativeSaveHookAssertRejectedEditWithoutWrite($pdo, $controller, 91, ['product_id' => null, 'from_qu_id' => 1, 'to_qu_id' => 7, 'factor' => '1000'], 'reusable_scope_inactive');
+	conversionAssertSame($before, conversionActivationSnapshot($pdo), 'a generic reusable POST or PUT may not activate a revision or project a row');
+
+	$source = file_get_contents(dirname(__DIR__) . '/src/GrocyAiConversionService.php');
+	if (!is_string($source))
+	{
+		throw new RuntimeException('conversion_activation_service_source_unavailable');
+	}
+	conversionAssertSame(0, preg_match_all('/(?:INSERT|UPDATE|DELETE|REPLACE)[^;\']*cache__quantity_unit_conversions_resolved/i', $source), 'the service must never write the resolved cache with ad-hoc SQL');
+	conversionAssertSame(1, preg_match_all("/UPDATE grocy_ai_conversion_rule_revisions SET status = 'active'/", $source), 'exactly one statement may transition a revision active');
+	conversionAssertSame(0, preg_match_all('/\bDROP\s+(?:TABLE|TRIGGER|INDEX)\b/i', $source), 'activation must not perform Phase 6 cleanup');
+}
+
+/**
+ * Test 3 — complete proof records evidence, activates owned revisions, and applies exactly the
+ * selected projection through Grocy's own native triggers.
+ */
+function conversionActivationSelectedProjectionContract(PDO $pdo): array
+{
+	$documentPath = conversionActivationSelectedDocument();
+	$revisionIds = conversionActivationUniversalRevisionIds($pdo);
+	$bundle = conversionActivationBundle($documentPath, [
+		'selected_adapter' => 'universal_native_rows_v1',
+		'revision_ids' => $revisionIds
+	]);
+
+	$productRowsBefore = $pdo->query('SELECT id, product_id, from_qu_id, to_qu_id, factor FROM quantity_unit_conversions WHERE product_id IS NOT NULL ORDER BY id')->fetchAll(PDO::FETCH_ASSOC);
+	$profilesBefore = $pdo->query('SELECT profile_key, status, factor FROM grocy_ai_conversion_profiles ORDER BY profile_key')->fetchAll(PDO::FETCH_ASSOC);
+	$catalogBefore = $pdo->query('SELECT revision_id, from_unit_key, to_unit_key, factor FROM grocy_ai_conversion_rules ORDER BY id')->fetchAll(PDO::FETCH_ASSOC);
+
+	$result = (new GrocyAiConversionService($pdo, false))->ActivateVerifiedRuleset($bundle);
+	conversionAssertSame('active', $result['status'] ?? null, 'complete immutable proof must activate the named ruleset');
+	conversionAssertSame([], $result['blockers'] ?? null, 'a successful activation reports no blocker');
+	conversionAssertSame('universal_native_rows_v1', $result['selected_adapter'] ?? null, 'activation must name the selected Plan 01 adapter');
+	conversionAssertSame($revisionIds, $result['activated_revision_ids'] ?? null, 'activation must activate exactly the named source/version-owned revisions');
+	conversionAssertSame(64, strlen((string)($result['evidence_hash'] ?? '')), 'activation must record one immutable evidence hash');
+
+	$evidence = $pdo->query('SELECT * FROM grocy_ai_conversion_activation_evidence ORDER BY id')->fetchAll(PDO::FETCH_ASSOC);
+	conversionAssertSame(1, count($evidence), 'activation must record exactly one evidence row');
+	conversionAssertSame('f53665ca19c0e2abcd095f79a93865cfbf396a1d', (string)$evidence[0]['main_commit'], 'evidence must record the immutable main revision');
+	conversionAssertSame('6605ae6c2034c6679381de185cc567d80d38db79', (string)$evidence[0]['stable_commit'], 'evidence must record the immutable stable revision');
+	conversionAssertSame('(product_id, from_qu_id, to_qu_id)', (string)$evidence[0]['cache_key_schema'], 'evidence must record the characterized cache key schema');
+	conversionAssertSame($result['evidence_hash'], (string)$evidence[0]['evidence_hash'], 'the returned evidence hash must be the persisted one');
+
+	$activeCount = (int)$pdo->query("SELECT COUNT(*) FROM grocy_ai_conversion_rule_revisions WHERE status = 'active' AND activation_evidence_id = " . (int)$evidence[0]['id'])->fetchColumn();
+	conversionAssertSame(12, $activeCount, 'every named revision must be bound to the recorded evidence row');
+
+	// D-01: the projection creates only universal mass and volume rules whose units Grocy owns.
+	// The catalog holds 12 sourced rules; this fixture's quantity_units cover exactly five of them.
+	conversionAssertSame(5, (int)$result['projected_universal_rows'], 'the projection writes one universal row per cataloged rule Grocy has both units for');
+	$universal = $pdo->query('SELECT from_qu_id, to_qu_id, factor FROM quantity_unit_conversions WHERE product_id IS NULL ORDER BY from_qu_id, to_qu_id')->fetchAll(PDO::FETCH_ASSOC);
+	// Grocy's own characterized INSERT trigger derives the inverse of every conversion, so the five
+	// gate-created rows become ten native universal rows without any module write.
+	conversionAssertSame(10, count($universal), 'the gate-created rows plus Grocy native inverse rows are the only universal rows');
+	$projected = [];
+	foreach ($universal as $row)
+	{
+		$projected[(int)$row['from_qu_id'] . '>' . (int)$row['to_qu_id']] = (float)$row['factor'];
+	}
+	conversionAssertSame(
+		['1>7' => 1000.0, '2>7' => 453.59237, '3>4' => 0.001, '8>4' => 0.00492892159375, '9>4' => 0.0295735295625],
+		array_intersect_key($projected, array_flip(['1>7', '2>7', '3>4', '8>4', '9>4'])),
+		'the projection must write the precise cataloged mass and volume factors'
+	);
+	foreach (['5>7', '7>5', '6>7', '10>7'] as $forbidden)
+	{
+		conversionAssertSame(false, isset($projected[$forbidden]), 'the projection must never create a universal count or package row (' . $forbidden . ')');
+	}
+
+	// The resolved cache is rebuilt only by Grocy's characterized native triggers, which expand a
+	// universal rule into the product-scoped rows the cache key (product_id, from_qu_id, to_qu_id)
+	// owns. The module issues no cache SQL of its own.
+	conversionAssertSame(0, (int)$pdo->query('SELECT COUNT(*) FROM cache__quantity_unit_conversions_resolved WHERE product_id IS NULL')->fetchColumn(), 'the characterized resolved cache stays product-scoped');
+	foreach ([['1', '7', '1000.0'], ['2', '7', '453.59237']] as [$from, $to, $factor])
+	{
+		$cached = $pdo->query('SELECT factor FROM cache__quantity_unit_conversions_resolved WHERE product_id = 11 AND from_qu_id = ' . $from . ' AND to_qu_id = ' . $to)->fetchAll(PDO::FETCH_COLUMN);
+		conversionAssertSame([$factor], $cached, 'native triggers must rebuild exactly one resolved cache row for projected pair ' . $from . '>' . $to);
+	}
+
+	// D-14 and D-03: existing product-specific conversions and the module catalog are untouched.
+	conversionAssertSame($productRowsBefore, $pdo->query('SELECT id, product_id, from_qu_id, to_qu_id, factor FROM quantity_unit_conversions WHERE product_id IS NOT NULL ORDER BY id')->fetchAll(PDO::FETCH_ASSOC), 'activation must leave every existing product conversion row unchanged');
+	conversionAssertSame($profilesBefore, $pdo->query('SELECT profile_key, status, factor FROM grocy_ai_conversion_profiles ORDER BY profile_key')->fetchAll(PDO::FETCH_ASSOC), 'activation must not change sourced profile records');
+	conversionAssertSame($catalogBefore, $pdo->query('SELECT revision_id, from_unit_key, to_unit_key, factor FROM grocy_ai_conversion_rules ORDER BY id')->fetchAll(PDO::FETCH_ASSOC), 'activation must not rewrite the sourced catalog rules');
+
+	// Re-running the same immutable proof is idempotent: no second evidence row, no duplicate rows.
+	$afterFirst = conversionActivationSnapshot($pdo);
+	$repeat = (new GrocyAiConversionService($pdo, false))->ActivateVerifiedRuleset($bundle);
+	conversionAssertSame('active', $repeat['status'] ?? null, 'replaying the same immutable proof stays active');
+	conversionAssertSame(0, (int)$repeat['projected_universal_rows'], 'replaying the same proof projects no additional universal row');
+	conversionAssertSame($afterFirst, conversionActivationSnapshot($pdo), 'replaying the same immutable proof changes nothing');
+
+	// D-12: coverage diagnostics stay evidence-driven — they report ready only because the ledger
+	// row exists, and they still expose no factor, rule, or household value.
+	$coverage = (new GrocyAiConversionService($pdo, false))->ValidateConversionCoverage();
+	conversionAssertSame('ready', $coverage['gate']['state'], 'coverage must report the gate ready from the recorded evidence');
+	conversionAssertSame('present', $coverage['gate']['main_branch_evidence'], 'coverage must report the immutable main evidence present');
+	conversionAssertSame('present', $coverage['gate']['stable_branch_evidence'], 'coverage must report the immutable stable evidence present');
+	conversionAssertSame('universal_native_rows_v1', $coverage['gate']['selected_projection'], 'coverage must name the selected projection');
+	conversionAssertSame(8, count(array_filter($coverage['protected_behavior'], static fn(array $entry): bool => $entry['state'] === 'passed')), 'coverage must report every protected consumer verified');
+
+	unlink($documentPath);
+	return $bundle;
+}
+
+function runConversionReleaseGate(): never
+{
+	conversionActivationRuntime();
+	$pdo = conversionActivationPdo();
+	$database = conversionNativeSaveHookInstallDatabase($pdo);
+	$controller = conversionNativeSaveHookController($database);
+
+	conversionActivationEvidenceContract($pdo);
+	conversionActivationSoleAuthorityContract($pdo, $controller);
+
+	// Inactive rules must not have reached the resolved cache before the gate passed.
+	conversionAssertSame(0, (int)$pdo->query('SELECT COUNT(*) FROM quantity_unit_conversions WHERE product_id IS NULL')->fetchColumn(), 'inactive reusable rules create no universal native row');
+	conversionAssertSame(0, (int)$pdo->query('SELECT COUNT(*) FROM cache__quantity_unit_conversions_resolved WHERE product_id IS NULL')->fetchColumn(), 'inactive reusable rules create no resolved cache row');
+
+	conversionActivationSelectedProjectionContract($pdo);
+
+	fwrite(STDOUT, "Conversion release gate tests passed\n");
+	exit(0);
+}
+
+/**
+ * Test 4 — after a passing activation the generic native boundary still fails closed, while
+ * product-scoped package and measured-density saves keep their normal Grocy Save behavior.
+ */
+function runConversionPostActivationBypass(): never
+{
+	conversionActivationRuntime();
+	$pdo = conversionActivationPdo();
+	$database = conversionNativeSaveHookInstallDatabase($pdo);
+	$controller = conversionNativeSaveHookController($database);
+	conversionActivationSelectedProjectionContract($pdo);
+
+	$activated = conversionActivationSnapshot($pdo);
+	$activeRevisions = $pdo->query("SELECT id FROM grocy_ai_conversion_rule_revisions WHERE status = 'active' ORDER BY id")->fetchAll(PDO::FETCH_COLUMN);
+	conversionAssertSame(12, count($activeRevisions), 'the bypass fixture must start from a passing activation');
+
+	// A universal POST/PUT that restates an already-projected rule exactly, and one that tampers with
+	// its factor, are both rejected before any native trigger or cache work.
+	foreach ([
+		[['product_id' => null, 'from_qu_id' => 1, 'to_qu_id' => 7, 'factor' => '1000'], 'reusable_scope_inactive'],
+		[['product_id' => null, 'from_qu_id' => 2, 'to_qu_id' => 7, 'factor' => '453.59237'], 'reusable_scope_inactive'],
+		[['product_id' => null, 'from_qu_id' => 1, 'to_qu_id' => 7, 'factor' => '999'], 'factor_tolerance'],
+		[reusablePackageCandidate(), 'reusable_count_scope'],
+		[crossDimensionCandidate(), 'dimension_mismatch']
+	] as [$candidate, $reason])
+	{
+		conversionNativeSaveHookAssertRejectedWithoutWrite($pdo, $controller, $candidate, $reason);
+		conversionNativeSaveHookAssertRejectedEditWithoutWrite($pdo, $controller, 91, $candidate, $reason);
+	}
+
+	// A generic PUT aimed at a gate-created universal row must not edit the projection either.
+	$gateCreatedId = (int)$pdo->query('SELECT id FROM quantity_unit_conversions WHERE product_id IS NULL ORDER BY id LIMIT 1')->fetchColumn();
+	conversionNativeSaveHookAssertRejectedEditWithoutWrite($pdo, $controller, $gateCreatedId, ['product_id' => null, 'from_qu_id' => 1, 'to_qu_id' => 7, 'factor' => '1000'], 'reusable_scope_inactive');
+	conversionNativeSaveHookAssertRejectedEditWithoutWrite($pdo, $controller, $gateCreatedId, ['product_id' => null, 'from_qu_id' => 1, 'to_qu_id' => 7, 'factor' => '1001'], 'factor_tolerance');
+
+	conversionAssertSame($activated, conversionActivationSnapshot($pdo), 'no post-activation bypass may change native universal rows, the projection, cache snapshots, evidence, or the active revision');
+
+	// D-03: normal product-scoped native saves still persist through Grocy Save.
+	$addResponse = conversionNativeSaveHookInvokeAdd($controller, productScopedPackageCandidate());
+	conversionAssertSame(200, $addResponse->getStatusCode(), 'a valid product-scoped package conversion must still save after activation');
+	conversionAssertSame(1, (int)$pdo->query('SELECT COUNT(*) FROM quantity_unit_conversions WHERE product_id = 11 AND from_qu_id = 5 AND to_qu_id = 7 AND factor = 12')->fetchColumn(), 'the product-scoped package conversion must persist exactly once');
+	$editResponse = conversionNativeSaveHookInvokeEdit($controller, 91, productScopedDensityCandidate());
+	conversionAssertSame(204, $editResponse->getStatusCode(), 'a valid measured-density conversion must still save after activation');
+	conversionAssertSame(1, (int)$pdo->query('SELECT COUNT(*) FROM quantity_unit_conversions WHERE id = 91 AND product_id = 11 AND from_qu_id = 7 AND to_qu_id = 3 AND factor = 0.9')->fetchColumn(), 'the measured-density edit must persist on the requested object');
+
+	conversionAssertSame($activated['evidence'], conversionActivationSnapshot($pdo)['evidence'], 'normal product saves must not touch activation evidence');
+	conversionAssertSame($activated['revisions'], conversionActivationSnapshot($pdo)['revisions'], 'normal product saves must not touch reusable revision state');
+
+	fwrite(STDOUT, "Conversion post-activation bypass tests passed\n");
+	exit(0);
+}
+
+/**
+ * Plan 04-10 — the maintainer-only promotion command.
+ *
+ * Every case runs the real command as a separate CLI process against a disposable on-disk database,
+ * so CLI-only execution, deployment-owned authentication, and the redacted output contract are
+ * exercised the way an operator would reach them. No case touches household data.
+ */
+function conversionCommandScript(): string
+{
+	return dirname(__DIR__) . '/bin/activate-verified-conversion-ruleset.php';
+}
+
+function conversionCommandTemporaryDirectory(): string
+{
+	$path = sys_get_temp_dir() . '/grocy-ai-activation-cli-' . bin2hex(random_bytes(6));
+	if (!mkdir($path, 0700) && !is_dir($path))
+	{
+		throw new RuntimeException('conversion_command_fixture_directory_unavailable');
+	}
+	return $path;
+}
+
+function conversionCommandRemoveDirectory(string $path): void
+{
+	foreach ((array)scandir($path) as $entry)
+	{
+		if ($entry === '.' || $entry === '..')
+		{
+			continue;
+		}
+		$child = $path . '/' . $entry;
+		is_dir($child) ? conversionCommandRemoveDirectory($child) : unlink($child);
+	}
+	rmdir($path);
+}
+
+/**
+ * A disposable deployment: an on-disk Grocy database with the characterized native conversion
+ * schema, a maintainer secret file with deployment-only permissions, and a characterization
+ * document that names the selected projection.
+ */
+function conversionCommandFixture(bool $selectProjection = true): array
+{
+	$root = conversionCommandTemporaryDirectory();
+	$dataPath = $root . '/data';
+	mkdir($dataPath, 0700);
+	$databasePath = $dataPath . '/grocy.db';
+	$pdo = conversionNativeSaveHookPdo($databasePath);
+	GrocyAiConversionMigration::Bootstrap($pdo);
+	$pdo = null;
+
+	$secret = bin2hex(random_bytes(32));
+	$authFile = $root . '/maintainer-auth';
+	file_put_contents($authFile, $secret . "\n");
+	chmod($authFile, 0600);
+
+	$documentPath = $selectProjection
+		? conversionActivationSelectedDocument()
+		: conversionActivationCharacterizationPath();
+
+	return [
+		'root' => $root,
+		'data_path' => $dataPath,
+		'database_path' => $databasePath,
+		'auth_file' => $authFile,
+		'secret' => $secret,
+		'document' => $documentPath,
+		'owns_document' => $selectProjection,
+		'main_proof' => 'f53665ca19c0e2abcd095f79a93865cfbf396a1d',
+		'stable_proof' => '6605ae6c2034c6679381de185cc567d80d38db79'
+	];
+}
+
+function conversionCommandCleanup(array $fixture): void
+{
+	if ($fixture['owns_document'] && is_file($fixture['document']))
+	{
+		unlink($fixture['document']);
+	}
+	conversionCommandRemoveDirectory($fixture['root']);
+}
+
+function conversionCommandRun(array $fixture, array $arguments, array $overrides = [], ?string $stdin = null): array
+{
+	$environment = [
+		'GROCY_DATAPATH' => $fixture['data_path'],
+		'GROCY_AI_MAINTAINER_AUTH_FILE' => $fixture['auth_file'],
+		'GROCY_AI_CHARACTERIZATION_FILE' => $fixture['document']
+	];
+	foreach ($overrides as $key => $value)
+	{
+		if ($value === null)
+		{
+			unset($environment[$key]);
+			continue;
+		}
+		$environment[$key] = $value;
+	}
+
+	$descriptors = [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
+	$process = proc_open(
+		array_merge([PHP_BINARY, conversionCommandScript()], $arguments),
+		$descriptors, $pipes, dirname(__DIR__, 3), $environment
+	);
+	fwrite($pipes[0], $stdin ?? ($fixture['secret'] . "\n"));
+	fclose($pipes[0]);
+	$stdout = (string)stream_get_contents($pipes[1]);
+	$stderr = (string)stream_get_contents($pipes[2]);
+	fclose($pipes[1]);
+	fclose($pipes[2]);
+	return ['code' => proc_close($process), 'stdout' => $stdout, 'stderr' => $stderr];
+}
+
+function conversionCommandArguments(array $fixture, string $revision = 'universal-kg-g'): array
+{
+	return [
+		'--revision', $revision,
+		'--main-proof-artifact', $fixture['main_proof'],
+		'--stable-proof-artifact', $fixture['stable_proof']
+	];
+}
+
+function conversionCommandSnapshot(array $fixture): array
+{
+	$pdo = new PDO('sqlite:' . $fixture['database_path'], null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+	return conversionActivationSnapshot($pdo);
+}
+
+function conversionCommandAssertRefused(array $fixture, string $caseName, int $expectedCode, string $expectedReason, array $arguments, array $overrides = [], ?string $stdin = null): void
+{
+	$before = conversionCommandSnapshot($fixture);
+	$result = conversionCommandRun($fixture, $arguments, $overrides, $stdin);
+	conversionAssertSame($expectedCode, $result['code'], $caseName . ' must return its fixed non-success exit code');
+	conversionAssertSame('', $result['stdout'], $caseName . ' must print no success document');
+	$error = json_decode(trim($result['stderr']), true, 512, JSON_THROW_ON_ERROR);
+	conversionAssertSame(['reason', 'status'], (static function (array $body): array { $keys = array_keys($body); sort($keys); return $keys; })($error), $caseName . ' must emit only the fixed redacted error shape');
+	conversionAssertSame('refused', $error['status'] ?? null, $caseName . ' must report a refused status');
+	conversionAssertSame($expectedReason, $error['reason'] ?? null, $caseName . ' must report its bounded reason');
+	conversionAssertSame(false, str_contains($result['stderr'], $fixture['secret']), $caseName . ' must never echo the maintainer secret');
+	conversionAssertSame(false, str_contains($result['stderr'], $fixture['main_proof']), $caseName . ' must never echo a complete immutable identifier');
+	conversionAssertSame($before, conversionCommandSnapshot($fixture), $caseName . ' must leave revisions, evidence, native rows, and cache unchanged');
+}
+
+/**
+ * Test 1 — the documented invocation promotes exactly one named inactive revision.
+ */
+function conversionCommandSuccessContract(array $fixture): void
+{
+	$before = conversionCommandSnapshot($fixture);
+	conversionAssertSame(0, count($before['evidence']), 'the fixture must start with no recorded activation');
+	conversionAssertSame(0, count(array_filter($before['revisions'], static fn(array $row): bool => $row['status'] === 'active')), 'the fixture must start with every revision inactive');
+
+	$result = conversionCommandRun($fixture, conversionCommandArguments($fixture));
+	conversionAssertSame(0, $result['code'], 'the documented invocation must succeed');
+	conversionAssertSame('', $result['stderr'], 'a successful promotion must emit nothing on stderr');
+	$body = json_decode(trim($result['stdout']), true, 512, JSON_THROW_ON_ERROR);
+	$keys = array_keys($body);
+	sort($keys);
+	conversionAssertSame(['evidence_reference', 'main_proof_reference', 'result_code', 'revision', 'selected_adapter', 'stable_proof_reference', 'status'], $keys, 'the command must emit exactly the redacted result document');
+	conversionAssertSame('active', $body['status'], 'a successful promotion reports the active status');
+	conversionAssertSame('promoted', $body['result_code'], 'a successful promotion reports the fixed result code');
+	conversionAssertSame('universal-kg-g', $body['revision'], 'the result names the promoted revision');
+	conversionAssertSame('universal_native_rows_v1', $body['selected_adapter'], 'the result names the characterization-selected adapter');
+
+	// D-22: the result carries references, never complete immutable identifiers or secrets.
+	conversionAssertSame(12, strlen((string)$body['main_proof_reference']), 'the main proof reference must be redacted');
+	conversionAssertSame(12, strlen((string)$body['stable_proof_reference']), 'the stable proof reference must be redacted');
+	conversionAssertSame(12, strlen((string)$body['evidence_reference']), 'the evidence reference must be redacted');
+	foreach ([$fixture['secret'], $fixture['main_proof'], $fixture['stable_proof'], $fixture['auth_file'], $fixture['database_path']] as $sensitive)
+	{
+		conversionAssertSame(false, str_contains($result['stdout'], $sensitive), 'the result must not disclose secrets, complete identifiers, or configured paths');
+	}
+
+	$after = conversionCommandSnapshot($fixture);
+	conversionAssertSame(1, count($after['evidence']), 'a successful promotion records exactly one evidence row');
+	$active = array_values(array_filter($after['revisions'], static fn(array $row): bool => $row['status'] === 'active'));
+	conversionAssertSame(1, count($active), 'the command must promote exactly the one named revision');
+	conversionAssertSame('universal-kg-g', $active[0]['id'], 'the promoted revision must be the named one');
+
+	$pdo = new PDO('sqlite:' . $fixture['database_path'], null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+	$universal = $pdo->query('SELECT from_qu_id, to_qu_id, factor FROM quantity_unit_conversions WHERE product_id IS NULL ORDER BY from_qu_id')->fetchAll(PDO::FETCH_ASSOC);
+	// One gate-created row plus the inverse Grocy's own characterized trigger derives.
+	conversionAssertSame(2, count($universal), 'promoting one rule creates one gate row and its native inverse');
+	conversionAssertSame([1, 7, 1000.0], [(int)$universal[0]['from_qu_id'], (int)$universal[0]['to_qu_id'], (float)$universal[0]['factor']], 'the projection must write the precise cataloged factor');
+	conversionAssertSame(['1000.0'], $pdo->query('SELECT factor FROM cache__quantity_unit_conversions_resolved WHERE product_id = 11 AND from_qu_id = 1 AND to_qu_id = 7')->fetchAll(PDO::FETCH_COLUMN), 'Grocy native triggers must rebuild the resolved cache row');
+	conversionAssertSame(1, (int)$pdo->query('SELECT COUNT(*) FROM quantity_unit_conversions WHERE id = 91 AND product_id = 11')->fetchColumn(), 'the existing product conversion row must be untouched');
+	$pdo = null;
+
+	// An already-active revision is refused, and the second attempt changes nothing.
+	conversionCommandAssertRefused($fixture, 'already-active revision', 4, 'revision_not_promotable', conversionCommandArguments($fixture));
+}
+
+/**
+ * Test 2 — every unauthorized, malformed, stale, or unproven input fails closed.
+ */
+function conversionCommandRefusalContract(array $fixture): void
+{
+	$valid = conversionCommandArguments($fixture);
+
+	// Deployment-owned authentication.
+	conversionCommandAssertRefused($fixture, 'missing auth-file configuration', 2, 'maintainer_auth_unconfigured', $valid, ['GROCY_AI_MAINTAINER_AUTH_FILE' => null]);
+	conversionCommandAssertRefused($fixture, 'empty auth-file configuration', 2, 'maintainer_auth_unconfigured', $valid, ['GROCY_AI_MAINTAINER_AUTH_FILE' => '']);
+	conversionCommandAssertRefused($fixture, 'relative auth-file path', 2, 'maintainer_auth_unconfigured', $valid, ['GROCY_AI_MAINTAINER_AUTH_FILE' => 'maintainer-auth']);
+	conversionCommandAssertRefused($fixture, 'unreadable auth file', 2, 'maintainer_auth_unavailable', $valid, ['GROCY_AI_MAINTAINER_AUTH_FILE' => $fixture['root'] . '/absent-auth']);
+
+	$insideDataPath = $fixture['data_path'] . '/maintainer-auth';
+	file_put_contents($insideDataPath, $fixture['secret'] . "\n");
+	chmod($insideDataPath, 0600);
+	conversionCommandAssertRefused($fixture, 'auth file inside the Grocy data path', 2, 'maintainer_auth_unavailable', $valid, ['GROCY_AI_MAINTAINER_AUTH_FILE' => $insideDataPath]);
+	unlink($insideDataPath);
+
+	$exposed = $fixture['root'] . '/exposed-auth';
+	file_put_contents($exposed, $fixture['secret'] . "\n");
+	chmod($exposed, 0644);
+	conversionCommandAssertRefused($fixture, 'world-readable auth file', 2, 'maintainer_auth_unavailable', $valid, ['GROCY_AI_MAINTAINER_AUTH_FILE' => $exposed]);
+	unlink($exposed);
+
+	$malformed = $fixture['root'] . '/malformed-auth';
+	file_put_contents($malformed, "not-a-maintainer-secret\n");
+	chmod($malformed, 0600);
+	conversionCommandAssertRefused($fixture, 'malformed auth secret', 2, 'maintainer_auth_unavailable', $valid, ['GROCY_AI_MAINTAINER_AUTH_FILE' => $malformed]);
+	unlink($malformed);
+
+	conversionCommandAssertRefused($fixture, 'wrong presented secret', 3, 'maintainer_unauthorized', $valid, [], bin2hex(random_bytes(32)) . "\n");
+	conversionCommandAssertRefused($fixture, 'absent presented secret', 3, 'maintainer_unauthorized', $valid, [], '');
+
+	// Configuration and argument shape.
+	conversionCommandAssertRefused($fixture, 'missing data path', 2, 'datapath_unconfigured', $valid, ['GROCY_DATAPATH' => null]);
+	conversionCommandAssertRefused($fixture, 'relative data path', 2, 'datapath_unconfigured', $valid, ['GROCY_DATAPATH' => 'relative/data']);
+	$emptyDataPath = $fixture['root'] . '/empty-data';
+	mkdir($emptyDataPath, 0700);
+	conversionCommandAssertRefused($fixture, 'unavailable database', 2, 'database_unavailable', $valid, ['GROCY_DATAPATH' => $emptyDataPath]);
+	rmdir($emptyDataPath);
+	conversionCommandAssertRefused($fixture, 'no arguments', 2, 'arguments_invalid', []);
+	conversionCommandAssertRefused($fixture, 'missing revision', 2, 'arguments_invalid', ['--main-proof-artifact', $fixture['main_proof'], '--stable-proof-artifact', $fixture['stable_proof']]);
+	conversionCommandAssertRefused($fixture, 'missing stable proof', 2, 'arguments_invalid', ['--revision', 'universal-kg-g', '--main-proof-artifact', $fixture['main_proof']]);
+	conversionCommandAssertRefused($fixture, 'unknown option', 2, 'arguments_invalid', array_merge($valid, ['--adapter', 'universal_native_rows_v1']));
+	conversionCommandAssertRefused($fixture, 'positional argument', 2, 'arguments_invalid', array_merge($valid, ['universal-lb-g']));
+	conversionCommandAssertRefused($fixture, 'repeated option', 2, 'arguments_invalid', array_merge($valid, ['--revision', 'universal-lb-g']));
+
+	// Closed identifier formats: no path, SQL, cache key, factor, or adapter can enter.
+	foreach (['../etc/passwd', "universal-kg-g'; DROP TABLE quantity_unit_conversions; --", 'Universal-KG-G', '', str_repeat('a', 65)] as $index => $revision)
+	{
+		conversionCommandAssertRefused($fixture, 'malformed revision identifier ' . $index, 2, 'arguments_invalid', ['--revision', $revision, '--main-proof-artifact', $fixture['main_proof'], '--stable-proof-artifact', $fixture['stable_proof']]);
+	}
+	foreach (['f53665ca', strtoupper($fixture['main_proof']), $fixture['main_proof'] . '0', 'HEAD'] as $index => $proof)
+	{
+		conversionCommandAssertRefused($fixture, 'malformed proof identifier ' . $index, 2, 'arguments_invalid', ['--revision', 'universal-kg-g', '--main-proof-artifact', $proof, '--stable-proof-artifact', $fixture['stable_proof']]);
+	}
+
+	// Evidence that is unknown, stale, altered, or unproven.
+	conversionCommandAssertRefused($fixture, 'unknown revision', 4, 'revision_not_promotable', conversionCommandArguments($fixture, 'universal-no-such-rule'));
+	conversionCommandAssertRefused($fixture, 'mismatched main proof', 4, 'immutable_proof_mismatch', ['--revision', 'universal-kg-g', '--main-proof-artifact', str_repeat('a', 40), '--stable-proof-artifact', $fixture['stable_proof']]);
+	conversionCommandAssertRefused($fixture, 'mismatched stable proof', 4, 'immutable_proof_mismatch', ['--revision', 'universal-kg-g', '--main-proof-artifact', $fixture['main_proof'], '--stable-proof-artifact', str_repeat('b', 40)]);
+	conversionCommandAssertRefused($fixture, 'swapped proof artifacts', 4, 'immutable_proof_mismatch', ['--revision', 'universal-kg-g', '--main-proof-artifact', $fixture['stable_proof'], '--stable-proof-artifact', $fixture['main_proof']]);
+	conversionCommandAssertRefused($fixture, 'absent characterization document', 4, 'activation_refused', $valid, ['GROCY_AI_CHARACTERIZATION_FILE' => $fixture['root'] . '/absent-characterization.md']);
+
+	$altered = $fixture['root'] . '/altered-characterization.md';
+	$document = (string)file_get_contents($fixture['document']);
+	file_put_contents($altered, str_replace('419f0d3a', '419f0d3b', $document));
+	conversionCommandAssertRefused($fixture, 'altered characterization document', 4, 'activation_refused', $valid, ['GROCY_AI_CHARACTERIZATION_FILE' => $altered]);
+	unlink($altered);
+
+	// The immutable document that selects no projection can never promote anything.
+	conversionCommandAssertRefused($fixture, 'no selected projection', 4, 'activation_refused', $valid, ['GROCY_AI_CHARACTERIZATION_FILE' => conversionActivationCharacterizationPath()]);
+}
+
+/**
+ * Test 3 — the command is a thin, non-injectable delegate to the one activation transaction.
+ */
+function conversionCommandSoleCallerContract(): void
+{
+	$source = file_get_contents(conversionCommandScript());
+	if (!is_string($source))
+	{
+		throw new RuntimeException('conversion_command_source_unavailable');
+	}
+	conversionAssertSame(1, preg_match_all('/->ActivateVerifiedRuleset\(/', $source), 'the command must call the activation transaction exactly once');
+	conversionAssertSame(1, preg_match_all("/PHP_SAPI !== 'cli'/", $source), 'the command must refuse every non-CLI SAPI');
+	conversionAssertSame(0, preg_match_all('/\b(INSERT|UPDATE|DELETE|REPLACE|CREATE|DROP|ALTER)\b/i', $source), 'the command must contain no SQL of its own');
+	conversionAssertSame(0, preg_match_all('/quantity_unit_conversions|cache__|grocy_ai_conversion_/i', $source), 'the command must not name native, cache, or module relations');
+	conversionAssertSame(0, preg_match_all('/--(adapter|factor|cache|sql|projection|path)\b/', $source), 'the command must expose no adapter, factor, cache, SQL, projection, or path option');
+
+	$routes = (string)file_get_contents(dirname(__DIR__) . '/routes.php');
+	conversionAssertSame(0, preg_match_all('/activate|promot/i', $routes), 'no HTTP route may reach the promotion command');
+	$controller = (string)file_get_contents(dirname(__DIR__) . '/src/GrocyAiApiController.php');
+	conversionAssertSame(0, preg_match_all('/ActivateVerifiedRuleset|activate-verified/i', $controller), 'no API controller path may reach the promotion command or the activation transaction');
+}
+
+/**
+ * Test 4 — the command is the sole promotion path: generic native writes stay fail-closed around it
+ * while product-scoped saves keep normal Grocy authority.
+ */
+function conversionCommandSolePromotionPathContract(array $fixture): void
+{
+	$pdo = new PDO('sqlite:' . $fixture['database_path'], null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+	$database = conversionNativeSaveHookInstallDatabase($pdo);
+	$controller = conversionNativeSaveHookController($database);
+
+	$promoted = conversionActivationSnapshot($pdo);
+	conversionAssertSame(1, count($promoted['evidence']), 'the sole-path fixture must run against the promoted database');
+
+	foreach ([
+		[['product_id' => null, 'from_qu_id' => 1, 'to_qu_id' => 7, 'factor' => '1000'], 'reusable_scope_inactive'],
+		[['product_id' => null, 'from_qu_id' => 1, 'to_qu_id' => 7, 'factor' => '999'], 'factor_tolerance'],
+		[reusablePackageCandidate(), 'reusable_count_scope'],
+		[crossDimensionCandidate(), 'dimension_mismatch']
+	] as [$candidate, $reason])
+	{
+		conversionNativeSaveHookAssertRejectedWithoutWrite($pdo, $controller, $candidate, $reason);
+		conversionNativeSaveHookAssertRejectedEditWithoutWrite($pdo, $controller, 91, $candidate, $reason);
+	}
+	$gateCreatedId = (int)$pdo->query('SELECT id FROM quantity_unit_conversions WHERE product_id IS NULL ORDER BY id LIMIT 1')->fetchColumn();
+	conversionNativeSaveHookAssertRejectedEditWithoutWrite($pdo, $controller, $gateCreatedId, ['product_id' => null, 'from_qu_id' => 1, 'to_qu_id' => 7, 'factor' => '1000'], 'reusable_scope_inactive');
+	conversionAssertSame($promoted, conversionActivationSnapshot($pdo), 'no generic native write may change the promoted revision, evidence, projection, or cache');
+
+	$addResponse = conversionNativeSaveHookInvokeAdd($controller, productScopedPackageCandidate());
+	conversionAssertSame(200, $addResponse->getStatusCode(), 'a valid product-scoped package conversion must still save after a promotion');
+	$editResponse = conversionNativeSaveHookInvokeEdit($controller, 91, productScopedDensityCandidate());
+	conversionAssertSame(204, $editResponse->getStatusCode(), 'a valid measured-density conversion must still save after a promotion');
+	conversionAssertSame($promoted['evidence'], conversionActivationSnapshot($pdo)['evidence'], 'normal product saves must not touch activation evidence');
+	conversionAssertSame($promoted['revisions'], conversionActivationSnapshot($pdo)['revisions'], 'normal product saves must not touch reusable revision state');
+}
+
+function runConversionActivationCommand(): never
+{
+	if (!is_file(conversionCommandScript()))
+	{
+		expectedRed('EXPECTED_RED: conversion-activation-command', 'The maintainer-only evidence-gated promotion command is not implemented');
+	}
+	conversionActivationRuntime();
+	conversionCommandSoleCallerContract();
+
+	$fixture = conversionCommandFixture();
+	try
+	{
+		conversionCommandRefusalContract($fixture);
+		conversionCommandSuccessContract($fixture);
+		conversionCommandSolePromotionPathContract($fixture);
+	}
+	finally
+	{
+		conversionCommandCleanup($fixture);
+	}
+
+	fwrite(STDOUT, "Conversion activation command tests passed\n");
 	exit(0);
 }

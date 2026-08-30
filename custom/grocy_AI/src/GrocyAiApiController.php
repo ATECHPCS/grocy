@@ -6,6 +6,7 @@ use Grocy\Controllers\Api\BaseApiController;
 use Grocy\Controllers\Users\User;
 use Grocy\Services\DatabaseService;
 use GrocyAI\Services\GrocyAiBarcodeService;
+use GrocyAI\Services\GrocyAiBulkService;
 use GrocyAI\Services\GrocyAiConversionMigration;
 use GrocyAI\Services\GrocyAiDiagnostic;
 use GrocyAI\Services\GrocyAiService;
@@ -367,6 +368,389 @@ class GrocyAiApiController extends BaseApiController
 		catch (\Throwable)
 		{
 			return $this->GenericErrorResponse($response, 'Conversion coverage unavailable', 503);
+		}
+	}
+
+	/**
+	 * Generate a bounded, zero-mutation bulk plan (D-01/D-13/BULK-01): the user-facing plan-CREATION
+	 * surface, so a MASTER_DATA_EDIT user can create a plan in-product and immediately review it. The
+	 * permission is checked before any write. The body is the closed `{ "operation_type": "taxonomy_assignment" }`
+	 * shape only — the single server-registered plan operation type; any extra key (a browser-supplied item
+	 * list, object_id, operation, value, or SQL) or an operation_type outside the closed set is a bounded 400
+	 * before the engine runs, so the browser can never supply the proposed values or operations — GeneratePlan
+	 * derives those server-side. The authenticated session user (`GROCY_USER_ID`) is recorded as the plan
+	 * actor; generation writes ONLY the two module tables and performs zero native/taxonomy mutation. On
+	 * success the new plan is returned in the same closed shape as BulkPlan (header + counts + items) at HTTP
+	 * 201 so the UI can render it without a second round-trip.
+	 */
+	public function GenerateBulkPlan(Request $request, Response $response, array $args): Response
+	{
+		User::CheckPermission($request, User::PERMISSION_MASTER_DATA_EDIT);
+
+		$body = $request->getParsedBody();
+		if (!is_array($body))
+		{
+			return $this->GenericErrorResponse($response, 'Invalid plan generation request', 400);
+		}
+		// Closed candidate-key set: the request may supply only operation_type, restricted to the single
+		// server-registered plan operation type. Any extra key makes the intersected candidate differ from
+		// the raw body and is refused before the engine, so no free-form entity/field/value/SQL payload can
+		// reach generation. The proposed values and operations are always server-derived by GeneratePlan.
+		$candidate = array_intersect_key($body, array_flip(['operation_type']));
+		if ($candidate !== $body || !array_key_exists('operation_type', $candidate)
+			|| !is_string($candidate['operation_type'])
+			|| !in_array($candidate['operation_type'], [GrocyAiBulkService::OPERATION_TYPE], true))
+		{
+			return $this->GenericErrorResponse($response, 'Invalid plan generation request', 400);
+		}
+
+		try
+		{
+			$service = new GrocyAiBulkService(DatabaseService::GetInstance()->GetDbConnectionRaw(), false);
+			// The actor is the authenticated session user only — never a browser-supplied value.
+			$generated = $service->GeneratePlan(['actor' => (string)GROCY_USER_ID]);
+			return $this->ApiResponse($response->withStatus(201), $service->ReadPlan((int)$generated['id']));
+		}
+		catch (\InvalidArgumentException)
+		{
+			return $this->GenericErrorResponse($response, 'Invalid plan generation request', 400);
+		}
+		catch (\RuntimeException)
+		{
+			return $this->GenericErrorResponse($response, 'Plan generation unavailable', 503);
+		}
+	}
+
+	/**
+	 * Read a stored bulk plan header, counts, and items (D-13). MASTER_DATA_EDIT-gated, read-only.
+	 */
+	public function BulkPlan(Request $request, Response $response, array $args): Response
+	{
+		User::CheckPermission($request, User::PERMISSION_MASTER_DATA_EDIT);
+		$planId = $args['planId'] ?? null;
+		if (!is_string($planId) || preg_match('/^[1-9][0-9]{0,9}$/D', $planId) !== 1)
+		{
+			return $this->GenericErrorResponse($response, 'Invalid plan', 400);
+		}
+
+		try
+		{
+			$service = new GrocyAiBulkService(DatabaseService::GetInstance()->GetDbConnectionRaw(), false);
+			return $this->ApiResponse($response, $service->ReadPlan((int)$planId));
+		}
+		catch (\InvalidArgumentException)
+		{
+			return $this->GenericErrorResponse($response, 'Invalid plan', 400);
+		}
+		catch (\RuntimeException)
+		{
+			return $this->GenericErrorResponse($response, 'Plan unavailable', 404);
+		}
+	}
+
+	/**
+	 * Toggle one plan item's selection flag (D-04). The body is the closed `{ "selected": true|false }`
+	 * shape only; any other key or a non-boolean value is rejected before the service is called, so no
+	 * free-form entity/field/CRUD target can reach the selection write. MASTER_DATA_EDIT-gated.
+	 */
+	public function BulkPlanSetItemSelection(Request $request, Response $response, array $args): Response
+	{
+		User::CheckPermission($request, User::PERMISSION_MASTER_DATA_EDIT);
+		$planId = $args['planId'] ?? null;
+		$seq = $args['seq'] ?? null;
+		if (!is_string($planId) || preg_match('/^[1-9][0-9]{0,9}$/D', $planId) !== 1
+			|| !is_string($seq) || preg_match('/^(0|[1-9][0-9]{0,9})$/D', $seq) !== 1)
+		{
+			return $this->GenericErrorResponse($response, 'Invalid selection request', 400);
+		}
+
+		$body = $request->getParsedBody();
+		if (!is_array($body))
+		{
+			return $this->GenericErrorResponse($response, 'Invalid selection request', 400);
+		}
+		// Closed candidate-key set: the request may supply only the boolean `selected`. Any extra key
+		// makes the intersected candidate differ from the raw body and is refused.
+		$candidate = array_intersect_key($body, array_flip(['selected']));
+		if ($candidate !== $body || !array_key_exists('selected', $candidate) || !is_bool($candidate['selected']))
+		{
+			return $this->GenericErrorResponse($response, 'Invalid selection request', 400);
+		}
+
+		try
+		{
+			$service = new GrocyAiBulkService(DatabaseService::GetInstance()->GetDbConnectionRaw(), false);
+			return $this->ApiResponse($response, $service->SetItemSelection((int)$planId, (int)$seq, $candidate['selected']));
+		}
+		catch (\InvalidArgumentException)
+		{
+			return $this->GenericErrorResponse($response, 'Invalid selection request', 400);
+		}
+		catch (\RuntimeException)
+		{
+			return $this->GenericErrorResponse($response, 'Plan unavailable', 409);
+		}
+	}
+
+	/**
+	 * Return the complete selected diff for a stored plan (D-04/D-13). Read-only; declares no apply or
+	 * write action. MASTER_DATA_EDIT-gated.
+	 */
+	public function BulkPlanSelectedDiff(Request $request, Response $response, array $args): Response
+	{
+		User::CheckPermission($request, User::PERMISSION_MASTER_DATA_EDIT);
+		$planId = $args['planId'] ?? null;
+		if (!is_string($planId) || preg_match('/^[1-9][0-9]{0,9}$/D', $planId) !== 1)
+		{
+			return $this->GenericErrorResponse($response, 'Invalid plan', 400);
+		}
+
+		try
+		{
+			$service = new GrocyAiBulkService(DatabaseService::GetInstance()->GetDbConnectionRaw(), false);
+			return $this->ApiResponse($response, $service->SelectedDiff((int)$planId));
+		}
+		catch (\InvalidArgumentException)
+		{
+			return $this->GenericErrorResponse($response, 'Invalid plan', 400);
+		}
+		catch (\RuntimeException)
+		{
+			return $this->GenericErrorResponse($response, 'Plan unavailable', 404);
+		}
+	}
+
+	/**
+	 * Apply an approved plan (D-08/D-13): a user-facing, authenticated, MASTER_DATA_EDIT-gated durable
+	 * action — NOT a maintainer CLI. The permission is checked before any write. The body is the closed
+	 * confirmation `{ "checksum": "<sha256>" }` only; any extra key or a non-64-hex value is a bounded 400,
+	 * so no free-form entity/field/CRUD/SQL payload can reach the engine. The authenticated session user
+	 * (`GROCY_USER_ID`) is resolved as the actor and threaded to `ApplyPlan`; the confirmed checksum is
+	 * cross-checked by the engine, which returns a bounded outcome (never a partial write) on mismatch or
+	 * all-conflict. This is the sole apply surface — there is no CLI and no second apply route.
+	 */
+	public function BulkPlanApply(Request $request, Response $response, array $args): Response
+	{
+		User::CheckPermission($request, User::PERMISSION_MASTER_DATA_EDIT);
+		$planId = $args['planId'] ?? null;
+		if (!is_string($planId) || preg_match('/^[1-9][0-9]{0,9}$/D', $planId) !== 1)
+		{
+			return $this->GenericErrorResponse($response, 'Invalid apply request', 400);
+		}
+
+		$body = $request->getParsedBody();
+		if (!is_array($body))
+		{
+			return $this->GenericErrorResponse($response, 'Invalid apply request', 400);
+		}
+		// Closed candidate-key set: the request may supply only the reviewed 64-hex `checksum`. Any extra
+		// key makes the intersected candidate differ from the raw body and is refused before the engine.
+		$candidate = array_intersect_key($body, array_flip(['checksum']));
+		if ($candidate !== $body || !array_key_exists('checksum', $candidate)
+			|| !is_string($candidate['checksum']) || preg_match('/^[0-9a-f]{64}$/D', $candidate['checksum']) !== 1)
+		{
+			return $this->GenericErrorResponse($response, 'Invalid apply request', 400);
+		}
+
+		try
+		{
+			$service = new GrocyAiBulkService(DatabaseService::GetInstance()->GetDbConnectionRaw(), false);
+			$result = $service->ApplyPlan((int)$planId, (string)GROCY_USER_ID, $candidate['checksum']);
+			// The engine returns a bounded outcome; a refusal or a rolled-back apply maps to 409, never a
+			// partial write.
+			if ($result['blockers'] !== [])
+			{
+				return $this->ApiResponse($response->withStatus(409), $result);
+			}
+			return $this->ApiResponse($response, $result);
+		}
+		catch (\InvalidArgumentException)
+		{
+			return $this->GenericErrorResponse($response, 'Invalid apply request', 400);
+		}
+		catch (\RuntimeException)
+		{
+			return $this->GenericErrorResponse($response, 'Plan unavailable', 404);
+		}
+	}
+
+	/**
+	 * Read a stored plan's append-only audit ledger (D-10). MASTER_DATA_EDIT-gated, read-only: it returns
+	 * the plan's ordered immutable audit records for reconstruction and declares no edit or delete surface —
+	 * no endpoint can rewrite or remove an audit row. An unknown plan id returns a bounded 404.
+	 */
+	public function BulkPlanAudit(Request $request, Response $response, array $args): Response
+	{
+		User::CheckPermission($request, User::PERMISSION_MASTER_DATA_EDIT);
+		$planId = $args['planId'] ?? null;
+		if (!is_string($planId) || preg_match('/^[1-9][0-9]{0,9}$/D', $planId) !== 1)
+		{
+			return $this->GenericErrorResponse($response, 'Invalid plan', 400);
+		}
+
+		try
+		{
+			$service = new GrocyAiBulkService(DatabaseService::GetInstance()->GetDbConnectionRaw(), false);
+			return $this->ApiResponse($response, $service->ReadPlanAudit((int)$planId));
+		}
+		catch (\InvalidArgumentException)
+		{
+			return $this->GenericErrorResponse($response, 'Invalid plan', 400);
+		}
+		catch (\RuntimeException)
+		{
+			return $this->GenericErrorResponse($response, 'Plan unavailable', 404);
+		}
+	}
+
+	/**
+	 * Zero-write rollback preview (D-11/D-13). MASTER_DATA_EDIT-gated read: the permission is checked before
+	 * any read, then `PreviewRollback` returns the audit-derived reversible/refused breakdown without any
+	 * write. An unknown plan id returns a bounded 404; a non-integer id a bounded 400.
+	 */
+	public function BulkPlanRollbackPreview(Request $request, Response $response, array $args): Response
+	{
+		User::CheckPermission($request, User::PERMISSION_MASTER_DATA_EDIT);
+		$planId = $args['planId'] ?? null;
+		if (!is_string($planId) || preg_match('/^[1-9][0-9]{0,9}$/D', $planId) !== 1)
+		{
+			return $this->GenericErrorResponse($response, 'Invalid plan', 400);
+		}
+
+		try
+		{
+			$service = new GrocyAiBulkService(DatabaseService::GetInstance()->GetDbConnectionRaw(), false);
+			return $this->ApiResponse($response, $service->PreviewRollback((int)$planId));
+		}
+		catch (\InvalidArgumentException)
+		{
+			return $this->GenericErrorResponse($response, 'Invalid plan', 400);
+		}
+		catch (\RuntimeException)
+		{
+			return $this->GenericErrorResponse($response, 'Plan unavailable', 404);
+		}
+	}
+
+	/**
+	 * Execute a guarded rollback (D-11/D-13): an authenticated, MASTER_DATA_EDIT-gated, audited durable
+	 * action. The permission is checked before any write. The body is the closed, optional confirmation
+	 * `{ "checksum": "<sha256>" }` only — any extra key (an item list, an entity/field/value, or SQL) or a
+	 * non-64-hex value is a bounded 400, so no free-form target and no per-item value can reach the engine.
+	 * The authenticated session user (`GROCY_USER_ID`) is resolved as the actor and threaded to
+	 * `RollbackPlan`, which reuses the single-transaction, optimistic-concurrency, idempotent, append-only
+	 * forward-apply path and returns a bounded outcome (never a partial write) — a refusal or a rolled-back
+	 * transaction maps to 409.
+	 */
+	public function BulkPlanRollback(Request $request, Response $response, array $args): Response
+	{
+		User::CheckPermission($request, User::PERMISSION_MASTER_DATA_EDIT);
+		$planId = $args['planId'] ?? null;
+		if (!is_string($planId) || preg_match('/^[1-9][0-9]{0,9}$/D', $planId) !== 1)
+		{
+			return $this->GenericErrorResponse($response, 'Invalid rollback request', 400);
+		}
+
+		$body = $request->getParsedBody() ?? [];
+		if (!is_array($body))
+		{
+			return $this->GenericErrorResponse($response, 'Invalid rollback request', 400);
+		}
+		// Closed candidate-key set: only the optional reviewed 64-hex checksum. Any other key makes the
+		// intersected candidate differ from the raw body and is refused before the engine.
+		$candidate = array_intersect_key($body, array_flip(['checksum']));
+		if ($candidate !== $body)
+		{
+			return $this->GenericErrorResponse($response, 'Invalid rollback request', 400);
+		}
+		$confirmedChecksum = null;
+		if (array_key_exists('checksum', $candidate))
+		{
+			if (!is_string($candidate['checksum']) || preg_match('/^[0-9a-f]{64}$/D', $candidate['checksum']) !== 1)
+			{
+				return $this->GenericErrorResponse($response, 'Invalid rollback request', 400);
+			}
+			$confirmedChecksum = $candidate['checksum'];
+		}
+
+		try
+		{
+			$service = new GrocyAiBulkService(DatabaseService::GetInstance()->GetDbConnectionRaw(), false);
+			$result = $service->RollbackPlan((int)$planId, (string)GROCY_USER_ID, $confirmedChecksum);
+			// The engine returns a bounded outcome; a refusal or a rolled-back transaction maps to 409,
+			// never a partial write.
+			if ($result['blockers'] !== [])
+			{
+				return $this->ApiResponse($response->withStatus(409), $result);
+			}
+			return $this->ApiResponse($response, $result);
+		}
+		catch (\InvalidArgumentException)
+		{
+			return $this->GenericErrorResponse($response, 'Invalid rollback request', 400);
+		}
+		catch (\RuntimeException)
+		{
+			return $this->GenericErrorResponse($response, 'Plan unavailable', 404);
+		}
+	}
+
+	/**
+	 * Export a redacted, non-authoritative JSON or CSV snapshot of a stored plan (D-12/D-13). This is a
+	 * MASTER_DATA_EDIT-gated read: the permission is checked before any read, and the export writes
+	 * nothing. The `format` query param selects `json` (default) or `csv`; any other value — like a
+	 * non-integer plan id — is a bounded 400, and an unknown plan is a bounded 404. The response is a file
+	 * download marked non-authoritative in its own body/metadata. There is deliberately NO companion
+	 * endpoint that consumes an uploaded snapshot: re-import as authority stays deferred to V2-03, so this
+	 * export can never become a back-door write path.
+	 */
+	public function ExportBulkPlan(Request $request, Response $response, array $args): Response
+	{
+		User::CheckPermission($request, User::PERMISSION_MASTER_DATA_EDIT);
+		$planId = $args['planId'] ?? null;
+		if (!is_string($planId) || preg_match('/^[1-9][0-9]{0,9}$/D', $planId) !== 1)
+		{
+			return $this->GenericErrorResponse($response, 'Invalid export request', 400);
+		}
+
+		$format = $request->getQueryParams()['format'] ?? 'json';
+		if (!is_string($format) || ($format !== 'json' && $format !== 'csv'))
+		{
+			return $this->GenericErrorResponse($response, 'Invalid export request', 400);
+		}
+
+		try
+		{
+			$service = new GrocyAiBulkService(DatabaseService::GetInstance()->GetDbConnectionRaw(), false);
+			$snapshot = $service->ExportPlan((int)$planId, $format);
+			$filename = 'grocy-ai-bulk-plan-' . (int)$planId . '-non-authoritative.' . $format;
+
+			if ($format === 'csv')
+			{
+				$response->getBody()->write((string)$snapshot);
+				return $response
+					->withHeader('Cache-Control', 'private, no-store')
+					->withHeader('Content-Type', 'text/csv; charset=utf-8')
+					->withHeader('Content-Disposition', 'attachment; filename="' . $filename . '"')
+					->withHeader('X-Content-Type-Options', 'nosniff');
+			}
+
+			return $this->ApiResponse(
+				$response
+					->withHeader('Cache-Control', 'private, no-store')
+					->withHeader('Content-Type', 'application/json')
+					->withHeader('Content-Disposition', 'attachment; filename="' . $filename . '"')
+					->withHeader('X-Content-Type-Options', 'nosniff'),
+				$snapshot
+			);
+		}
+		catch (\InvalidArgumentException)
+		{
+			return $this->GenericErrorResponse($response, 'Invalid export request', 400);
+		}
+		catch (\RuntimeException)
+		{
+			return $this->GenericErrorResponse($response, 'Plan unavailable', 404);
 		}
 	}
 
