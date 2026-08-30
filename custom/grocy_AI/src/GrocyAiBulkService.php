@@ -203,6 +203,68 @@ class GrocyAiBulkService
 		return $header->fetch(PDO::FETCH_ASSOC);
 	}
 
+	/**
+	 * The closed, server-side typed-operation registry (D-05/D-06). Its only members are
+	 * `assign_taxonomy_leaf` and `set_unclassified`; each delegates to the shipped
+	 * `GrocyAiTaxonomyService::AssignProductTaxonomy` write with a fixed assignment key set. It is not
+	 * derived from any request payload. Conversion-cleanup and other operations are registered later in
+	 * Phase 6 and are deliberately absent here.
+	 *
+	 * @return array<string, array{operation: string, delegate_write: string, assignment_keys: array<int, string>}>
+	 */
+	public function RegisteredOperations(): array
+	{
+		return [
+			'assign_taxonomy_leaf' => [
+				'operation' => 'assign_taxonomy_leaf',
+				'delegate_write' => 'AssignProductTaxonomy',
+				'assignment_keys' => ['leaf_slug', 'ruleset_version']
+			],
+			'set_unclassified' => [
+				'operation' => 'set_unclassified',
+				'delegate_write' => 'AssignProductTaxonomy',
+				'assignment_keys' => ['unclassified', 'ruleset_version']
+			]
+		];
+	}
+
+	/**
+	 * Resolve a named operation to a bound delegate over the shipped taxonomy write, or fail closed.
+	 *
+	 * Any operation outside the closed registry — a free-form entity/field target, a CRUD verb, or a
+	 * raw SQL string — yields exactly one bounded `unknown_operation` blocker and no callable, with no
+	 * partial resolution, no fallback to a default operation, and no provider/network call. Resolution
+	 * examines only the server-side operation name and never trusts a request-supplied entity, field,
+	 * or SQL fragment. The returned delegate builds only the exact `AssignProductTaxonomy` assignment
+	 * shape, pins `ruleset_version` to the migration version server-side, and joins the caller's outer
+	 * transaction; it introduces no new SQL and no new low-level write.
+	 *
+	 * @return array{operation: string, delegate: (callable(int, ?string): array)|null, blockers: array<int, string>}
+	 */
+	public function ResolveOperation(string $operation): array
+	{
+		$registry = $this->RegisteredOperations();
+		if (!isset($registry[$operation]))
+		{
+			return ['operation' => $operation, 'delegate' => null, 'blockers' => ['unknown_operation']];
+		}
+
+		$taxonomy = $this->Taxonomy;
+		$rulesetVersion = GrocyAiTaxonomyMigration::VERSION;
+		if ($operation === 'assign_taxonomy_leaf')
+		{
+			$delegate = static fn(int $objectId, ?string $leafSlug): array =>
+				$taxonomy->AssignProductTaxonomy($objectId, ['leaf_slug' => (string)$leafSlug, 'ruleset_version' => $rulesetVersion], true);
+		}
+		else
+		{
+			$delegate = static fn(int $objectId, ?string $leafSlug = null): array =>
+				$taxonomy->AssignProductTaxonomy($objectId, ['unclassified' => true, 'ruleset_version' => $rulesetVersion], true);
+		}
+
+		return ['operation' => $operation, 'delegate' => $delegate, 'blockers' => []];
+	}
+
 	private function ModuleVersion(): string
 	{
 		$path = __DIR__ . '/../module-version.json';

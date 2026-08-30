@@ -451,3 +451,98 @@ function runBulkGenerate(): never
 	fwrite(STDOUT, "Bulk generate tests passed\n");
 	exit(0);
 }
+
+const BULK_REGISTRY_MARKER = 'EXPECTED_RED: bulk.registry';
+
+function bulkRegistryPdo(): PDO
+{
+	$pdo = new PDO('sqlite::memory:');
+	$pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+	$pdo->exec('CREATE TABLE product_groups (id INTEGER PRIMARY KEY, name TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1)');
+	$pdo->exec('CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT NOT NULL, product_group_id INTEGER NULL)');
+	$pdo->exec("INSERT INTO products (id, name) VALUES (1, 'P1')");
+	return $pdo;
+}
+
+/**
+ * Plan 05-04: the closed named-typed-operation registry. Only the two shipped taxonomy operations
+ * resolve, each delegating to AssignProductTaxonomy; every other operation fails closed with the
+ * single unknown_operation blocker before any write.
+ */
+function runBulkRegistry(): never
+{
+	if (!class_exists(GrocyAiBulkService::class) || !method_exists(GrocyAiBulkService::class, 'RegisteredOperations') || !method_exists(GrocyAiBulkService::class, 'ResolveOperation'))
+	{
+		expectedRed(BULK_REGISTRY_MARKER, 'The closed operation registry is not implemented');
+	}
+
+	$cases = bulkRegistryCases();
+
+	// Task 1 Test 1: the registry is a closed server-side map with exactly the two operations.
+	$pdo = bulkRegistryPdo();
+	$service = new GrocyAiBulkService($pdo);
+	$registered = $service->RegisteredOperations();
+	bulkAssert(array_keys($registered) === ['assign_taxonomy_leaf', 'set_unclassified'], BULK_REGISTRY_MARKER, 'RegisteredOperations is not the closed two-operation map');
+	foreach ($registered as $operation => $meta)
+	{
+		bulkAssert(($meta['delegate_write'] ?? null) === 'AssignProductTaxonomy', BULK_REGISTRY_MARKER, "Operation {$operation} delegates to a write other than AssignProductTaxonomy");
+		$keys = $operation === 'assign_taxonomy_leaf' ? ['leaf_slug', 'ruleset_version'] : ['unclassified', 'ruleset_version'];
+		bulkAssert(($meta['assignment_keys'] ?? null) === $keys, BULK_REGISTRY_MARKER, "Operation {$operation} produces an assignment shape outside the closed key set");
+	}
+
+	// Task 1 Test 2: each named operation resolves to a delegate over the shipped taxonomy write and
+	// returns the ReadProductTaxonomy DTO.
+	$assign = $service->ResolveOperation('assign_taxonomy_leaf');
+	bulkAssert(is_callable($assign['delegate']) && $assign['blockers'] === [], BULK_REGISTRY_MARKER, 'assign_taxonomy_leaf did not resolve to a callable');
+	$assignResult = ($assign['delegate'])(1, 'produce');
+	bulkAssert(($assignResult['current_leaf']['slug'] ?? null) === 'produce', BULK_REGISTRY_MARKER, 'The assign_taxonomy_leaf delegate did not set the leaf via AssignProductTaxonomy');
+	$unclassify = $service->ResolveOperation('set_unclassified');
+	bulkAssert(is_callable($unclassify['delegate']) && $unclassify['blockers'] === [], BULK_REGISTRY_MARKER, 'set_unclassified did not resolve to a callable');
+	$unclassifyResult = ($unclassify['delegate'])(1, null);
+	bulkAssert(array_key_exists('current_leaf', $unclassifyResult) && $unclassifyResult['current_leaf'] === null, BULK_REGISTRY_MARKER, 'The set_unclassified delegate did not clear the leaf via AssignProductTaxonomy');
+
+	// Task 1 Test 3: the shipped write keeps its single INSERT ... ON CONFLICT statement; the only edit
+	// is the optional nesting guard. The registry adds no new SQL of its own.
+	$taxonomySource = (string)file_get_contents(__DIR__ . '/../src/GrocyAiTaxonomyService.php');
+	bulkAssert(substr_count($taxonomySource, 'INSERT INTO grocy_ai_taxonomy_classifications') === 1, BULK_REGISTRY_MARKER, 'The taxonomy classification write is no longer a single statement');
+	bulkAssert(str_contains($taxonomySource, 'bool $joinExistingTransaction = false'), BULK_REGISTRY_MARKER, 'The transaction-nesting guard parameter is missing');
+
+	// Task 1 Test 4: nesting-awareness. With join=true the delegate performs the upsert but does not
+	// own the transaction, so an outer rollback undoes its write; and it does not raise a nested-BEGIN
+	// error when invoked inside an outer transaction.
+	$nestPdo = bulkRegistryPdo();
+	$nestService = new GrocyAiBulkService($nestPdo);
+	$nestAssign = $nestService->ResolveOperation('assign_taxonomy_leaf');
+	$nestPdo->beginTransaction();
+	($nestAssign['delegate'])(1, 'produce');
+	$nestPdo->rollBack();
+	$countAfterRollback = (int)$nestPdo->query('SELECT COUNT(*) FROM grocy_ai_taxonomy_classifications WHERE product_id = 1')->fetchColumn();
+	bulkAssert($countAfterRollback === 0, BULK_REGISTRY_MARKER, 'A join=true delegate committed independently: the caller does not own the transaction');
+	// Default (2-arg) behavior still owns and commits its own transaction, byte-identical for callers.
+	$defaultTaxonomy = new GrocyAiTaxonomyService($nestPdo);
+	$defaultTaxonomy->AssignProductTaxonomy(1, ['leaf_slug' => 'produce', 'ruleset_version' => 'v1']);
+	$countAfterDefault = (int)$nestPdo->query('SELECT COUNT(*) FROM grocy_ai_taxonomy_classifications WHERE product_id = 1')->fetchColumn();
+	bulkAssert($countAfterDefault === 1, BULK_REGISTRY_MARKER, 'The default 2-arg AssignProductTaxonomy no longer commits its own transaction');
+
+	// Task 2: every out-of-map, free-form, or SQL-bearing operation fails closed with exactly one
+	// unknown_operation blocker and no callable, and causes no mutation (native-write spy via snapshot).
+	$rejectPdo = bulkRegistryPdo();
+	$rejectService = new GrocyAiBulkService($rejectPdo);
+	$rejectService->ResolveOperation('assign_taxonomy_leaf'); // warm the service without writing
+	$spyTables = ['products', 'product_groups', 'grocy_ai_taxonomy_classifications', 'grocy_ai_taxonomy_evidence'];
+	$rowsBefore = bulkSnapshotTables($rejectPdo, $spyTables);
+	$changesBefore = (int)$rejectPdo->query('SELECT total_changes()')->fetchColumn();
+	foreach ($cases['reject'] as $case)
+	{
+		$resolution = $rejectService->ResolveOperation((string)$case['operation']);
+		bulkAssert($resolution['delegate'] === null, BULK_REGISTRY_MARKER, 'A rejected operation returned a callable: ' . $case['operation']);
+		bulkAssert($resolution['blockers'] === ['unknown_operation'], BULK_REGISTRY_MARKER, 'A rejected operation did not fail closed with the single unknown_operation blocker: ' . $case['operation']);
+	}
+	$changesAfter = (int)$rejectPdo->query('SELECT total_changes()')->fetchColumn();
+	$rowsAfter = bulkSnapshotTables($rejectPdo, $spyTables);
+	bulkAssert($rowsBefore === $rowsAfter, BULK_REGISTRY_MARKER, 'Resolving a rejected operation mutated a native or module table');
+	bulkAssert($changesBefore === $changesAfter, BULK_REGISTRY_MARKER, 'Resolving a rejected operation issued row changes');
+
+	fwrite(STDOUT, "Bulk registry tests passed\n");
+	exit(0);
+}

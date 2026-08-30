@@ -716,6 +716,12 @@ if (($argv[1] ?? null) === 'bulk-generate')
 	runBulkGenerate();
 }
 
+if (($argv[1] ?? null) === 'bulk-registry')
+{
+	require_once __DIR__ . '/bulk.php';
+	runBulkRegistry();
+}
+
 if (($argv[1] ?? null) === '--list')
 {
 	foreach ([

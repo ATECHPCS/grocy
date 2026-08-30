@@ -41,6 +41,17 @@ store, not here.
   universal rows become 2N native rows. → Never assert conversion cache/row counts from reasoning;
   run the fixture and read the actual rows first. (hits: 1)
 
+- 2026-08-30: A native-safety snapshot over `sqlite_master` flagged a phantom "created object" after
+  bootstrapping a module migration. Cause: any table declared `INTEGER PRIMARY KEY AUTOINCREMENT`
+  makes SQLite create the internal `sqlite_sequence` table on first such table. → When asserting a
+  bootstrap creates/drops no native object, exclude `name LIKE 'sqlite_%'` internals from the
+  `sqlite_master` diff (the `grocy_ai_bulk_*` tables use AUTOINCREMENT). (hits: 1)
+
+- 2026-08-30: `run.php` only `require_once`s the Phase 1-4 `src/*` classes; a new test module
+  (`bulk.php`) whose classes live in new `src/*` files must require them itself or `class_exists()`
+  stays false and the test reports "not implemented". → A new `tests/<mode>.php` must `require_once`
+  its own `src/*` dependencies (guarded by `is_file`), mirroring the run.php top block. (hits: 1)
+
 - 2026-08-29: A CLI that builds its evidence bundle from the same document the service re-reads is
   self-consistent, so a tampered document promoted successfully. → When one component validates
   another's input against a file, at least one immutable anchor must live outside that file. Fixed by
