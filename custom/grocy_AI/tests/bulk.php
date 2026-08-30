@@ -465,6 +465,153 @@ function runBulkGenerate(): never
 	exit(0);
 }
 
+const BULK_GENERATE_ENDPOINT_MARKER = 'EXPECTED_RED: bulk.generate_endpoint';
+
+/**
+ * A native + resolved-cache + module-taxonomy snapshot plus `total_changes()`, for the zero-native-write
+ * proof: plan GENERATION may write ONLY the two module bulk tables and must leave every native/taxonomy
+ * table byte-identical.
+ */
+function bulkGenerateEndpointNativeSnapshot(PDO $pdo): array
+{
+	$tables = ['products', 'product_groups', 'quantity_unit_conversions', 'cache__quantity_unit_conversions_resolved', 'grocy_ai_taxonomy_classifications', 'grocy_ai_taxonomy_evidence'];
+	return [
+		'rows' => bulkSnapshotTables($pdo, $tables),
+		'schema' => $pdo->query("SELECT type, name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name")->fetchAll(PDO::FETCH_ASSOC),
+		'total_changes' => (int)$pdo->query('SELECT total_changes()')->fetchColumn()
+	];
+}
+
+/**
+ * Plan-generation SURFACE (BULK-01 / Roadmap Success Criterion 1: "User can create a bounded plan"): the
+ * user-facing `POST /api/grocy-ai/bulk/plans` endpoint invokes the zero-mutation `GeneratePlan` and
+ * returns the new plan for immediate review. Proves the closed-input gate, the MASTER_DATA_EDIT gate, the
+ * server-derived actor/values, zero native mutation, and that a follow-up GET re-reads the same plan.
+ */
+function runBulkGenerateEndpoint(): never
+{
+	if (!class_exists(GrocyAiBulkService::class)
+		|| !method_exists(GrocyAiBulkService::class, 'GeneratePlan')
+		|| !method_exists(GrocyAiBulkService::class, 'ReadPlan'))
+	{
+		expectedRed(BULK_GENERATE_ENDPOINT_MARKER, 'GeneratePlan / ReadPlan are not implemented');
+	}
+
+	bulkSelectionRuntime();
+
+	// The single POST generation route is registered exactly once as POST /api/grocy-ai/bulk/plans.
+	$container = new DI\Container();
+	$app = Slim\Factory\AppFactory::createFromContainer($container);
+	require dirname(__DIR__) . '/routes.php';
+	$generateRoutes = 0;
+	$generateMethods = null;
+	foreach ($app->getRouteCollector()->getRoutes() as $route)
+	{
+		if ($route->getPattern() === '/api/grocy-ai/bulk/plans')
+		{
+			$generateRoutes++;
+			$generateMethods = $route->getMethods();
+		}
+	}
+	bulkAssert($generateRoutes === 1, BULK_GENERATE_ENDPOINT_MARKER, 'The generation route /api/grocy-ai/bulk/plans is not registered exactly once');
+	bulkAssert($generateMethods === ['POST'], BULK_GENERATE_ENDPOINT_MARKER, 'The generation route is not registered exactly as POST');
+	// No maintainer CLI invokes GeneratePlan — generation is a user API action only (D-13).
+	foreach (glob(dirname(__DIR__) . '/bin/*.php') as $binFile)
+	{
+		bulkAssert(!str_contains((string)file_get_contents($binFile), 'GeneratePlan'), BULK_GENERATE_ENDPOINT_MARKER, 'A maintainer CLI invokes GeneratePlan: ' . basename((string)$binFile));
+	}
+
+	$apiPdo = bulkGenerationPdo();
+	$apiPdo->exec('CREATE TABLE user_permissions_resolved (id INTEGER NOT NULL PRIMARY KEY, user_id INTEGER NOT NULL, permission_name TEXT NOT NULL)');
+	$apiPdo->exec("INSERT INTO user_permissions_resolved (id, user_id, permission_name) VALUES (1, 1, 'MASTER_DATA_EDIT')");
+	// Bootstrap the module schema (taxonomy + bulk tables) via a bootstrapping service, then seed the mixed
+	// taxonomy fixture, exactly as the sibling endpoint suites do; the endpoint itself uses bootstrap=false.
+	$apiService = new GrocyAiBulkService($apiPdo);
+	bulkSeedGenerationFixture($apiPdo, $apiService);
+	bulkInstallDatabase($apiPdo);
+	$controller = (new ReflectionClass(GrocyAI\Controllers\Api\GrocyAiApiController::class))->newInstanceWithoutConstructor();
+
+	// Test 1: an unauthenticated caller is rejected before any write — and no plan is created.
+	$apiPdo->exec("DELETE FROM user_permissions_resolved WHERE permission_name = 'MASTER_DATA_EDIT'");
+	$permBefore = bulkGenerateEndpointNativeSnapshot($apiPdo);
+	$plansBefore = (int)$apiPdo->query('SELECT COUNT(*) FROM grocy_ai_bulk_plans')->fetchColumn();
+	try
+	{
+		$controller->GenerateBulkPlan(bulkSelectionRequest('POST', '/x', ['operation_type' => 'taxonomy_assignment']), bulkSelectionResponse(), []);
+		bulkAssert(false, BULK_GENERATE_ENDPOINT_MARKER, 'GenerateBulkPlan did not enforce MASTER_DATA_EDIT');
+	}
+	catch (Grocy\Controllers\Users\PermissionMissingException)
+	{
+	}
+	$permAfter = bulkGenerateEndpointNativeSnapshot($apiPdo);
+	bulkAssert($permBefore['rows'] === $permAfter['rows'] && $permBefore['total_changes'] === $permAfter['total_changes'], BULK_GENERATE_ENDPOINT_MARKER, 'An unauthorized generation issued a write');
+	bulkAssert((int)$apiPdo->query('SELECT COUNT(*) FROM grocy_ai_bulk_plans')->fetchColumn() === $plansBefore, BULK_GENERATE_ENDPOINT_MARKER, 'An unauthorized generation created a plan');
+	$apiPdo->exec("INSERT INTO user_permissions_resolved (id, user_id, permission_name) VALUES (1, 1, 'MASTER_DATA_EDIT')");
+
+	// Test 2: closed input — a browser-supplied item list / object_id / operation / value / SQL, any extra
+	// key, or an operation_type outside the pinned closed set is a bounded 400 with no plan created.
+	$badBodies = [
+		['operation_type' => 'taxonomy_assignment', 'items' => [['object_id' => 1, 'proposed_value' => 'produce']]],
+		['operation_type' => 'taxonomy_assignment', 'object_id' => 1],
+		['operation_type' => 'taxonomy_assignment', 'operation' => 'assign_taxonomy_leaf'],
+		['operation_type' => 'taxonomy_assignment', 'value' => 'produce'],
+		['sql' => 'DROP TABLE products'],
+		['operation_type' => 'conversion_cleanup'],
+		['operation_type' => 123],
+		[]
+	];
+	foreach ($badBodies as $bad)
+	{
+		$before = bulkGenerateEndpointNativeSnapshot($apiPdo);
+		$plansBeforeBad = (int)$apiPdo->query('SELECT COUNT(*) FROM grocy_ai_bulk_plans')->fetchColumn();
+		$badResponse = $controller->GenerateBulkPlan(bulkSelectionRequest('POST', '/x', $bad), bulkSelectionResponse(), []);
+		bulkAssert($badResponse->getStatusCode() === 400, BULK_GENERATE_ENDPOINT_MARKER, 'A non-closed generation body was not rejected with 400');
+		bulkAssert(bulkSelectionBody($badResponse) === ['error_message' => 'Invalid plan generation request'], BULK_GENERATE_ENDPOINT_MARKER, 'A rejected generation body did not return the bounded error');
+		$after = bulkGenerateEndpointNativeSnapshot($apiPdo);
+		bulkAssert($before['rows'] === $after['rows'] && $before['total_changes'] === $after['total_changes'], BULK_GENERATE_ENDPOINT_MARKER, 'A rejected generation body issued a write');
+		bulkAssert((int)$apiPdo->query('SELECT COUNT(*) FROM grocy_ai_bulk_plans')->fetchColumn() === $plansBeforeBad, BULK_GENERATE_ENDPOINT_MARKER, 'A rejected generation body created a plan');
+	}
+
+	// Test 3: a valid closed request creates a plan and returns it in the BulkPlan read shape at 201,
+	// with a server-derived actor, checksum, and the pinned closed counts — writing ONLY the two module
+	// tables (zero native / taxonomy mutation).
+	$nativeBefore = bulkGenerateEndpointNativeSnapshot($apiPdo);
+	$okResponse = $controller->GenerateBulkPlan(bulkSelectionRequest('POST', '/x', ['operation_type' => 'taxonomy_assignment']), bulkSelectionResponse(), []);
+	$nativeAfter = bulkGenerateEndpointNativeSnapshot($apiPdo);
+	bulkAssert($okResponse->getStatusCode() === 201, BULK_GENERATE_ENDPOINT_MARKER, 'A valid generation did not return 201 Created');
+	$okBody = bulkSelectionBody($okResponse);
+	bulkAssert(array_keys($okBody) === ['plan', 'counts', 'items'], BULK_GENERATE_ENDPOINT_MARKER, 'The generation response is not the closed plan read shape');
+	$planId = (int)$okBody['plan']['id'];
+	bulkAssert($planId > 0, BULK_GENERATE_ENDPOINT_MARKER, 'The generation response did not carry a new plan id');
+	bulkAssert((string)$okBody['plan']['status'] === 'draft', BULK_GENERATE_ENDPOINT_MARKER, 'A freshly generated plan is not in draft status');
+	bulkAssert((string)$okBody['plan']['operation_type'] === 'taxonomy_assignment', BULK_GENERATE_ENDPOINT_MARKER, 'The generated plan operation type is not the pinned taxonomy_assignment');
+	bulkAssert(preg_match('/^[0-9a-f]{64}$/D', (string)$okBody['plan']['checksum']) === 1, BULK_GENERATE_ENDPOINT_MARKER, 'The generated plan checksum is not a lowercase 64-hex SHA-256');
+	// The actor is the authenticated session user, never a browser-supplied value.
+	bulkAssert((string)$okBody['plan']['created_by'] === (string)GROCY_USER_ID, BULK_GENERATE_ENDPOINT_MARKER, 'The generated plan actor is not the authenticated session user');
+	$expectedCounts = ['included' => 2, 'excluded' => 1, 'skipped' => 3, 'conflicted' => 0, 'changed' => 1, 'unchanged' => 1];
+	bulkAssert($okBody['counts'] === $expectedCounts, BULK_GENERATE_ENDPOINT_MARKER, 'The generated counts do not match the pinned closed fixture: ' . json_encode($okBody['counts']));
+	bulkAssert(count($okBody['items']) === 2, BULK_GENERATE_ENDPOINT_MARKER, 'The generated plan did not persist the two included items');
+
+	// Zero NATIVE mutation: native + taxonomy state byte-identical, schema unchanged, and total_changes
+	// attributable ONLY to the two module tables (the plan header + its items).
+	bulkAssert($nativeBefore['rows'] === $nativeAfter['rows'], BULK_GENERATE_ENDPOINT_MARKER, 'Generation mutated a native or taxonomy table');
+	bulkAssert($nativeBefore['schema'] === $nativeAfter['schema'], BULK_GENERATE_ENDPOINT_MARKER, 'Generation created, altered, or dropped a database object');
+	$itemCount = (int)$apiPdo->query('SELECT COUNT(*) FROM grocy_ai_bulk_plan_items WHERE plan_id = ' . $planId)->fetchColumn();
+	bulkAssert($nativeAfter['total_changes'] - $nativeBefore['total_changes'] === 1 + $itemCount, BULK_GENERATE_ENDPOINT_MARKER, 'Generation issued row changes beyond the plan header and its items: delta ' . ($nativeAfter['total_changes'] - $nativeBefore['total_changes']));
+
+	// Test 4: a second GET on the returned id re-reads exactly the same plan (id + checksum + counts + items).
+	$getResponse = $controller->BulkPlan(bulkSelectionRequest('GET', '/x'), bulkSelectionResponse(), ['planId' => (string)$planId]);
+	bulkAssert($getResponse->getStatusCode() === 200, BULK_GENERATE_ENDPOINT_MARKER, 'A GET on the generated plan did not succeed');
+	$getBody = bulkSelectionBody($getResponse);
+	bulkAssert(array_keys($getBody) === ['plan', 'counts', 'items'], BULK_GENERATE_ENDPOINT_MARKER, 'The GET response is not the closed plan read shape');
+	bulkAssert((int)$getBody['plan']['id'] === $planId, BULK_GENERATE_ENDPOINT_MARKER, 'The GET returned a different plan id');
+	bulkAssert((string)$getBody['plan']['checksum'] === (string)$okBody['plan']['checksum'], BULK_GENERATE_ENDPOINT_MARKER, 'The GET returned a different checksum');
+	bulkAssert($getBody === $okBody, BULK_GENERATE_ENDPOINT_MARKER, 'The GET plan differs from the generation response');
+
+	fwrite(STDOUT, "Bulk generate endpoint tests passed\n");
+	exit(0);
+}
+
 const BULK_REGISTRY_MARKER = 'EXPECTED_RED: bulk.registry';
 
 function bulkRegistryPdo(): PDO

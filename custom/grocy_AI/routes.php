@@ -33,6 +33,7 @@ $app->group('/api/grocy-ai', function (RouteCollectorProxy $group)
 	$group->get('/conversions/validate', [GrocyAiApiController::class, 'ValidateConversion']);
 	$group->get('/conversions/resolved-provenance', [GrocyAiApiController::class, 'ResolvedConversionProvenance']);
 	$group->get('/conversions/coverage', [GrocyAiApiController::class, 'ConversionCoverage']);
+	$group->post('/bulk/plans', [GrocyAiApiController::class, 'GenerateBulkPlan']);
 	$group->get('/bulk/plans/{planId}', [GrocyAiApiController::class, 'BulkPlan']);
 	$group->put('/bulk/plans/{planId}/items/{seq}/selection', [GrocyAiApiController::class, 'BulkPlanSetItemSelection']);
 	$group->get('/bulk/plans/{planId}/selected-diff', [GrocyAiApiController::class, 'BulkPlanSelectedDiff']);

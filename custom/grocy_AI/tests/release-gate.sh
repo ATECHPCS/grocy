@@ -434,6 +434,13 @@ EOF
 	printf '%s\n' "$apply_body" | grep -Fq 'User::CheckPermission($request, User::PERMISSION_MASTER_DATA_EDIT)' || fail bulk_apply_permission
 	rollback_body=$(awk '/public function BulkPlanRollback\(/{f=1} f{print} f&&/^\t}$/{exit}' "$controller_source")
 	printf '%s\n' "$rollback_body" | grep -Fq 'User::CheckPermission($request, User::PERMISSION_MASTER_DATA_EDIT)' || fail bulk_rollback_permission
+	# The user-facing plan-GENERATION action (BULK-01) is permission-checked in its own method body and its
+	# POST route is wired exactly once — the sole in-product plan-creation surface (no maintainer CLI).
+	generate_body=$(awk '/public function GenerateBulkPlan\(/{f=1} f{print} f&&/^\t}$/{exit}' "$controller_source")
+	printf '%s\n' "$generate_body" | grep -Fq 'User::CheckPermission($request, User::PERMISSION_MASTER_DATA_EDIT)' || fail bulk_generate_permission
+	[ "$(grep -c -- 'GenerateBulkPlan' "$routes_source")" -eq 1 ] || fail bulk_generate_route_single
+	generate_cli=$(find "$main_repo/custom/grocy_AI/bin" -type f -name '*.php' -exec grep -l -- '->GeneratePlan(' {} + 2>/dev/null || true)
+	[ -z "$generate_cli" ] || fail bulk_no_cli_generate
 	[ "$(grep -c -- 'ExportBulkPlan' "$routes_source")" -eq 1 ] || fail bulk_export_route_single
 	cli_apply=$(find "$main_repo/custom/grocy_AI/bin" -type f -name '*.php' -exec grep -l -- '->ApplyPlan(\|->RollbackPlan(' {} + 2>/dev/null || true)
 	[ -z "$cli_apply" ] || fail bulk_no_cli_apply
@@ -445,6 +452,7 @@ EOF
 	run_quiet bulk_invariants "$php_runner" "$main_repo/custom/grocy_AI/tests/run.php" bulk-invariants
 	run_quiet bulk_schema "$php_runner" "$main_repo/custom/grocy_AI/tests/run.php" bulk-schema
 	run_quiet bulk_generate "$php_runner" "$main_repo/custom/grocy_AI/tests/run.php" bulk-generate
+	run_quiet bulk_generate_endpoint "$php_runner" "$main_repo/custom/grocy_AI/tests/run.php" bulk-generate-endpoint
 	run_quiet bulk_registry "$php_runner" "$main_repo/custom/grocy_AI/tests/run.php" bulk-registry
 	run_quiet bulk_selection "$php_runner" "$main_repo/custom/grocy_AI/tests/run.php" bulk-selection
 	run_quiet bulk_conflict "$php_runner" "$main_repo/custom/grocy_AI/tests/run.php" bulk-conflict

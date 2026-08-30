@@ -372,6 +372,56 @@ class GrocyAiApiController extends BaseApiController
 	}
 
 	/**
+	 * Generate a bounded, zero-mutation bulk plan (D-01/D-13/BULK-01): the user-facing plan-CREATION
+	 * surface, so a MASTER_DATA_EDIT user can create a plan in-product and immediately review it. The
+	 * permission is checked before any write. The body is the closed `{ "operation_type": "taxonomy_assignment" }`
+	 * shape only — the single server-registered plan operation type; any extra key (a browser-supplied item
+	 * list, object_id, operation, value, or SQL) or an operation_type outside the closed set is a bounded 400
+	 * before the engine runs, so the browser can never supply the proposed values or operations — GeneratePlan
+	 * derives those server-side. The authenticated session user (`GROCY_USER_ID`) is recorded as the plan
+	 * actor; generation writes ONLY the two module tables and performs zero native/taxonomy mutation. On
+	 * success the new plan is returned in the same closed shape as BulkPlan (header + counts + items) at HTTP
+	 * 201 so the UI can render it without a second round-trip.
+	 */
+	public function GenerateBulkPlan(Request $request, Response $response, array $args): Response
+	{
+		User::CheckPermission($request, User::PERMISSION_MASTER_DATA_EDIT);
+
+		$body = $request->getParsedBody();
+		if (!is_array($body))
+		{
+			return $this->GenericErrorResponse($response, 'Invalid plan generation request', 400);
+		}
+		// Closed candidate-key set: the request may supply only operation_type, restricted to the single
+		// server-registered plan operation type. Any extra key makes the intersected candidate differ from
+		// the raw body and is refused before the engine, so no free-form entity/field/value/SQL payload can
+		// reach generation. The proposed values and operations are always server-derived by GeneratePlan.
+		$candidate = array_intersect_key($body, array_flip(['operation_type']));
+		if ($candidate !== $body || !array_key_exists('operation_type', $candidate)
+			|| !is_string($candidate['operation_type'])
+			|| !in_array($candidate['operation_type'], [GrocyAiBulkService::OPERATION_TYPE], true))
+		{
+			return $this->GenericErrorResponse($response, 'Invalid plan generation request', 400);
+		}
+
+		try
+		{
+			$service = new GrocyAiBulkService(DatabaseService::GetInstance()->GetDbConnectionRaw(), false);
+			// The actor is the authenticated session user only — never a browser-supplied value.
+			$generated = $service->GeneratePlan(['actor' => (string)GROCY_USER_ID]);
+			return $this->ApiResponse($response->withStatus(201), $service->ReadPlan((int)$generated['id']));
+		}
+		catch (\InvalidArgumentException)
+		{
+			return $this->GenericErrorResponse($response, 'Invalid plan generation request', 400);
+		}
+		catch (\RuntimeException)
+		{
+			return $this->GenericErrorResponse($response, 'Plan generation unavailable', 503);
+		}
+	}
+
+	/**
 	 * Read a stored bulk plan header, counts, and items (D-13). MASTER_DATA_EDIT-gated, read-only.
 	 */
 	public function BulkPlan(Request $request, Response $response, array $args): Response
