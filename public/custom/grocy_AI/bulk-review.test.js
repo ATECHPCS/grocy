@@ -77,6 +77,74 @@ function selectedDiffPayload(overrides = {})
 	}, overrides);
 }
 
+function reversibleRollbackItem(overrides = {})
+{
+	return Object.assign({
+		plan_item_id: 1,
+		object_type: 'product',
+		object_id: 1,
+		before_image: null,
+		after_image: 'produce',
+		current_value: 'produce',
+		inverse_operation: 'set_unclassified',
+		reversible: true,
+		blocker: null
+	}, overrides);
+}
+
+function refusedRollbackItem(overrides = {})
+{
+	return Object.assign({
+		plan_item_id: 2,
+		object_type: 'product',
+		object_id: 2,
+		before_image: null,
+		after_image: 'produce',
+		current_value: 'dairy-eggs',
+		inverse_operation: null,
+		reversible: false,
+		blocker: 'manual_edit_after_apply'
+	}, overrides);
+}
+
+function rollbackPreviewPayload(reversible, refused)
+{
+	const reversibleItems = reversible === undefined ? [reversibleRollbackItem()] : reversible;
+	const refusedItems = refused === undefined ? [] : refused;
+	return {
+		plan_id: 5,
+		plan_checksum: 'a'.repeat(64),
+		checksum: 'b'.repeat(64),
+		items: reversibleItems.concat(refusedItems),
+		reversible: reversibleItems,
+		refused: refusedItems
+	};
+}
+
+function applyResultPayload(overrides = {})
+{
+	return Object.assign({
+		plan_id: 5,
+		checksum: 'a'.repeat(64),
+		status: 'applied',
+		blockers: [],
+		outcomes: { applied: 1, conflict: 0, skipped: 0 },
+		actor: 'test-user'
+	}, overrides);
+}
+
+function rollbackResultPayload(overrides = {})
+{
+	return Object.assign({
+		plan_id: 5,
+		checksum: 'b'.repeat(64),
+		status: 'rolled_back',
+		blockers: [],
+		outcomes: { rolled_back: 1, conflict: 0, skipped: 0 },
+		actor: 'test-user'
+	}, overrides);
+}
+
 test('a well-formed plan payload describes exact counts and one row per item', function ()
 {
 	const presentation = bulkReview.describePlan(planPayload());
@@ -301,4 +369,323 @@ test('the rendering helpers never assign to innerHTML, so no server value can be
 	// Matches an actual `.innerHTML = ...` assignment, not the explanatory prose in the module's own
 	// header comment (which mentions the property name to document that it is deliberately unused).
 	assert.doesNotMatch(source, /\.innerHTML\s*=/);
+});
+
+// ---------------------------------------------------------------------------------------------------
+// Rollback preview (BULK-09, D-11): a zero-write read distinguishing reversible from refused items.
+// ---------------------------------------------------------------------------------------------------
+
+test('a well-formed rollback-preview payload separates reversible from refused items verbatim', function ()
+{
+	const presentation = bulkReview.describeRollbackPreview(rollbackPreviewPayload(
+		[reversibleRollbackItem()],
+		[refusedRollbackItem()]
+	));
+
+	assert.equal(presentation.valid, true);
+	assert.equal(presentation.planId, 5);
+	assert.equal(presentation.reversible.length, 1);
+	assert.equal(presentation.refused.length, 1);
+	assert.deepEqual(presentation.reversible[0], {
+		planItemId: 1, objectType: 'product', objectId: 1, before: null, after: 'produce',
+		current: 'produce', inverseOperation: 'set_unclassified', reversible: true, blocker: null
+	});
+	assert.deepEqual(presentation.refused[0], {
+		planItemId: 2, objectType: 'product', objectId: 2, before: null, after: 'produce',
+		current: 'dairy-eggs', inverseOperation: null, reversible: false, blocker: 'manual_edit_after_apply'
+	});
+});
+
+test('a rollback-preview payload with no reversible or refused items still describes as valid with empty lists', function ()
+{
+	const presentation = bulkReview.describeRollbackPreview(rollbackPreviewPayload([], []));
+
+	assert.equal(presentation.valid, true);
+	assert.deepEqual(presentation.reversible, []);
+	assert.deepEqual(presentation.refused, []);
+});
+
+test('a rollback-preview payload with a self-contradictory or out-of-contract entry fails closed to an empty presentation', function ()
+{
+	const extraTopLevelKey = rollbackPreviewPayload();
+	extraTopLevelKey.injected = 'x';
+
+	const reversibleWithBlocker = rollbackPreviewPayload([reversibleRollbackItem({ blocker: 'manual_edit_after_apply' })], []);
+	const reversibleWithNoInverse = rollbackPreviewPayload([reversibleRollbackItem({ inverse_operation: null })], []);
+	const refusedWithInverse = rollbackPreviewPayload([], [refusedRollbackItem({ inverse_operation: 'assign_taxonomy_leaf' })]);
+	const refusedWithNoBlocker = rollbackPreviewPayload([], [refusedRollbackItem({ blocker: null })]);
+	const mismatchedItemsCount = rollbackPreviewPayload();
+	mismatchedItemsCount.items = [];
+	const badChecksum = rollbackPreviewPayload();
+	badChecksum.checksum = 'not-hex';
+	const badPlanChecksum = rollbackPreviewPayload();
+	badPlanChecksum.plan_checksum = 'not-hex';
+	const extraItemKey = rollbackPreviewPayload([Object.assign(reversibleRollbackItem(), { extra: 'x' })], []);
+
+	[
+		extraTopLevelKey, reversibleWithBlocker, reversibleWithNoInverse, refusedWithInverse, refusedWithNoBlocker,
+		mismatchedItemsCount, badChecksum, badPlanChecksum, extraItemKey, null, 'x', [], {}
+	].forEach(function (payload)
+	{
+		const presentation = bulkReview.describeRollbackPreview(payload);
+		assert.equal(presentation.valid, false, JSON.stringify(payload));
+		assert.deepEqual(presentation.reversible, []);
+		assert.deepEqual(presentation.refused, []);
+	});
+});
+
+// ---------------------------------------------------------------------------------------------------
+// Apply / rollback-execute outcome DTOs (D-13): closed shape, verbatim blocker/outcome vocabulary.
+// ---------------------------------------------------------------------------------------------------
+
+test('a well-formed apply result describes its status, blockers, outcomes, and actor verbatim', function ()
+{
+	const presentation = bulkReview.describeApplyResult(applyResultPayload());
+
+	assert.equal(presentation.valid, true);
+	assert.equal(presentation.status, 'applied');
+	assert.deepEqual(presentation.blockers, []);
+	assert.deepEqual(presentation.outcomes, [
+		{ term: 'applied', value: '1' }, { term: 'conflict', value: '0' }, { term: 'skipped', value: '0' }
+	]);
+	assert.equal(presentation.actor, 'test-user');
+});
+
+test('a bounded 409 blocker on apply/rollback is still a valid, closed shape — never treated as malformed', function ()
+{
+	const applyBlocked = bulkReview.describeApplyResult(applyResultPayload({ blockers: ['plan_checksum_mismatch'] }));
+	const rollbackBlocked = bulkReview.describeRollbackResult(rollbackResultPayload({ blockers: ['plan_checksum_mismatch'] }));
+
+	assert.equal(applyBlocked.valid, true);
+	assert.deepEqual(applyBlocked.blockers, ['plan_checksum_mismatch']);
+	assert.equal(rollbackBlocked.valid, true);
+	assert.deepEqual(rollbackBlocked.blockers, ['plan_checksum_mismatch']);
+});
+
+test('an apply result carrying rollback outcome keys (or vice versa), an extra field, or an out-of-range count fails closed', function ()
+{
+	const wrongOutcomeKeys = applyResultPayload({ outcomes: { rolled_back: 1, conflict: 0, skipped: 0 } });
+	const extraKey = applyResultPayload();
+	extraKey.injected = 'x';
+	const badChecksum = applyResultPayload({ checksum: 'not-hex' });
+	const negativeCount = applyResultPayload({ outcomes: { applied: -1, conflict: 0, skipped: 0 } });
+	const nonStringActor = applyResultPayload({ actor: 42 });
+
+	[wrongOutcomeKeys, extraKey, badChecksum, negativeCount, nonStringActor, null, [], 'x'].forEach(function (payload)
+	{
+		const presentation = bulkReview.describeApplyResult(payload);
+		assert.equal(presentation.valid, false, JSON.stringify(payload));
+		assert.deepEqual(presentation.blockers, []);
+		assert.deepEqual(presentation.outcomes, []);
+	});
+});
+
+// ---------------------------------------------------------------------------------------------------
+// Export (BULK-10, D-12): a pure, zero-write URL builder over the closed json/csv vocabulary.
+// ---------------------------------------------------------------------------------------------------
+
+test('exportUrl builds the closed GET .../export?format=<json|csv> URL and rejects any other format', function ()
+{
+	assert.equal(bulkReview.exportUrl('/api/grocy-ai/bulk/plans', '5', 'json'), '/api/grocy-ai/bulk/plans/5/export?format=json');
+	assert.equal(bulkReview.exportUrl('/api/grocy-ai/bulk/plans', '5', 'csv'), '/api/grocy-ai/bulk/plans/5/export?format=csv');
+	assert.equal(bulkReview.exportUrl('/api/grocy-ai/bulk/plans', '5', 'xml'), null);
+	assert.equal(bulkReview.exportUrl('/api/grocy-ai/bulk/plans', '5', ''), null);
+});
+
+test('exportLinks builds both download links for a plan id from the plans endpoint alone', function ()
+{
+	const links = bulkReview.exportLinks('/api/grocy-ai/bulk/plans', '5');
+
+	assert.deepEqual(links, {
+		json: '/api/grocy-ai/bulk/plans/5/export?format=json',
+		csv: '/api/grocy-ai/bulk/plans/5/export?format=csv'
+	});
+});
+
+// ---------------------------------------------------------------------------------------------------
+// Apply/rollback-execute confirmation gating and checksum binding (D-13): the controller must never
+// fire a mutation without an explicit confirm, and the checksum it sends must come only from the
+// controller's own last-rendered server response — never from a caller- or browser-supplied value.
+// ---------------------------------------------------------------------------------------------------
+
+function baseControllerOptions(overrides = {})
+{
+	return Object.assign({
+		requestPlan: function () { return Promise.resolve(planPayload()); },
+		requestSelectedDiff: function () { return Promise.resolve(selectedDiffPayload()); },
+		requestSetSelection: function () { throw new Error('not used in this test'); },
+		requestRollbackPreview: function () { return Promise.resolve(rollbackPreviewPayload()); },
+		requestApply: function () { throw new Error('not used in this test'); },
+		requestRollbackExecute: function () { throw new Error('not used in this test'); },
+		renderPlan: function () { },
+		renderSelectedDiff: function () { },
+		renderRollbackPreview: function () { },
+		renderApplyResult: function () { },
+		renderRollbackResult: function () { },
+		onBusy: function () { },
+		onError: function () { }
+	}, overrides);
+}
+
+test('apply() fires no request without an explicit confirm, and none before any plan is loaded', async function ()
+{
+	const applyCalls = [];
+	const controller = bulkReview.createBulkReviewController(baseControllerOptions({
+		requestApply: function (checksum) { applyCalls.push(checksum); return Promise.resolve(applyResultPayload()); }
+	}));
+
+	// Before any plan is loaded there is no bound checksum, so even a confirmed apply issues no request.
+	const beforeLoad = await controller.apply(true);
+	assert.equal(beforeLoad, null);
+	assert.deepEqual(applyCalls, []);
+
+	await controller.load();
+
+	// After loading, a call without an explicit `confirmed === true` still fires nothing.
+	const unconfirmed = await controller.apply(false);
+	assert.equal(unconfirmed, null);
+	const notBoolean = await controller.apply('yes');
+	assert.equal(notBoolean, null);
+	assert.deepEqual(applyCalls, []);
+});
+
+test('apply(true), once a plan is loaded, sends exactly the loaded plan\'s own checksum and reloads on success', async function ()
+{
+	const applyCalls = [];
+	const planCalls = [];
+	const rendered = [];
+	const controller = bulkReview.createBulkReviewController(baseControllerOptions({
+		requestPlan: function () { planCalls.push(1); return Promise.resolve(planPayload()); },
+		requestApply: function (checksum) { applyCalls.push(checksum); return Promise.resolve(applyResultPayload()); },
+		renderApplyResult: function (presentation) { rendered.push(presentation); }
+	}));
+
+	await controller.load();
+	const result = await controller.apply(true);
+
+	assert.deepEqual(applyCalls, ['a'.repeat(64)]);
+	assert.equal(result.valid, true);
+	assert.deepEqual(result.blockers, []);
+	assert.equal(rendered.length, 1);
+	// A clean apply (no blockers) triggers a fresh authoritative reload of the plan — the second `requestPlan`
+	// call — rather than fabricating item-level state from the mutation DTO, which carries none.
+	assert.equal(planCalls.length, 2);
+});
+
+test('a blocked apply (e.g. a 409 plan_checksum_mismatch) renders the bounded result but never reloads or fabricates plan state', async function ()
+{
+	const planCalls = [];
+	const rendered = [];
+	const controller = bulkReview.createBulkReviewController(baseControllerOptions({
+		requestPlan: function () { planCalls.push(1); return Promise.resolve(planPayload()); },
+		requestApply: function () { return Promise.resolve(applyResultPayload({ blockers: ['plan_checksum_mismatch'] })); },
+		renderApplyResult: function (presentation) { rendered.push(presentation); }
+	}));
+
+	await controller.load();
+	const result = await controller.apply(true);
+
+	assert.deepEqual(result.blockers, ['plan_checksum_mismatch']);
+	assert.equal(rendered.length, 1);
+	assert.equal(planCalls.length, 1);
+});
+
+test('a failed apply request announces the apply error and renders no fabricated result', async function ()
+{
+	const rendered = [];
+	const errors = [];
+	const controller = bulkReview.createBulkReviewController(baseControllerOptions({
+		requestApply: function () { return Promise.reject(new Error('http_status')); },
+		renderApplyResult: function (presentation) { rendered.push(presentation); },
+		onError: function (message) { errors.push(message); }
+	}));
+
+	await controller.load();
+	await controller.apply(true);
+
+	assert.deepEqual(rendered, []);
+	assert.deepEqual(errors, [bulkReview.COPY.applyError]);
+});
+
+test('rollback() fires no request until the rollback preview has been loaded, even when confirmed', async function ()
+{
+	const rollbackCalls = [];
+	const controller = bulkReview.createBulkReviewController(baseControllerOptions({
+		requestRollbackExecute: function (checksum) { rollbackCalls.push(checksum); return Promise.resolve(rollbackResultPayload()); }
+	}));
+
+	const beforePreview = await controller.rollback(true);
+	assert.equal(beforePreview, null);
+	assert.deepEqual(rollbackCalls, []);
+
+	await controller.loadRollbackPreview();
+	const unconfirmed = await controller.rollback(false);
+	assert.equal(unconfirmed, null);
+	assert.deepEqual(rollbackCalls, []);
+});
+
+test('rollback(true), once the preview is loaded, sends exactly the preview\'s own checksum and reloads plan + preview on success', async function ()
+{
+	const rollbackCalls = [];
+	const previewCalls = [];
+	const rendered = [];
+	const controller = bulkReview.createBulkReviewController(baseControllerOptions({
+		requestRollbackPreview: function () { previewCalls.push(1); return Promise.resolve(rollbackPreviewPayload()); },
+		requestRollbackExecute: function (checksum) { rollbackCalls.push(checksum); return Promise.resolve(rollbackResultPayload()); },
+		renderRollbackResult: function (presentation) { rendered.push(presentation); }
+	}));
+
+	await controller.loadRollbackPreview();
+	const result = await controller.rollback(true);
+
+	assert.deepEqual(rollbackCalls, ['b'.repeat(64)]);
+	assert.equal(result.valid, true);
+	assert.deepEqual(result.blockers, []);
+	assert.equal(rendered.length, 1);
+	// A clean rollback re-loads the preview fresh (the second `requestRollbackPreview` call) so items that
+	// just left the reversible set are never left showing stale local state.
+	assert.equal(previewCalls.length, 2);
+});
+
+test('a blocked rollback renders the bounded result but never reloads the plan or the preview', async function ()
+{
+	const previewCalls = [];
+	const rendered = [];
+	const controller = bulkReview.createBulkReviewController(baseControllerOptions({
+		requestRollbackPreview: function () { previewCalls.push(1); return Promise.resolve(rollbackPreviewPayload()); },
+		requestRollbackExecute: function () { return Promise.resolve(rollbackResultPayload({ blockers: ['plan_checksum_mismatch'] })); },
+		renderRollbackResult: function (presentation) { rendered.push(presentation); }
+	}));
+
+	await controller.loadRollbackPreview();
+	const result = await controller.rollback(true);
+
+	assert.deepEqual(result.blockers, ['plan_checksum_mismatch']);
+	assert.equal(rendered.length, 1);
+	assert.equal(previewCalls.length, 1);
+});
+
+test('a failed rollback-preview load announces its own error and never blocks a later successful load', async function ()
+{
+	const errors = [];
+	let shouldFail = true;
+	const controller = bulkReview.createBulkReviewController(baseControllerOptions({
+		requestRollbackPreview: function ()
+		{
+			if (shouldFail)
+			{
+				return Promise.reject(new Error('http_status'));
+			}
+			return Promise.resolve(rollbackPreviewPayload());
+		},
+		onError: function (message) { errors.push(message); }
+	}));
+
+	const failed = await controller.loadRollbackPreview();
+	assert.equal(failed, null);
+	assert.deepEqual(errors, [bulkReview.COPY.rollbackPreviewError]);
+
+	shouldFail = false;
+	const succeeded = await controller.loadRollbackPreview();
+	assert.equal(succeeded.valid, true);
 });

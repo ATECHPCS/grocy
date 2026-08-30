@@ -44,7 +44,40 @@
 		checksumLabel: 'Checksum',
 		includedLabel: 'Included in apply set',
 		blankValue: 'None',
-		conflictNote: 'This item conflicts with the current data and cannot be part of the apply set.'
+		conflictNote: 'This item conflicts with the current data and cannot be part of the apply set.',
+
+		// Rollback preview (BULK-09, D-11)
+		rollbackPreviewError: 'The rollback preview could not be loaded. Try again.',
+		rollbackPreviewHeading: 'Rollback preview',
+		reversibleHeading: 'Reversible',
+		refusedHeading: 'Refused (manual edit after apply)',
+		emptyReversible: 'No items are reversible.',
+		emptyRefused: 'No items are refused.',
+		currentLabel: 'Current value',
+		afterLabel: 'After apply',
+		blockerLabel: 'Blocker',
+		inverseOperationLabel: 'Restore operation',
+
+		// Apply / rollback-execute actions (D-13)
+		applyButtonLabel: 'Apply plan',
+		applyConfirmPrompt: 'Apply this plan now? This performs a durable, audited write against Grocy and cannot be undone from this page except by a subsequent rollback.',
+		applyError: 'The plan could not be applied. Try again.',
+		applyResultHeading: 'Apply result',
+		rollbackButtonLabel: 'Roll back reversible items',
+		rollbackConfirmPrompt: 'Roll back the reversible items from this plan now? This performs a durable, audited write against Grocy.',
+		rollbackExecuteError: 'The rollback could not be completed. Try again.',
+		rollbackResultHeading: 'Rollback result',
+		rollbackPreviewRequiredNote: 'Load the rollback preview before rolling back, so the action is bound to a reviewed checksum.',
+		statusLabel: 'Status',
+		actorLabel: 'Actor',
+		blockersLabel: 'Blockers',
+		noBlockers: 'None',
+
+		// Export (BULK-10, D-12)
+		exportHeading: 'Export',
+		exportJsonLabel: 'Download JSON (non-authoritative)',
+		exportCsvLabel: 'Download CSV (non-authoritative)',
+		exportNote: 'These files are non-authoritative recovery evidence for independent human review only. They cannot be re-imported to change data; Grocy remains the sole durable authority.'
 	};
 
 	// Closed vocabularies from the endpoint contract (05-05-PLAN). These tokens are rendered verbatim
@@ -63,6 +96,19 @@
 	var CHECKSUM_PATTERN = /^[0-9a-f]{64}$/;
 	var MAX_COUNT = 1000000000;
 	var MAX_ITEMS = 10000;
+
+	// Closed vocabularies for the rollback-preview (05-09) and apply/rollback-execute (05-07/05-09) DTOs.
+	// Rendered/validated verbatim against the same fail-closed discipline as the plan/diff shapes above.
+	var ROLLBACK_PREVIEW_KEYS = ['plan_id', 'plan_checksum', 'checksum', 'items', 'reversible', 'refused'];
+	var ROLLBACK_ITEM_KEYS = [
+		'plan_item_id', 'object_type', 'object_id', 'before_image', 'after_image', 'current_value',
+		'inverse_operation', 'reversible', 'blocker'
+	];
+	var MUTATION_RESULT_KEYS = ['plan_id', 'checksum', 'status', 'blockers', 'outcomes', 'actor'];
+	var APPLY_OUTCOME_KEYS = ['applied', 'conflict', 'skipped'];
+	var ROLLBACK_OUTCOME_KEYS = ['rolled_back', 'conflict', 'skipped'];
+	var MAX_BLOCKERS = 20;
+	var EXPORT_FORMATS = ['json', 'csv'];
 
 	function hasExactKeys(value, keys)
 	{
@@ -88,6 +134,16 @@
 	function isBoundedString(value, max)
 	{
 		return typeof value === 'string' && value.length > 0 && value.length <= max;
+	}
+
+	function isNullableBoundedString(value, max)
+	{
+		return value === null || isBoundedString(value, max);
+	}
+
+	function isBlockersList(value)
+	{
+		return Array.isArray(value) && value.length <= MAX_BLOCKERS && value.every(function (entry) { return isBoundedString(entry, 64); });
 	}
 
 	function isImage(value)
@@ -158,6 +214,79 @@
 			&& isPlanHeader(value.plan)
 			&& isCounts(value.counts)
 			&& isItemsArray(value.items);
+	}
+
+	/**
+	 * Validate one `GET .../rollback-preview` reversal entry (05-09 `PreviewRollback`). A reversible entry
+	 * must carry a non-null inverse operation and no blocker; a refused entry must carry the pinned
+	 * `manual_edit_after_apply`-shaped blocker and withhold the inverse operation — so the UI can never
+	 * present a refused item as actionable or vice versa.
+	 */
+	function isRollbackItem(value)
+	{
+		if (!hasExactKeys(value, ROLLBACK_ITEM_KEYS)
+			|| !isPositiveInt(value.plan_item_id)
+			|| !isBoundedString(value.object_type, 64)
+			|| !isPositiveInt(value.object_id)
+			|| !isNullableBoundedString(value.before_image, 200)
+			|| !isNullableBoundedString(value.after_image, 200)
+			|| !isNullableBoundedString(value.current_value, 200)
+			|| !isNullableBoundedString(value.inverse_operation, 64)
+			|| typeof value.reversible !== 'boolean'
+			|| !isNullableBoundedString(value.blocker, 200))
+		{
+			return false;
+		}
+		return value.reversible
+			? (value.blocker === null && value.inverse_operation !== null)
+			: (value.blocker !== null && value.inverse_operation === null);
+	}
+
+	function isRollbackItemsArray(value)
+	{
+		return Array.isArray(value) && value.length <= MAX_ITEMS && value.every(isRollbackItem);
+	}
+
+	/**
+	 * Validate the closed `GET .../rollback-preview` response shape: `{ plan_id, plan_checksum, checksum,
+	 * items, reversible, refused }`. `reversible`/`refused` must partition `items` exactly and each entry's
+	 * own `reversible` flag must agree with the bucket it was returned in — any mismatch fails closed.
+	 */
+	function isRollbackPreviewPayload(value)
+	{
+		if (!hasExactKeys(value, ROLLBACK_PREVIEW_KEYS)
+			|| !isPositiveInt(value.plan_id)
+			|| !CHECKSUM_PATTERN.test(value.plan_checksum)
+			|| !CHECKSUM_PATTERN.test(value.checksum)
+			|| !isRollbackItemsArray(value.items)
+			|| !isRollbackItemsArray(value.reversible)
+			|| !isRollbackItemsArray(value.refused)
+			|| value.items.length !== value.reversible.length + value.refused.length)
+		{
+			return false;
+		}
+		return value.reversible.every(function (entry) { return entry.reversible === true; })
+			&& value.refused.every(function (entry) { return entry.reversible === false; });
+	}
+
+	/**
+	 * Validate the closed apply/rollback-execute outcome DTO shared by `POST .../apply` and
+	 * `POST .../rollback` (D-13): `{ plan_id, checksum, status, blockers, outcomes, actor }`. `outcomeKeys`
+	 * pins the exact per-action outcome vocabulary (`applied`/`conflict`/`skipped` vs.
+	 * `rolled_back`/`conflict`/`skipped`) so the two actions can never be confused. A non-empty `blockers`
+	 * list (e.g. a 409 `plan_checksum_mismatch`) is itself a valid, closed shape — the caller renders it, it
+	 * never treats it as a malformed response.
+	 */
+	function isMutationResult(value, outcomeKeys)
+	{
+		return hasExactKeys(value, MUTATION_RESULT_KEYS)
+			&& isPositiveInt(value.plan_id)
+			&& CHECKSUM_PATTERN.test(value.checksum)
+			&& isBoundedString(value.status, 32)
+			&& isBlockersList(value.blockers)
+			&& hasExactKeys(value.outcomes, outcomeKeys)
+			&& outcomeKeys.every(function (key) { return isCount(value.outcomes[key]); })
+			&& isBoundedString(value.actor, 255);
 	}
 
 	/**
@@ -239,6 +368,98 @@
 		};
 	}
 
+	function rollbackRow(entry)
+	{
+		return {
+			planItemId: entry.plan_item_id,
+			objectType: entry.object_type,
+			objectId: entry.object_id,
+			before: entry.before_image,
+			after: entry.after_image,
+			current: entry.current_value,
+			inverseOperation: entry.inverse_operation,
+			reversible: entry.reversible,
+			blocker: entry.blocker
+		};
+	}
+
+	/**
+	 * Turn a raw `GET .../rollback-preview` response into a DOM-free presentation, distinguishing
+	 * reversible from refused items. Fails closed to `valid: false` with empty lists on any malformed or
+	 * out-of-contract payload, matching `describePlan`/`describeSelectedDiff`. Zero-write: this describes a
+	 * read response only and never issues a rollback itself.
+	 */
+	function describeRollbackPreview(payload)
+	{
+		if (!isRollbackPreviewPayload(payload))
+		{
+			return { valid: false, planId: null, planChecksum: '', checksum: '', reversible: [], refused: [] };
+		}
+		return {
+			valid: true,
+			planId: payload.plan_id,
+			planChecksum: payload.plan_checksum,
+			checksum: payload.checksum,
+			reversible: payload.reversible.map(rollbackRow),
+			refused: payload.refused.map(rollbackRow)
+		};
+	}
+
+	/**
+	 * Turn a raw apply/rollback-execute outcome DTO into a DOM-free presentation. Fails closed the same way
+	 * as the other `describe*` helpers. `blockers`/`outcomes` are carried through verbatim (closed-vocabulary
+	 * tokens rendered as-is, never remapped to invented copy).
+	 */
+	function describeMutationResult(payload, outcomeKeys)
+	{
+		if (!isMutationResult(payload, outcomeKeys))
+		{
+			return { valid: false, planId: null, checksum: '', status: '', blockers: [], outcomes: [], actor: '' };
+		}
+		return {
+			valid: true,
+			planId: payload.plan_id,
+			checksum: payload.checksum,
+			status: payload.status,
+			blockers: payload.blockers.slice(),
+			outcomes: outcomeKeys.map(function (key) { return { term: key, value: String(payload.outcomes[key]) }; }),
+			actor: payload.actor
+		};
+	}
+
+	function describeApplyResult(payload)
+	{
+		return describeMutationResult(payload, APPLY_OUTCOME_KEYS);
+	}
+
+	function describeRollbackResult(payload)
+	{
+		return describeMutationResult(payload, ROLLBACK_OUTCOME_KEYS);
+	}
+
+	/**
+	 * Build the zero-write `GET .../export` download URL for a plan (D-12/BULK-10). Returns `null` for an
+	 * unsupported format so a caller can never construct a request for anything outside the closed
+	 * `json`/`csv` vocabulary. This never issues the request itself — it is a pure URL builder consumed by
+	 * a plain download link, so clicking it triggers only a browser-native file download, never a write.
+	 */
+	function exportUrl(plansEndpoint, planId, format)
+	{
+		if (EXPORT_FORMATS.indexOf(format) === -1)
+		{
+			return null;
+		}
+		return plansEndpoint + '/' + encodeURIComponent(String(planId)) + '/export?format=' + format;
+	}
+
+	function exportLinks(plansEndpoint, planId)
+	{
+		return {
+			json: exportUrl(plansEndpoint, planId, 'json'),
+			csv: exportUrl(plansEndpoint, planId, 'csv')
+		};
+	}
+
 	function safePromise(fn)
 	{
 		try
@@ -262,6 +483,15 @@
 		var sequence = 0;
 		var renderedPlan = 0;
 		var renderedDiff = 0;
+		var renderedRollback = 0;
+		var renderedApply = 0;
+		var renderedRollbackAction = 0;
+		// The checksum the mutation actions bind to is sourced ONLY from the most recently rendered
+		// server response (the loaded plan's `checksum`, the loaded rollback preview's `checksum`) — never
+		// from a caller- or DOM-supplied value. This is what stops the browser from ever being able to
+		// supply an item list/operation/value: apply()/rollback() below accept only a confirm flag.
+		var currentPlanChecksum = null;
+		var currentRollbackChecksum = null;
 
 		function applyPlan(owned, payload)
 		{
@@ -273,6 +503,7 @@
 			if (owned > renderedPlan)
 			{
 				renderedPlan = owned;
+				currentPlanChecksum = presentation.checksum;
 				options.renderPlan(presentation);
 			}
 			return presentation;
@@ -366,7 +597,143 @@
 				});
 		}
 
-		return { load: load, toggle: toggle };
+		/**
+		 * Load the zero-write rollback preview and render it read-only. Never issues a write. Records the
+		 * preview's own checksum as the ONLY value `rollback()` below may later send, so an execute can never
+		 * fire without the caller having first seen a fresh, server-derived reversible/refused breakdown.
+		 */
+		function loadRollbackPreview()
+		{
+			sequence++;
+			var owned = sequence;
+			options.onBusy(true);
+
+			return safePromise(options.requestRollbackPreview).then(function (payload)
+			{
+				var presentation = describeRollbackPreview(payload);
+				if (!presentation.valid)
+				{
+					throw new Error('rollback_preview_invalid');
+				}
+				if (owned > renderedRollback)
+				{
+					renderedRollback = owned;
+					currentRollbackChecksum = presentation.checksum;
+					options.renderRollbackPreview(presentation);
+				}
+				options.onBusy(false);
+				return presentation;
+			}, function ()
+			{
+				if (owned > renderedRollback)
+				{
+					options.onError(COPY.rollbackPreviewError, 'rollback-preview');
+				}
+				options.onBusy(false);
+				return null;
+			});
+		}
+
+		/**
+		 * Apply the currently loaded plan (D-13, durable mutation). Fires ONLY when `confirmed === true`
+		 * (the caller must have already shown and resolved an explicit confirmation) AND a plan has been
+		 * loaded (so a checksum is bound); a stray call with no confirm, or before any plan is loaded, issues
+		 * no request and resolves to `null`. The checksum sent is exactly the currently rendered plan's own
+		 * checksum — never a value the caller passes in — so the browser can supply no item list, operation,
+		 * or value of its own. On success (no blockers) the plan/summary/diff are re-loaded fresh from the
+		 * server rather than fabricated from the mutation DTO, which carries no item-level detail. On a
+		 * bounded blocker (e.g. a 409 `plan_checksum_mismatch`) the result is still rendered verbatim; no
+		 * state is invented.
+		 */
+		function apply(confirmed)
+		{
+			if (confirmed !== true || currentPlanChecksum === null)
+			{
+				return Promise.resolve(null);
+			}
+			var checksum = currentPlanChecksum;
+			sequence++;
+			var owned = sequence;
+			options.onBusy(true);
+
+			return safePromise(function () { return options.requestApply(checksum); }).then(function (payload)
+			{
+				var presentation = describeApplyResult(payload);
+				if (!presentation.valid)
+				{
+					throw new Error('apply_invalid');
+				}
+				if (owned > renderedApply)
+				{
+					renderedApply = owned;
+					options.renderApplyResult(presentation);
+				}
+				if (presentation.blockers.length === 0)
+				{
+					return load().then(function () { return presentation; });
+				}
+				options.onBusy(false);
+				return presentation;
+			}, function ()
+			{
+				if (owned > renderedApply)
+				{
+					options.onError(COPY.applyError, 'apply');
+				}
+				options.onBusy(false);
+				return null;
+			});
+		}
+
+		/**
+		 * Execute a guarded rollback of the currently previewed plan (D-13, durable mutation). Fires ONLY
+		 * when `confirmed === true` AND a rollback preview has been loaded (so a reviewed checksum is bound);
+		 * otherwise it issues no request and resolves to `null` — mirroring `apply()`. The checksum sent is
+		 * exactly the currently rendered rollback preview's own checksum, binding the executed reversal to the
+		 * one the caller reviewed. On success the plan and the rollback preview are both re-loaded fresh from
+		 * the server; on a bounded blocker the result is rendered verbatim with no fabricated state.
+		 */
+		function rollback(confirmed)
+		{
+			if (confirmed !== true || currentRollbackChecksum === null)
+			{
+				return Promise.resolve(null);
+			}
+			var checksum = currentRollbackChecksum;
+			sequence++;
+			var owned = sequence;
+			options.onBusy(true);
+
+			return safePromise(function () { return options.requestRollbackExecute(checksum); }).then(function (payload)
+			{
+				var presentation = describeRollbackResult(payload);
+				if (!presentation.valid)
+				{
+					throw new Error('rollback_invalid');
+				}
+				if (owned > renderedRollbackAction)
+				{
+					renderedRollbackAction = owned;
+					options.renderRollbackResult(presentation);
+				}
+				if (presentation.blockers.length === 0)
+				{
+					return Promise.all([load(), loadRollbackPreview()]).then(function () { return presentation; });
+				}
+				options.onBusy(false);
+				return presentation;
+			}, function ()
+			{
+				if (owned > renderedRollbackAction)
+				{
+					options.onError(COPY.rollbackExecuteError, 'rollback');
+				}
+				options.onBusy(false);
+				return null;
+			});
+		}
+
+		return { load: load, toggle: toggle, loadRollbackPreview: loadRollbackPreview, apply: apply, rollback: rollback };
 	}
 
 	function element(document, tag, text)
@@ -574,6 +941,141 @@
 		});
 	}
 
+	function rollbackEntryCard(document, tag, row)
+	{
+		var card = document.createElement('section');
+		card.className = 'grocy-ai-bulk-rollback-item';
+		card.setAttribute('data-grocy-ai-bulk-rollback-item-id', String(row.planItemId));
+
+		var header = document.createElement('div');
+		header.className = 'grocy-ai-field-header';
+		header.appendChild(element(document, tag, row.objectType + ' #' + row.objectId));
+		var badge = element(document, 'span', row.reversible ? 'reversible' : 'refused');
+		badge.className = 'badge grocy-ai-bulk-outcome grocy-ai-bulk-rollback-badge-' + (row.reversible ? 'reversible' : 'refused');
+		header.appendChild(badge);
+		card.appendChild(header);
+
+		var grid = document.createElement('div');
+		grid.className = 'grocy-ai-diff-grid';
+		var before = document.createElement('div');
+		before.className = 'grocy-ai-value-cell';
+		before.appendChild(element(document, 'strong', COPY.beforeLabel));
+		before.appendChild(element(document, 'span', valueOrBlank(row.before)));
+		var after = document.createElement('div');
+		after.className = 'grocy-ai-value-cell';
+		after.appendChild(element(document, 'strong', COPY.afterLabel));
+		after.appendChild(element(document, 'span', valueOrBlank(row.after)));
+		var current = document.createElement('div');
+		current.className = 'grocy-ai-value-cell';
+		current.appendChild(element(document, 'strong', COPY.currentLabel));
+		current.appendChild(element(document, 'span', valueOrBlank(row.current)));
+		grid.appendChild(before);
+		grid.appendChild(after);
+		grid.appendChild(current);
+		card.appendChild(grid);
+
+		if (row.reversible)
+		{
+			card.appendChild(element(document, 'p', COPY.inverseOperationLabel + ': ' + row.inverseOperation));
+		}
+		else
+		{
+			var blocker = element(document, 'p', COPY.blockerLabel + ': ' + row.blocker);
+			blocker.className = 'grocy-ai-bulk-conflict-note alert alert-warning';
+			blocker.setAttribute('role', 'alert');
+			card.appendChild(blocker);
+		}
+
+		return card;
+	}
+
+	/**
+	 * Render the zero-write rollback preview, visually and structurally separating reversible items from
+	 * refused (`manual_edit_after_apply`) items (BULK-09). Read-only: this function issues no request and
+	 * declares no rollback control of its own — the caller wires the rollback-execute button separately, so
+	 * a render can never itself trigger a write.
+	 */
+	function renderRollbackPreview(document, container, presentation)
+	{
+		container.textContent = '';
+		if (!presentation.valid)
+		{
+			container.appendChild(element(document, 'p', COPY.rollbackPreviewError));
+			return;
+		}
+
+		var reversibleSection = document.createElement('section');
+		reversibleSection.className = 'grocy-ai-bulk-rollback-reversible';
+		reversibleSection.appendChild(element(document, 'h4', COPY.reversibleHeading + ' (' + presentation.reversible.length + ')'));
+		if (presentation.reversible.length === 0)
+		{
+			reversibleSection.appendChild(element(document, 'p', COPY.emptyReversible));
+		}
+		else
+		{
+			presentation.reversible.forEach(function (row)
+			{
+				reversibleSection.appendChild(rollbackEntryCard(document, 'h5', row));
+			});
+		}
+		container.appendChild(reversibleSection);
+
+		var refusedSection = document.createElement('section');
+		refusedSection.className = 'grocy-ai-bulk-rollback-refused';
+		refusedSection.appendChild(element(document, 'h4', COPY.refusedHeading + ' (' + presentation.refused.length + ')'));
+		if (presentation.refused.length === 0)
+		{
+			refusedSection.appendChild(element(document, 'p', COPY.emptyRefused));
+		}
+		else
+		{
+			presentation.refused.forEach(function (row)
+			{
+				refusedSection.appendChild(rollbackEntryCard(document, 'h5', row));
+			});
+		}
+		container.appendChild(refusedSection);
+	}
+
+	/**
+	 * Render an apply/rollback-execute outcome (D-13) verbatim: status, the closed blocker list, the
+	 * per-action outcome counts, and the actor — exactly as returned, with no invented copy and no
+	 * fabricated item-level state (the DTO carries none). Used for both the apply result and the rollback
+	 * result panels via their own container/heading.
+	 */
+	function renderMutationResult(document, container, heading, presentation)
+	{
+		container.textContent = '';
+		container.appendChild(element(document, 'h4', heading));
+		if (!presentation.valid)
+		{
+			container.appendChild(element(document, 'p', COPY.loadError));
+			return;
+		}
+
+		container.appendChild(element(document, 'p', COPY.statusLabel + ': ' + presentation.status));
+
+		var blockersText = presentation.blockers.length === 0 ? COPY.noBlockers : presentation.blockers.join(', ');
+		var blockersEl = element(document, 'p', COPY.blockersLabel + ': ' + blockersText);
+		if (presentation.blockers.length > 0)
+		{
+			blockersEl.setAttribute('role', 'alert');
+			blockersEl.className = 'alert alert-warning';
+		}
+		container.appendChild(blockersEl);
+
+		var dl = document.createElement('dl');
+		dl.className = 'grocy-ai-bulk-summary-list';
+		presentation.outcomes.forEach(function (row)
+		{
+			dl.appendChild(element(document, 'dt', row.term));
+			dl.appendChild(element(document, 'dd', row.value));
+		});
+		container.appendChild(dl);
+
+		container.appendChild(element(document, 'p', COPY.actorLabel + ': ' + presentation.actor));
+	}
+
 	/**
 	 * Wire the review surface to the live MASTER_DATA_EDIT-gated endpoints for the plan id carried on
 	 * `#grocy-ai-bulk-review`. Returns `null` (and renders a "no plan selected" message) when the page
@@ -589,6 +1091,14 @@
 		var summaryEl = document.getElementById('grocy-ai-bulk-summary');
 		var itemsEl = document.getElementById('grocy-ai-bulk-items');
 		var diffEl = document.getElementById('grocy-ai-bulk-selected-diff');
+		var rollbackPreviewEl = document.getElementById('grocy-ai-bulk-rollback-preview');
+		var rollbackPreviewButton = document.getElementById('grocy-ai-bulk-rollback-preview-button');
+		var applyButton = document.getElementById('grocy-ai-bulk-apply-button');
+		var applyResultEl = document.getElementById('grocy-ai-bulk-apply-result');
+		var rollbackButton = document.getElementById('grocy-ai-bulk-rollback-button');
+		var rollbackResultEl = document.getElementById('grocy-ai-bulk-rollback-result');
+		var exportJsonLink = document.getElementById('grocy-ai-bulk-export-json');
+		var exportCsvLink = document.getElementById('grocy-ai-bulk-export-csv');
 
 		var planIdRaw = root.getAttribute('data-plan-id') || '';
 		var plansEndpoint = root.getAttribute('data-plans-endpoint') || '';
@@ -609,11 +1119,31 @@
 			{
 				diffEl.textContent = '';
 			}
+			if (rollbackPreviewEl)
+			{
+				rollbackPreviewEl.textContent = '';
+			}
 			return null;
 		}
 
 		var planUrl = plansEndpoint + '/' + encodeURIComponent(planId);
 		var diffUrl = planUrl + '/selected-diff';
+		var rollbackPreviewUrl = planUrl + '/rollback-preview';
+		var applyUrl = planUrl + '/apply';
+		var rollbackExecuteUrl = planUrl + '/rollback';
+		var downloadLinks = exportLinks(plansEndpoint, planId);
+
+		// The export links are plain same-origin `<a href>` navigations, wired once from a pure URL builder
+		// — never a fetch call, so a click can never mutate plan/selection state and requests exactly the
+		// permission-checked, zero-write `GET .../export` read the server serves as a labelled file download.
+		if (exportJsonLink && downloadLinks.json)
+		{
+			exportJsonLink.href = downloadLinks.json;
+		}
+		if (exportCsvLink && downloadLinks.csv)
+		{
+			exportCsvLink.href = downloadLinks.csv;
+		}
 
 		function selectionUrl(seq)
 		{
@@ -634,6 +1164,35 @@
 				}
 				return response.json();
 			});
+		}
+
+		/**
+		 * POST an apply/rollback-execute confirmation. Unlike `fetchJson`, a 409 response is NOT treated as a
+		 * transport failure: the apply/rollback-execute endpoints return the same closed outcome DTO on a
+		 * bounded blocker (e.g. `plan_checksum_mismatch`) with a 409 status, and that body must still reach
+		 * `describeApplyResult`/`describeRollbackResult` for rendering — never be discarded as a generic error.
+		 */
+		function fetchMutation(url, checksum)
+		{
+			return fetch(url, {
+				method: 'POST',
+				credentials: 'same-origin',
+				cache: 'no-store',
+				headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+				body: JSON.stringify({ checksum: checksum })
+			}).then(function (response)
+			{
+				if (!response.ok && response.status !== 409)
+				{
+					throw new Error('http_status');
+				}
+				return response.json();
+			});
+		}
+
+		function confirmAction(message)
+		{
+			return typeof window !== 'undefined' && typeof window.confirm === 'function' && window.confirm(message) === true;
 		}
 
 		function announceError(message)
@@ -670,6 +1229,13 @@
 					body: JSON.stringify({ selected: selected })
 				});
 			},
+			requestRollbackPreview: function () { return fetchJson(rollbackPreviewUrl, { method: 'GET' }); },
+			// The checksum argument here is ALWAYS the controller's own last-rendered plan/preview checksum
+			// (see `apply`/`rollback` in `createBulkReviewController`) — this function never receives, and
+			// this module never lets the DOM layer supply, any browser-originated checksum, item list,
+			// operation, or value.
+			requestApply: function (checksum) { return fetchMutation(applyUrl, checksum); },
+			requestRollbackExecute: function (checksum) { return fetchMutation(rollbackExecuteUrl, checksum); },
 			renderPlan: function (presentation)
 			{
 				if (summaryEl)
@@ -702,12 +1268,61 @@
 					renderSelectedDiff(document, diffEl, presentation);
 				}
 			},
+			renderRollbackPreview: function (presentation)
+			{
+				if (rollbackPreviewEl)
+				{
+					renderRollbackPreview(document, rollbackPreviewEl, presentation);
+				}
+			},
+			renderApplyResult: function (presentation)
+			{
+				if (applyResultEl)
+				{
+					renderMutationResult(document, applyResultEl, COPY.applyResultHeading, presentation);
+				}
+			},
+			renderRollbackResult: function (presentation)
+			{
+				if (rollbackResultEl)
+				{
+					renderMutationResult(document, rollbackResultEl, COPY.rollbackResultHeading, presentation);
+				}
+			},
 			onBusy: function (busy)
 			{
 				root.setAttribute('aria-busy', busy ? 'true' : 'false');
 			},
 			onError: announceError
 		});
+
+		// Apply/rollback-execute are durable mutations (D-13): each button fires ONLY after an explicit
+		// `window.confirm` the user must accept, and `controller.apply`/`controller.rollback` independently
+		// refuse to issue a request unless their own `confirmed === true` gate is satisfied — so neither a
+		// stray click nor a click before confirmation can ever reach the network. Rollback additionally
+		// requires the read-only preview to have been loaded first, since that is the sole source of the
+		// checksum the execute call binds to.
+		if (applyButton)
+		{
+			applyButton.addEventListener('click', function ()
+			{
+				controller.apply(confirmAction(COPY.applyConfirmPrompt));
+			});
+		}
+		if (rollbackPreviewButton)
+		{
+			rollbackPreviewButton.addEventListener('click', function ()
+			{
+				controller.loadRollbackPreview();
+			});
+		}
+		if (rollbackButton)
+		{
+			rollbackButton.addEventListener('click', function ()
+			{
+				controller.rollback(confirmAction(COPY.rollbackConfirmPrompt));
+			});
+		}
 
 		controller.load();
 		return controller;
@@ -717,12 +1332,21 @@
 		COPY: COPY,
 		isPlanPayload: isPlanPayload,
 		isSelectedDiffPayload: isSelectedDiffPayload,
+		isRollbackPreviewPayload: isRollbackPreviewPayload,
+		isMutationResult: isMutationResult,
 		describePlan: describePlan,
 		describeSelectedDiff: describeSelectedDiff,
+		describeRollbackPreview: describeRollbackPreview,
+		describeApplyResult: describeApplyResult,
+		describeRollbackResult: describeRollbackResult,
+		exportUrl: exportUrl,
+		exportLinks: exportLinks,
 		createBulkReviewController: createBulkReviewController,
 		renderSummary: renderSummary,
 		renderItems: renderItems,
 		renderSelectedDiff: renderSelectedDiff,
+		renderRollbackPreview: renderRollbackPreview,
+		renderMutationResult: renderMutationResult,
 		attachBulkReview: attachBulkReview
 	};
 });
