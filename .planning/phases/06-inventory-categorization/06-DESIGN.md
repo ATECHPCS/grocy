@@ -22,7 +22,7 @@ Apply the proven models to *existing* household inventory via reviewed bulk work
 | Q5 engine | Reuse the Phase 5 apply/rollback/idempotency/export spine unchanged; add profilers/operations only |
 | Q6 store | Classification stays in module tables (`grocy_ai_taxonomy_classifications`/`_evidence`); no Grocy userfield |
 | Q7 conflicts | Reuse Phase 3 evidence scoring; conflict = suggestion contradicts existing group signal OR two candidate types tie; review order conflicts → low-confidence → confident; below threshold → Unclassified |
-| Q8 conversion | No-op operation: assert 0 product-specific conversions, read-only audit the 62 globals; closes DATA-03/04/05 + regression tripwire; no deletion code |
+| Q8 conversion | ~~No-op operation: assert 0 product-specific conversions~~ **INVALIDATED 2026-09-12.** The 09-12 snapshot has 80 conversions = 62 global + **18 product-specific across 9 products** (piece↔weight package sizes + auto-inverses, added via product-intake since the 09-08 fact-find; look intentional). The "0 product-specific" premise is false, so the "product_id NOT NULL = regression" tripwire fires on legitimate data. Owner decision 2026-09-12: **pause & re-plan conversions** (06-06 built to old spec on branch `codex/phase6-06-audit`, NOT merged). A new invariant must distinguish intentional per-product package conversions from genuine junk before DATA-03/04/05 can close. |
 | Q9 verify | Per-table row-count + content-hash before/after each pass; only approved rows/columns may change, any other delta fails the pass |
 | Q10 rollback | Per-pass atomic `BEGIN IMMEDIATE` + pre-apply snapshot of every touched row into the audit record; restores from that record (works with no full DB backup); rehearsed on the local snapshot before prod |
 | Q11 output | Profilers emit standard BULK plan rows; confidence/evidence rides along as audit payload into export/rollback; no engine changes |
@@ -48,8 +48,8 @@ Apply the proven models to *existing* household inventory via reviewed bulk work
 - **06-03** — Exclusion override userfield migration + Supplements mapping-rule seed; wire into the profilers' scope.
 - **06-04** — `suggest_product_group` operation (group the 214 ungrouped): generate → review → apply/rollback through the existing engine.
 - **06-05** — Classification pass hardening: conflict-first ordering (Q7), re-run after grouping; confirm `assign_taxonomy_leaf`/`set_unclassified` on real snapshot data.
-- **06-06** — `audit_conversions` no-op + tripwire; close DATA-03/04/05 by verification.
-- **06-07** — UI: surface the three passes on the bulk-review page; DATA-06/07 acceptance on the snapshot.
+- **06-06** — ~~`audit_conversions` no-op + tripwire~~ **PAUSED 2026-09-12 (premise invalidated — 18 product-specific conversions exist; needs re-plan).** Built to the old spec on branch `codex/phase6-06-audit`, NOT merged.
+- **06-07** — UI: surface the passes on the bulk-review page; DATA-06/07 acceptance on the snapshot. **BLOCKED** until conversions (06-06) are re-planned — its `depends_on` includes 06-06.
 
 ## Boundary
 

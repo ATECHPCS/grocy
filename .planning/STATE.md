@@ -3,9 +3,9 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Phase 6 executing (06-01 complete)
+stopped_at: Phase 6 executing (06-03 merged; 06-06 paused; next 06-04)
 last_updated: "2026-09-12T00:00:00.000Z"
-last_activity: 2026-09-12 -- Phase 6 06-02 complete (DATA-06/07 harness GREEN)
+last_activity: 2026-09-12 -- Phase 6 06-03 merged (159/159); 06-06 built-but-paused (conversion premise invalidated); next 06-04
 progress:
   total_phases: 7
   completed_phases: 3
@@ -25,10 +25,11 @@ See: .planning/PROJECT.md (updated 2026-08-20)
 
 ## Current Position
 
-Phase: 6 (Inventory Categorization) — EXECUTING
-Plan: 06-01 + 06-02 COMPLETE 2026-09-12. 06-01 = snapshot tooling (snapshot-refresh.sh + snapshot-scrub.sql + SNAPSHOT.md + gitignore; scrubbed local snapshot landed). 06-02 = DATA-06/07 harness GREEN (bin/verify-inventory-diff.php + tests/inventory_diff.php, registered in run.php; suite 147/147). Resume at 06-03 (exclusion override userfield migration + Supplements mapping-rule seed). Phases 1-5 as before (Phase 5 awaiting 05-11 Task 3 human-verify).
-Status: 06-02 shipped + verified (All 147 grocy_AI checks passed). DATA-06 proves apply changes only grocy_ai_taxonomy_classifications + grocy_ai_bulk_*, native tables byte-identical; DATA-07 rollback restores native byte-identical + effective classification reverts (raw classifications keep NULL-leaf tombstones by engine design); idempotent re-apply zero-diff; rehearsed on the real snapshot. Live-prod counts: 444 products / 224 ungrouped / 21 groups / 80 conversions (design's 434/214/62 stale). Acquisition = direct SSH root@10.10.0.156 via 1Password key `ssh:Personal Docker (102)` + PDO VACUUM INTO + scp (NOT the Komodo terminal — 16 MiB frame cap wedges periphery). Resume at 06-03.
-Last activity: 2026-09-12 -- 06-02 complete. (06-01 incident, resolved: first transport dumped ~27MB through a Komodo Server terminal, wedged core<->periphery for host 102; recovered via `systemctl restart periphery.service` over SSH; committed script uses scp so it cannot recur.)
+Phase: 6 (Inventory Categorization) — EXECUTING (parallel-worktree orchestration)
+Plan: 06-01/06-02/06-03 COMPLETE + merged to codex/phase5-bulk-engine. 06-03 (commit 987fd82d) = exclusion-override userfield + Supplements mapping-rule seed + GrocyAiInventoryScope (single in-scope predicate owner); suite 159/159. 06-06 BUILT-BUT-PAUSED on branch codex/phase6-06-audit (NOT merged) — see below. Next: 06-04 (suggest_product_group for the ungrouped) → 06-05 (classification hardening). 06-07 BLOCKED (depends on paused 06-06). Phases 1-5 as before (Phase 5 awaiting 05-11 Task 3 human-verify).
+Status: 06-03 verified 159/159. **Conversion premise invalidated 2026-09-12:** the 09-12 snapshot has 80 conversions = 62 global + 18 product-specific across 9 products (piece↔weight package sizes + auto-inverses, added via product-intake since the 09-08 fact-find; look intentional). 06-06's "product_id NOT NULL = regression" tripwire fires on legitimate data → owner decision: PAUSE & RE-PLAN conversions; DATA-03/04/05 REOPENED. 06-06 code preserved on its branch for reference. Base-hygiene commits this session: a4e3b664 (Phase 6 01/02 foundation) + 0867d00e (Phase 8 capture WIP split out). Live-prod counts: 444 products / 224 ungrouped / 21 groups / 80 conversions. Acquisition = direct SSH root@10.10.0.156 via 1Password key `ssh:Personal Docker (102)` + PDO VACUUM INTO + scp (NOT the Komodo terminal — 16 MiB frame cap wedges periphery).
+Orchestration: 06-03 ∥ 06-06 ran as parallel subagents in git worktrees under .worktrees/ (packages/ + .snapshots symlinked in, read-only). Remaining reachable chain is serial: 06-04 → 06-05. 06-07 waits on the conversion re-plan.
+Last activity: 2026-09-12 -- 06-03 merged; 06-06 paused pending conversion re-plan.
 
 Progress: [████░░░░░░] 43%
 

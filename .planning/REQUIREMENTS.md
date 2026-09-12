@@ -67,9 +67,9 @@
 
 - [ ] **DATA-01**: Maintainer can profile every in-scope existing food product and generate product-group and food-classification suggestions while excluding the configured non-food groups (Supplements), inactive products, and per-product override-excluded records. *(Re-scoped 2026-09-08: adds a reviewed product-group-suggestion pass for the 214 ungrouped products; no baby/pet groups exist in prod.)*
 - [ ] **DATA-02**: User can review low-confidence and conflicting food classifications first, leave items `Unclassified`, and apply only the explicitly approved product-group and classification assignments (bulk-populating the module `grocy_ai_taxonomy_classifications` table).
-- [~] **DATA-03**: *(Verification-closed 2026-09-08)* Maintainer can audit the existing conversion set and confirm 0 product-specific conversions exist (all 62 rows global); the "~101 unwanted" figure was stale. No cleanup targets — satisfied by a read-only audit + regression tripwire.
-- [~] **DATA-04**: *(Verification-closed 2026-09-08)* No product-specific conversions exist to compare or block; effective-path comparison machinery is not built. Tripwire fails the audit if product-specific conversions reappear.
-- [~] **DATA-05**: *(Verification-closed 2026-09-08)* No redundant product-specific conversions to remove; deletion code not built. Named exceptions (package/count, measured-density, purchase-to-stock) are moot on current data.
+- [ ] **DATA-03**: *(REOPENED 2026-09-12 — premise invalidated; needs re-plan)* The 09-08 fact-find's "0 product-specific conversions" is stale: the 09-12 snapshot has **80 rows = 62 global + 18 product-specific across 9 products** (piece↔weight package sizes + auto-inverses, added via product-intake since 09-08 and looking intentional). The plan's "any product_id NOT NULL = regression" tripwire fires on legitimate data. Audit invariant must be redefined before the audit can close. Owner decision 2026-09-12: **pause & re-plan conversions.**
+- [ ] **DATA-04**: *(REOPENED 2026-09-12)* Product-specific conversions DO exist (18). Whether/how to compare or block them depends on the redefined DATA-03 invariant. Blocked on conversion re-plan.
+- [ ] **DATA-05**: *(REOPENED 2026-09-12)* Whether any of the 18 product-specific conversions are redundant vs. intentional package sizes is undetermined; no deletion code built. Blocked on conversion re-plan.
 - [ ] **DATA-06**: Maintainer can verify after classification/cleanup that product and stock counts, stock amounts, history, recipes, prices, due dates, authentication, and normal Grocy behavior remain unchanged except for approved fields/rules.
 - [ ] **DATA-07**: Maintainer can rerun completed classification and cleanup plans with zero additional diffs and rehearse guarded rollback against production-shaped data.
 
@@ -167,9 +167,9 @@
 | BULK-10 | Phase 5 | Pending |
 | DATA-01 | Phase 6 | Pending |
 | DATA-02 | Phase 6 | Pending |
-| DATA-03 | Phase 6 | Verification-closed (0 targets) |
-| DATA-04 | Phase 6 | Verification-closed (0 targets) |
-| DATA-05 | Phase 6 | Verification-closed (0 targets) |
+| DATA-03 | Phase 6 | REOPENED 2026-09-12 — premise stale (18 product-specific rows); re-plan |
+| DATA-04 | Phase 6 | REOPENED 2026-09-12 — blocked on conversion re-plan |
+| DATA-05 | Phase 6 | REOPENED 2026-09-12 — blocked on conversion re-plan |
 | DATA-06 | Phase 6 | Pending |
 | DATA-07 | Phase 6 | Pending |
 | REL-01 | Phase 7 | Pending |

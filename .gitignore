@@ -6,5 +6,7 @@ embedded.txt
 /public/packages
 
 # Phase 6 local prod snapshots — contain real household data; never commit.
+# Both forms: the directory (real snapshots) and the bare path (a worktree symlink).
+custom/grocy_AI/.snapshots
 custom/grocy_AI/.snapshots/
 custom/grocy_AI/**/*.sqlite
