@@ -35,6 +35,18 @@ store, not here.
 
 ## Observations (first sightings)
 
+- 2026-09-12: Adding a new bulk operation to `GrocyAiBulkService::RegisteredOperations()` breaks the
+  arg-based `bulk-contract` + `bulk-registry` suites: both pin `array_keys(RegisteredOperations()) ===
+  ['assign_taxonomy_leaf','set_unclassified']` AND require every member to declare `delegate_write ===
+  'AssignProductTaxonomy'`. → Register a non-taxonomy op (e.g. `suggest_product_group`, native
+  `products` write) via a `ResolveOperation()` branch + a payload-key descriptor, NOT in
+  `RegisteredOperations()`; keep that method the closed taxonomy-only contract the tests pin. (hits: 1)
+
+- 2026-09-12: A test assertion `($item['before_image']['product_group_id'] ?? 'x') === null` FALSE-fails
+  a legitimately-null nullable JSON field, because `null ?? 'x'` yields `'x'`. before/proposed images
+  store `{"key": null}` for the ungrouped/unclassified before-state. → Assert nullable decoded-JSON
+  fields with `array_key_exists('key', $arr) && $arr['key'] === null`, never `?? default`. (hits: 1)
+
 - 2026-09-12: 06-01-PLAN.md (and STATE.md) asserted "no direct SSH key to 10.10.0.156" and pushed a
   Komodo-terminal `docker cp` acquisition path. Both were wrong: 1Password vault `API/SSH/Tokens` holds
   item **`ssh:Personal Docker (102)`** (ed25519) that logs in as `root@10.10.0.156`, and moving ~20 MB
