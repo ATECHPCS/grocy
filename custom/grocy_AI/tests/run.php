@@ -1324,6 +1324,13 @@ if (is_file($conversionAuditTestFile))
 	runConversionAuditSuite();
 }
 
+$categorizationTestFile = __DIR__ . '/categorization.php';
+if (is_file($categorizationTestFile))
+{
+	require_once $categorizationTestFile;
+	runCategorizationSuite();
+}
+
 if (function_exists('runTaxonomyClassificationReview'))
 {
 	runTaxonomyClassificationReview();

@@ -19,6 +19,14 @@ use Psr\Http\Message\ServerRequestInterface as Request;
 
 class GrocyAiApiController extends BaseApiController
 {
+	/**
+	 * Request-body selector (Phase 6 / 06-07) that routes a generation to the conflict-first classification
+	 * generator (`GenerateClassificationPlan`). It is NOT a stored plan operation_type — the classification
+	 * plan header remains `taxonomy_assignment` (byte-identical to 06-05); this token only chooses which
+	 * server-side generator runs, so the browser can still never supply proposed values or operations.
+	 */
+	private const CLASSIFICATION_REVIEW_SELECTOR = 'classification_review';
+
 	public function Status(Request $request, Response $response, array $args): Response
 	{
 		return $this->ApiResponse($response, (new GrocyAiService())->GetStatus());
@@ -393,14 +401,21 @@ class GrocyAiApiController extends BaseApiController
 		{
 			return $this->GenericErrorResponse($response, 'Invalid plan generation request', 400);
 		}
-		// Closed candidate-key set: the request may supply only operation_type, restricted to the single
-		// server-registered plan operation type. Any extra key makes the intersected candidate differ from
-		// the raw body and is refused before the engine, so no free-form entity/field/value/SQL payload can
-		// reach generation. The proposed values and operations are always server-derived by GeneratePlan.
+		// Closed candidate-key set: the request may supply only operation_type, restricted to the closed set
+		// of three server-side generators (Phase 6 / 06-07): the confident-only taxonomy pass, the
+		// product-group suggestion pass, and the conflict-first classification pass. Any extra key makes the
+		// intersected candidate differ from the raw body and is refused before the engine, so no free-form
+		// entity/field/value/SQL payload can reach generation. The proposed values and operations are always
+		// server-derived by the selected generator; the browser only picks which closed pass runs.
 		$candidate = array_intersect_key($body, array_flip(['operation_type']));
+		$allowedSelectors = [
+			GrocyAiBulkService::OPERATION_TYPE,
+			GrocyAiBulkService::GROUP_OPERATION_TYPE,
+			self::CLASSIFICATION_REVIEW_SELECTOR
+		];
 		if ($candidate !== $body || !array_key_exists('operation_type', $candidate)
 			|| !is_string($candidate['operation_type'])
-			|| !in_array($candidate['operation_type'], [GrocyAiBulkService::OPERATION_TYPE], true))
+			|| !in_array($candidate['operation_type'], $allowedSelectors, true))
 		{
 			return $this->GenericErrorResponse($response, 'Invalid plan generation request', 400);
 		}
@@ -408,8 +423,16 @@ class GrocyAiApiController extends BaseApiController
 		try
 		{
 			$service = new GrocyAiBulkService(DatabaseService::GetInstance()->GetDbConnectionRaw(), false);
-			// The actor is the authenticated session user only — never a browser-supplied value.
-			$generated = $service->GeneratePlan(['actor' => (string)GROCY_USER_ID]);
+			// The actor is the authenticated session user only — never a browser-supplied value. Each pass
+			// runs its own explicit server-side generator (the group/classification ops are dispatched via
+			// GrocyAiBulkService::ResolveOperation, never enumerated from RegisteredOperations).
+			$scope = ['actor' => (string)GROCY_USER_ID];
+			$generated = match ($candidate['operation_type'])
+			{
+				GrocyAiBulkService::GROUP_OPERATION_TYPE => $service->GenerateGroupPlan($scope),
+				self::CLASSIFICATION_REVIEW_SELECTOR => $service->GenerateClassificationPlan($scope),
+				default => $service->GeneratePlan($scope)
+			};
 			return $this->ApiResponse($response->withStatus(201), $service->ReadPlan((int)$generated['id']));
 		}
 		catch (\InvalidArgumentException)
@@ -419,6 +442,55 @@ class GrocyAiApiController extends BaseApiController
 		catch (\RuntimeException)
 		{
 			return $this->GenericErrorResponse($response, 'Plan generation unavailable', 503);
+		}
+	}
+
+	/**
+	 * Read-only conversion audit report (Phase 6 / 06-06 surfaced by 06-07). MASTER_DATA_EDIT-gated. The
+	 * conversion pass is a classifying READ-ONLY audit, never a plan: it returns the baseline (global count,
+	 * product-specific/expected counts and distinct product count) plus any SUSPICIOUS rows the integrity
+	 * tripwire found. The underlying library issues only SELECTs, so this endpoint declares no apply,
+	 * rollback, or write path of its own; the UI renders it as a report with no mutation controls.
+	 */
+	public function BulkConversionAudit(Request $request, Response $response, array $args): Response
+	{
+		User::CheckPermission($request, User::PERMISSION_MASTER_DATA_EDIT);
+
+		$auditLibrary = __DIR__ . '/../bin/audit-conversions.php';
+		if (!is_file($auditLibrary))
+		{
+			return $this->GenericErrorResponse($response, 'Conversion audit unavailable', 503);
+		}
+		require_once $auditLibrary;
+
+		try
+		{
+			// The audit library lives in the global namespace; it only SELECTs, mutating nothing.
+			$report = \auditConversions(DatabaseService::GetInstance()->GetDbConnectionRaw());
+			$suspicious = [];
+			foreach ($report['suspicious'] as $row)
+			{
+				$suspicious[] = [
+					'id' => (int)$row['id'],
+					'product_id' => (int)$row['product_id'],
+					'from_qu_id' => (int)$row['from_qu_id'],
+					'to_qu_id' => (int)$row['to_qu_id'],
+					'factor' => (float)$row['factor'],
+					'rule' => (string)$row['rule']
+				];
+			}
+			return $this->ApiResponse($response, [
+				'global_count' => (int)$report['global_count'],
+				'product_specific_count' => (int)$report['product_specific_count'],
+				'expected_count' => (int)$report['expected_count'],
+				'expected_product_count' => (int)$report['expected_product_count'],
+				'suspicious' => $suspicious,
+				'ok' => (bool)$report['ok']
+			]);
+		}
+		catch (\Throwable)
+		{
+			return $this->GenericErrorResponse($response, 'Conversion audit unavailable', 503);
 		}
 	}
 

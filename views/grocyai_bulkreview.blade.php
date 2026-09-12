@@ -32,7 +32,8 @@ $grocyAiAssetVersion = '2.5.0';
 <div class="row permission-MASTER_DATA_EDIT"
 	id="grocy-ai-bulk-review"
 	data-plan-id="{{ $planId !== null ? $planId : '' }}"
-	data-plans-endpoint="{{ $U('/api/grocy-ai/bulk/plans', true) }}">
+	data-plans-endpoint="{{ $U('/api/grocy-ai/bulk/plans', true) }}"
+	data-conversion-audit-endpoint="{{ $U('/api/grocy-ai/bulk/conversion-audit', true) }}">
 	<div class="col">
 		{{-- Generate plan (BULK-01 UI, D-13): the single user-facing plan-CREATION action on this page.
 		     bulk-review.js POSTs the closed { operation_type: "taxonomy_assignment" } body only, and this
@@ -41,10 +42,22 @@ $grocyAiAssetVersion = '2.5.0';
 		<section class="grocy-ai-bulk-generate-section"
 			aria-labelledby="grocy-ai-bulk-generate-heading">
 			<h3 id="grocy-ai-bulk-generate-heading">{{ $__t('Generate plan') }}</h3>
+			{{-- The three Phase 6 passes (06-07). The two writing passes (product-group suggestion and the
+			     conflict-first classification review) each generate a plan reviewed/applied/rolled back
+			     through the controls below; the conversion pass is a read-only report (its own section).
+			     Every pass writes only this module's own plan tables at generation, never native data, and
+			     each is dispatched by its own explicit server-side generator (never by enumerating the
+			     closed taxonomy operation registry). --}}
 			<div class="grocy-ai-actions">
 				<button type="button"
 					class="btn btn-primary"
 					id="grocy-ai-bulk-generate-button">{{ $__t('Generate plan') }}</button>
+				<button type="button"
+					class="btn btn-primary"
+					id="grocy-ai-bulk-generate-group-button">{{ $__t('Suggest product groups') }}</button>
+				<button type="button"
+					class="btn btn-primary"
+					id="grocy-ai-bulk-generate-classification-button">{{ $__t('Classify products (conflict-first)') }}</button>
 			</div>
 		</section>
 
@@ -135,6 +148,26 @@ $grocyAiAssetVersion = '2.5.0';
 					id="grocy-ai-bulk-export-csv"
 					download>{{ $__t('Download CSV (non-authoritative)') }}</a>
 			</div>
+		</section>
+
+		{{-- Conversion audit (06-06, surfaced by 06-07): a READ-ONLY classifying report + integrity
+		     tripwire. It is deliberately NOT a plan — there is no apply or rollback control here. Loading
+		     it issues only the permission-checked zero-write GET .../bulk/conversion-audit read, which
+		     surfaces the baseline (global + expected package definitions across N products) and any
+		     SUSPICIOUS rows. bulk-review.js is the sole trigger; this markup declares no write action. --}}
+		<section class="grocy-ai-bulk-conversion-audit-section"
+			aria-labelledby="grocy-ai-bulk-conversion-audit-heading">
+			<h3 id="grocy-ai-bulk-conversion-audit-heading">{{ $__t('Conversion audit (read-only report)') }}</h3>
+			<div class="grocy-ai-actions">
+				<button type="button"
+					class="btn btn-outline-secondary"
+					id="grocy-ai-bulk-conversion-audit-button">{{ $__t('Load conversion audit report') }}</button>
+			</div>
+			<div class="grocy-ai-bulk-conversion-audit"
+				id="grocy-ai-bulk-conversion-audit"
+				role="status"
+				aria-live="polite"
+				aria-labelledby="grocy-ai-bulk-conversion-audit-heading"></div>
 		</section>
 	</div>
 </div>

@@ -81,7 +81,21 @@
 
 		// Generate plan (BULK-01 UI, D-13): the one user-facing plan-CREATION action on this page.
 		generateButtonLabel: 'Generate plan',
-		generateError: 'The plan could not be generated. Try again.'
+		generateError: 'The plan could not be generated. Try again.',
+
+		// The three Phase 6 passes (06-07). The two writing passes reuse the review/apply/rollback controls;
+		// the conversion pass is a read-only report with no mutation controls.
+		generateGroupButtonLabel: 'Suggest product groups',
+		generateClassificationButtonLabel: 'Classify products (conflict-first)',
+		conversionAuditButtonLabel: 'Audit conversions (read-only report)',
+		conversionAuditHeading: 'Conversion audit report',
+		conversionAuditError: 'The conversion audit could not be loaded. Try again.',
+		conversionAuditGlobalLabel: 'Global conversions',
+		conversionAuditExpectedLabel: 'Expected package definitions',
+		conversionAuditProductsLabel: 'Across products',
+		conversionAuditSuspiciousLabel: 'Suspicious',
+		conversionAuditOkNote: 'Every product-specific conversion is a legitimate package definition. Nothing suspicious; nothing changed.',
+		conversionAuditTripwireNote: 'Suspicious product-specific conversion(s) found. This report is read-only; investigate the rows below.'
 	};
 
 	/**
@@ -104,7 +118,12 @@
 		'seq', 'object_type', 'object_id', 'operation', 'before_image', 'proposed_value', 'reason',
 		'provenance', 'selected', 'outcome'
 	];
+	// The two closed before/proposed image shapes the review surface accepts (Phase 6 / 06-07). The two
+	// taxonomy operations write a `leaf_slug` (string|null); the product-group suggestion pass writes a
+	// native `product_group_id` (positive int|null). Each item carries exactly ONE of these shapes; any
+	// other shape fails closed, so a rendered field can still never carry an unexpected server value.
 	var IMAGE_KEYS = ['leaf_slug'];
+	var GROUP_IMAGE_KEYS = ['product_group_id'];
 	var CHECKSUM_PATTERN = /^[0-9a-f]{64}$/;
 	var MAX_COUNT = 1000000000;
 	var MAX_ITEMS = 10000;
@@ -160,7 +179,28 @@
 
 	function isImage(value)
 	{
-		return hasExactKeys(value, IMAGE_KEYS) && (value.leaf_slug === null || isBoundedString(value.leaf_slug, 200));
+		if (hasExactKeys(value, IMAGE_KEYS))
+		{
+			return value.leaf_slug === null || isBoundedString(value.leaf_slug, 200);
+		}
+		if (hasExactKeys(value, GROUP_IMAGE_KEYS))
+		{
+			return value.product_group_id === null || isPositiveInt(value.product_group_id);
+		}
+		return false;
+	}
+
+	/**
+	 * Extract the single written value from a validated before/proposed image, whichever closed shape it
+	 * carries. Returns the raw value (string, positive int, or null); the render layer coerces it to text.
+	 */
+	function imageValue(image)
+	{
+		if (Object.prototype.hasOwnProperty.call(image, 'leaf_slug'))
+		{
+			return image.leaf_slug;
+		}
+		return image.product_group_id;
 	}
 
 	function isItem(value)
@@ -222,6 +262,21 @@
 	function buildGeneratePlanBody()
 	{
 		return { operation_type: GENERATE_OPERATION_TYPE };
+	}
+
+	// The other two Phase 6 generation selectors (06-07). Each is a zero-argument pure function returning
+	// a closed single-key body, exactly like `buildGeneratePlanBody` — the browser can never influence
+	// which fields are sent, only which of the three fixed passes runs. `product_group_assignment` routes
+	// to the product-group suggestion generator; `classification_review` routes to the conflict-first
+	// classification generator (whose stored plan is still `taxonomy_assignment`).
+	function buildGroupPlanBody()
+	{
+		return { operation_type: 'product_group_assignment' };
+	}
+
+	function buildClassificationPlanBody()
+	{
+		return { operation_type: 'classification_review' };
 	}
 
 	function isPlanHeader(value)
@@ -351,8 +406,8 @@
 			objectType: item.object_type,
 			objectId: item.object_id,
 			operation: item.operation,
-			before: item.before_image.leaf_slug,
-			proposed: item.proposed_value.leaf_slug,
+			before: imageValue(item.before_image),
+			proposed: imageValue(item.proposed_value),
 			reason: item.reason,
 			provenance: item.provenance,
 			selected: item.selected,
@@ -472,6 +527,66 @@
 		return describeMutationResult(payload, ROLLBACK_OUTCOME_KEYS);
 	}
 
+	// Closed shape of the read-only conversion audit report (06-06 surfaced by 06-07). Validated verbatim
+	// against the same fail-closed discipline as the plan/diff/rollback shapes above; it declares no write.
+	var CONVERSION_AUDIT_KEYS = ['global_count', 'product_specific_count', 'expected_count', 'expected_product_count', 'suspicious', 'ok'];
+	var SUSPICIOUS_KEYS = ['id', 'product_id', 'from_qu_id', 'to_qu_id', 'factor', 'rule'];
+
+	function isSuspiciousRow(value)
+	{
+		return hasExactKeys(value, SUSPICIOUS_KEYS)
+			&& isPositiveInt(value.id)
+			&& isPositiveInt(value.product_id)
+			&& isCount(value.from_qu_id)
+			&& isCount(value.to_qu_id)
+			&& typeof value.factor === 'number'
+			&& isBoundedString(value.rule, 64);
+	}
+
+	function isConversionAuditPayload(value)
+	{
+		return hasExactKeys(value, CONVERSION_AUDIT_KEYS)
+			&& isCount(value.global_count)
+			&& isCount(value.product_specific_count)
+			&& isCount(value.expected_count)
+			&& isCount(value.expected_product_count)
+			&& Array.isArray(value.suspicious)
+			&& value.suspicious.length <= MAX_ITEMS
+			&& value.suspicious.every(isSuspiciousRow)
+			&& typeof value.ok === 'boolean';
+	}
+
+	/**
+	 * Turn a raw `GET .../bulk/conversion-audit` response into a DOM-free presentation. Fails closed the same
+	 * way as the other `describe*` helpers. Read-only: this describes a report only and issues no write.
+	 */
+	function describeConversionAudit(payload)
+	{
+		if (!isConversionAuditPayload(payload))
+		{
+			return { valid: false, globalCount: 0, productSpecificCount: 0, expectedCount: 0, expectedProductCount: 0, suspicious: [], ok: false };
+		}
+		return {
+			valid: true,
+			globalCount: payload.global_count,
+			productSpecificCount: payload.product_specific_count,
+			expectedCount: payload.expected_count,
+			expectedProductCount: payload.expected_product_count,
+			suspicious: payload.suspicious.map(function (row)
+			{
+				return {
+					id: row.id,
+					productId: row.product_id,
+					fromQuId: row.from_qu_id,
+					toQuId: row.to_qu_id,
+					factor: row.factor,
+					rule: row.rule
+				};
+			}),
+			ok: payload.ok
+		};
+	}
+
 	/**
 	 * Build the zero-write `GET .../export` download URL for a plan (D-12/BULK-10). Returns `null` for an
 	 * unsupported format so a caller can never construct a request for anything outside the closed
@@ -521,6 +636,7 @@
 		var renderedRollback = 0;
 		var renderedApply = 0;
 		var renderedRollbackAction = 0;
+		var renderedConversionAudit = 0;
 		// The checksum the mutation actions bind to is sourced ONLY from the most recently rendered
 		// server response (the loaded plan's `checksum`, the loaded rollback preview's `checksum`) — never
 		// from a caller- or DOM-supplied value. This is what stops the browser from ever being able to
@@ -788,13 +904,19 @@
 		 * bounded message when one was supplied (see `fetchGenerate`), or the generic `COPY.generateError`
 		 * otherwise; this module never fabricates plan state from a failed generation.
 		 */
-		function generate()
+		/**
+		 * Shared generation flow for all three Phase 6 passes (06-07). `requestFn` is one of the closed
+		 * per-pass request functions supplied by the caller; it is invoked with NO arguments, so — exactly
+		 * like the original single-pass generate — the browser can never influence the request beyond
+		 * choosing which fixed pass runs. `stage` names the failing action for `onError`.
+		 */
+		function runGeneration(requestFn, stage)
 		{
 			sequence++;
 			var owned = sequence;
 			options.onBusy(true);
 
-			return safePromise(options.requestGenerate).then(function (payload)
+			return safePromise(requestFn).then(function (payload)
 			{
 				var presentation = applyPlan(owned, payload);
 				return refreshDiff(owned).then(function ()
@@ -810,7 +932,61 @@
 					var message = (error && typeof error.boundedMessage === 'string' && error.boundedMessage.length > 0)
 						? error.boundedMessage
 						: COPY.generateError;
-					options.onError(message, 'generate');
+					options.onError(message, stage);
+				}
+				options.onBusy(false);
+				return null;
+			});
+		}
+
+		function generate()
+		{
+			return runGeneration(options.requestGenerate, 'generate');
+		}
+
+		// The two additional writing passes (06-07). Each reuses the exact same generation flow (and, once a
+		// plan is returned, the same review/apply/rollback controls), differing only in which server-side
+		// generator the request selects. Neither fires on load — only an explicit control invokes them.
+		function generateGroup()
+		{
+			return runGeneration(options.requestGenerateGroup, 'generate-group');
+		}
+
+		function generateClassification()
+		{
+			return runGeneration(options.requestGenerateClassification, 'generate-classification');
+		}
+
+		/**
+		 * Load the read-only conversion audit report (06-06 surfaced by 06-07). This is NOT a plan: it never
+		 * generates, applies, or rolls back anything — it only fetches and renders the audit report. Fires
+		 * only when an explicit control invokes it.
+		 */
+		function loadConversionAudit()
+		{
+			sequence++;
+			var owned = sequence;
+			options.onBusy(true);
+
+			return safePromise(options.requestConversionAudit).then(function (payload)
+			{
+				var presentation = describeConversionAudit(payload);
+				if (!presentation.valid)
+				{
+					throw new Error('conversion_audit_invalid');
+				}
+				if (owned > renderedConversionAudit)
+				{
+					renderedConversionAudit = owned;
+					options.renderConversionAudit(presentation);
+				}
+				options.onBusy(false);
+				return presentation;
+			}, function ()
+			{
+				if (owned > renderedConversionAudit)
+				{
+					options.onError(COPY.conversionAuditError, 'conversion-audit');
 				}
 				options.onBusy(false);
 				return null;
@@ -823,7 +999,10 @@
 			loadRollbackPreview: loadRollbackPreview,
 			apply: apply,
 			rollback: rollback,
-			generate: generate
+			generate: generate,
+			generateGroup: generateGroup,
+			generateClassification: generateClassification,
+			loadConversionAudit: loadConversionAudit
 		};
 	}
 
@@ -839,7 +1018,26 @@
 
 	function valueOrBlank(value)
 	{
-		return value === null ? COPY.blankValue : value;
+		return value === null ? COPY.blankValue : String(value);
+	}
+
+	/**
+	 * Map a classification item's server-supplied `reason` to its review confidence band (Phase 6 / 06-05
+	 * DATA-02). The band is derived only from the closed reason vocabulary the classification generator
+	 * emits — `review_conflict` (a conflict), `below_confidence_threshold` (low confidence), or a
+	 * `mapped_*` reason (a confident suggestion). Any other reason (e.g. a product-group suggestion reason)
+	 * yields no band, so only the conflict-first classification pass renders confidence bands.
+	 */
+	var BAND_LABELS = {
+		review_conflict: { key: 'conflict', label: 'Conflict' },
+		below_confidence_threshold: { key: 'low-confidence', label: 'Low confidence' },
+		mapped_grocy_product_group: { key: 'confident', label: 'Confident' },
+		mapped_provider_category: { key: 'confident', label: 'Confident' }
+	};
+
+	function classificationBand(reason)
+	{
+		return Object.prototype.hasOwnProperty.call(BAND_LABELS, reason) ? BAND_LABELS[reason] : null;
 	}
 
 	function outcomeBadge(document, outcome)
@@ -897,6 +1095,17 @@
 		heading.id = headingId;
 		header.appendChild(heading);
 		header.appendChild(outcomeBadge(document, row.outcome));
+
+		// Confidence band (06-05 DATA-02): rendered for classification items so a reviewer sees the
+		// conflict-first ordering at a glance. Derived only from the server-supplied reason.
+		var band = classificationBand(row.reason);
+		if (band !== null)
+		{
+			var bandBadge = element(document, 'span', band.label);
+			bandBadge.className = 'badge grocy-ai-bulk-band grocy-ai-bulk-band-' + band.key;
+			bandBadge.setAttribute('data-grocy-ai-bulk-band', band.key);
+			header.appendChild(bandBadge);
+		}
 
 		var selectionWrapper = document.createElement('div');
 		selectionWrapper.className = 'custom-control custom-checkbox grocy-ai-selection-control';
@@ -1168,6 +1377,58 @@
 	}
 
 	/**
+	 * Render the read-only conversion audit report (06-06 surfaced by 06-07): the baseline counts and any
+	 * suspicious rows the tripwire found. DOM-writing only; declares NO apply/rollback control, since the
+	 * conversion pass is a read-only report, never a plan.
+	 */
+	function renderConversionAudit(document, container, presentation)
+	{
+		container.textContent = '';
+		if (!presentation.valid)
+		{
+			container.appendChild(element(document, 'p', COPY.conversionAuditError));
+			return;
+		}
+
+		var note = element(document, 'p', presentation.ok ? COPY.conversionAuditOkNote : COPY.conversionAuditTripwireNote);
+		note.className = presentation.ok ? 'grocy-ai-bulk-conversion-audit-ok' : 'grocy-ai-bulk-conversion-audit-tripwire alert alert-warning';
+		if (!presentation.ok)
+		{
+			note.setAttribute('role', 'alert');
+		}
+		note.setAttribute('data-grocy-ai-conversion-audit-ok', presentation.ok ? 'true' : 'false');
+		container.appendChild(note);
+
+		var dl = document.createElement('dl');
+		dl.className = 'grocy-ai-bulk-summary-list grocy-ai-bulk-conversion-audit-summary';
+		[
+			{ term: COPY.conversionAuditGlobalLabel, value: String(presentation.globalCount) },
+			{ term: COPY.conversionAuditExpectedLabel, value: String(presentation.expectedCount) },
+			{ term: COPY.conversionAuditProductsLabel, value: String(presentation.expectedProductCount) },
+			{ term: COPY.conversionAuditSuspiciousLabel, value: String(presentation.suspicious.length) }
+		].forEach(function (row)
+		{
+			dl.appendChild(element(document, 'dt', row.term));
+			dl.appendChild(element(document, 'dd', row.value));
+		});
+		container.appendChild(dl);
+
+		if (presentation.suspicious.length > 0)
+		{
+			var list = document.createElement('ul');
+			list.className = 'grocy-ai-bulk-conversion-audit-suspicious';
+			presentation.suspicious.forEach(function (row)
+			{
+				var entry = element(document, 'li', 'conversion #' + row.id + ' · product #' + row.productId
+					+ ' · from ' + row.fromQuId + ' → to ' + row.toQuId + ' · factor ' + row.factor + ' · rule ' + row.rule);
+				entry.setAttribute('data-grocy-ai-conversion-audit-rule', row.rule);
+				list.appendChild(entry);
+			});
+			container.appendChild(list);
+		}
+	}
+
+	/**
 	 * Wire the review surface to the live MASTER_DATA_EDIT-gated endpoints. If `#grocy-ai-bulk-review`
 	 * carries no valid `?plan=id`, the page still attaches — it renders a "no plan selected" message and
 	 * wires the Generate-plan control (BULK-01 UI) so the user can start the workflow in-product; every
@@ -1188,6 +1449,10 @@
 		var diffEl = document.getElementById('grocy-ai-bulk-selected-diff');
 		var rollbackPreviewEl = document.getElementById('grocy-ai-bulk-rollback-preview');
 		var generateButton = document.getElementById('grocy-ai-bulk-generate-button');
+		var generateGroupButton = document.getElementById('grocy-ai-bulk-generate-group-button');
+		var generateClassificationButton = document.getElementById('grocy-ai-bulk-generate-classification-button');
+		var conversionAuditButton = document.getElementById('grocy-ai-bulk-conversion-audit-button');
+		var conversionAuditEl = document.getElementById('grocy-ai-bulk-conversion-audit');
 		var rollbackPreviewButton = document.getElementById('grocy-ai-bulk-rollback-preview-button');
 		var applyButton = document.getElementById('grocy-ai-bulk-apply-button');
 		var applyResultEl = document.getElementById('grocy-ai-bulk-apply-result');
@@ -1198,6 +1463,7 @@
 
 		var planIdRaw = root.getAttribute('data-plan-id') || '';
 		var plansEndpoint = root.getAttribute('data-plans-endpoint') || '';
+		var conversionAuditEndpoint = root.getAttribute('data-conversion-audit-endpoint') || '';
 		var initialPlanId = /^[1-9][0-9]{0,9}$/.test(planIdRaw) ? planIdRaw : null;
 		// Mirrors the controller's own `currentPlanId` (see `createBulkReviewController`) so this DOM-only
 		// layer can gate the rollback-preview button and refresh the export links without reaching into the
@@ -1311,26 +1577,32 @@
 		 * shaped body, a non-JSON permission-denial response, a network error) rejects with a plain error
 		 * and falls back to the generic `COPY.generateError` — never rendering unbounded server output.
 		 */
-		function fetchGenerate()
+		/**
+		 * Shared generate-plan POST for all three writing selectors (06-07). `body` is one of the closed,
+		 * zero-argument-built single-key bodies (`buildGeneratePlanBody`/`buildGroupPlanBody`/
+		 * `buildClassificationPlanBody`); nothing read from the DOM or prior state can reach the request.
+		 * The 201/400/503 handling is identical for every pass.
+		 */
+		function fetchGenerateWith(body)
 		{
 			return fetch(plansEndpoint, {
 				method: 'POST',
 				credentials: 'same-origin',
 				cache: 'no-store',
 				headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-				body: JSON.stringify(buildGeneratePlanBody())
+				body: JSON.stringify(body)
 			}).then(function (response)
 			{
-				return response.json().then(function (body)
+				return response.json().then(function (parsed)
 				{
 					if (response.status === 201)
 					{
-						return body;
+						return parsed;
 					}
 					var error = new Error('generate_failed');
-					if (isErrorPayload(body))
+					if (isErrorPayload(parsed))
 					{
-						error.boundedMessage = body.error_message;
+						error.boundedMessage = parsed.error_message;
 					}
 					throw error;
 				}, function ()
@@ -1338,6 +1610,30 @@
 					throw new Error('http_status');
 				});
 			});
+		}
+
+		function fetchGenerate()
+		{
+			return fetchGenerateWith(buildGeneratePlanBody());
+		}
+
+		function fetchGenerateGroup()
+		{
+			return fetchGenerateWith(buildGroupPlanBody());
+		}
+
+		function fetchGenerateClassification()
+		{
+			return fetchGenerateWith(buildClassificationPlanBody());
+		}
+
+		/**
+		 * Fetch the read-only conversion audit report (06-06 surfaced by 06-07). A plain permission-checked
+		 * GET against the dedicated conversion-audit endpoint; it issues no write and carries no plan id.
+		 */
+		function fetchConversionAudit()
+		{
+			return fetchJson(conversionAuditEndpoint, { method: 'GET' });
 		}
 
 		function confirmAction(message)
@@ -1388,8 +1684,13 @@
 			requestApply: function (checksum, planId) { return fetchMutation(planUrl(planId) + '/apply', checksum); },
 			requestRollbackExecute: function (checksum, planId) { return fetchMutation(planUrl(planId) + '/rollback', checksum); },
 			// The request body is the closed `{ operation_type: "taxonomy_assignment" }` shape built by
-			// `fetchGenerate` alone; this function takes and forwards no arguments.
+			// `fetchGenerate` alone; this function takes and forwards no arguments. The two additional passes
+			// (06-07) forward their own closed single-key bodies the same way, and the conversion-audit read
+			// forwards nothing at all.
 			requestGenerate: function () { return fetchGenerate(); },
+			requestGenerateGroup: function () { return fetchGenerateGroup(); },
+			requestGenerateClassification: function () { return fetchGenerateClassification(); },
+			requestConversionAudit: function () { return fetchConversionAudit(); },
 			renderPlan: function (presentation)
 			{
 				activePlanId = String(presentation.planId);
@@ -1445,6 +1746,13 @@
 					renderMutationResult(document, rollbackResultEl, COPY.rollbackResultHeading, presentation);
 				}
 			},
+			renderConversionAudit: function (presentation)
+			{
+				if (conversionAuditEl)
+				{
+					renderConversionAudit(document, conversionAuditEl, presentation);
+				}
+			},
 			onBusy: function (busy)
 			{
 				root.setAttribute('aria-busy', busy ? 'true' : 'false');
@@ -1462,6 +1770,32 @@
 			generateButton.addEventListener('click', function ()
 			{
 				controller.generate();
+			});
+		}
+		// The two additional writing passes (06-07) are each a single explicit user action that generate a
+		// plan through the same review/apply/rollback controls; like the taxonomy generate, they write only
+		// the module's own plan tables, so they need no confirmation dialog but are explicit labelled buttons.
+		if (generateGroupButton)
+		{
+			generateGroupButton.addEventListener('click', function ()
+			{
+				controller.generateGroup();
+			});
+		}
+		if (generateClassificationButton)
+		{
+			generateClassificationButton.addEventListener('click', function ()
+			{
+				controller.generateClassification();
+			});
+		}
+		// The conversion pass is a read-only report (06-06): loading it issues only a GET and renders the
+		// audit; it never generates, applies, or rolls back a plan, so it carries no confirmation or write.
+		if (conversionAuditButton)
+		{
+			conversionAuditButton.addEventListener('click', function ()
+			{
+				controller.loadConversionAudit();
 			});
 		}
 
@@ -1518,15 +1852,21 @@
 		describeRollbackPreview: describeRollbackPreview,
 		describeApplyResult: describeApplyResult,
 		describeRollbackResult: describeRollbackResult,
+		describeConversionAudit: describeConversionAudit,
+		isConversionAuditPayload: isConversionAuditPayload,
 		exportUrl: exportUrl,
 		exportLinks: exportLinks,
 		buildGeneratePlanBody: buildGeneratePlanBody,
+		buildGroupPlanBody: buildGroupPlanBody,
+		buildClassificationPlanBody: buildClassificationPlanBody,
+		classificationBand: classificationBand,
 		createBulkReviewController: createBulkReviewController,
 		renderSummary: renderSummary,
 		renderItems: renderItems,
 		renderSelectedDiff: renderSelectedDiff,
 		renderRollbackPreview: renderRollbackPreview,
 		renderMutationResult: renderMutationResult,
+		renderConversionAudit: renderConversionAudit,
 		attachBulkReview: attachBulkReview
 	};
 });

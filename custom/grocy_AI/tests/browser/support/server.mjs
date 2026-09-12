@@ -144,6 +144,10 @@ const allowlistedFiles = new Map([
 		path: resolve(browserRoot, 'fixtures/capture-review.html'),
 		contentType: 'text/html; charset=utf-8'
 	}],
+	['/fixtures/bulk-review.html', {
+		path: resolve(browserRoot, 'fixtures/bulk-review.html'),
+		contentType: 'text/html; charset=utf-8'
+	}],
 	['/fixtures/capture-harness.js', {
 		path: resolve(browserRoot, 'fixtures/capture-harness.js'),
 		root: resolve(browserRoot, 'fixtures'),
@@ -155,6 +159,10 @@ const allowlistedFiles = new Map([
 	}],
 	['/assets/capture-review.js', {
 		path: resolve(repositoryRoot, 'public/custom/grocy_AI/capture-review.js'),
+		contentType: 'text/javascript; charset=utf-8'
+	}],
+	['/assets/bulk-review.js', {
+		path: resolve(repositoryRoot, 'public/custom/grocy_AI/bulk-review.js'),
 		contentType: 'text/javascript; charset=utf-8'
 	}],
 	['/assets/quantityunitconversionform.js', {

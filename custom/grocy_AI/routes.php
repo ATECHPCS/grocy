@@ -48,6 +48,7 @@ $app->group('/api/grocy-ai', function (RouteCollectorProxy $group)
 	$group->get('/bulk/plans/{planId}/rollback-preview', [GrocyAiApiController::class, 'BulkPlanRollbackPreview']);
 	$group->post('/bulk/plans/{planId}/rollback', [GrocyAiApiController::class, 'BulkPlanRollback']);
 	$group->get('/bulk/plans/{planId}/export', [GrocyAiApiController::class, 'ExportBulkPlan']);
+	$group->get('/bulk/conversion-audit', [GrocyAiApiController::class, 'BulkConversionAudit']);
 	$group->get('/capture/trips', [GrocyAiApiController::class, 'ListCaptureTrips']);
 	$group->post('/capture/trips', [GrocyAiApiController::class, 'StartCaptureTrip']);
 	$group->post('/capture/trips/{tripId}/scan', [GrocyAiApiController::class, 'ScanCaptureTrip']);

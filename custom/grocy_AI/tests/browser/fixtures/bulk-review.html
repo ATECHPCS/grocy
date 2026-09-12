@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en" data-core-version="4.6.0" data-grocy-ai-module-version="2.5.0">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>grocy_AI bulk review fixture</title>
+	<style>
+		* { box-sizing: border-box; }
+		body { margin: 0; padding: 16px; font-family: Roboto, sans-serif; color: #212529; }
+		.row { display: flex; flex-wrap: wrap; margin: 0 -8px; }
+		.col { width: 100%; padding: 0 8px; }
+		.btn { min-height: 44px; padding: 8px 12px; border: 1px solid transparent; border-radius: 4px; background: #f8f9fa; }
+		.btn-primary { color: #fff; background: #007bff; }
+		.btn-secondary { color: #fff; background: #6c757d; }
+		.btn-danger { color: #fff; background: #dc3545; }
+		.btn-outline-secondary { color: #6c757d; border-color: #6c757d; }
+		.badge { padding: 4px 8px; border-radius: 8px; background: #e2e3e5; }
+		.alert { padding: 12px; border: 1px solid transparent; border-radius: 4px; }
+		.alert-warning { background: #fff3cd; color: #856404; }
+		.grocy-ai-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+		.custom-control { display: inline-flex; align-items: center; gap: 6px; }
+	</style>
+	<link rel="stylesheet" href="/assets/grocy-ai.css?v=2.5.0">
+</head>
+<body>
+	<main>
+		<!-- Mirrors views/grocyai_bulkreview.blade.php (06-07): the three Phase 6 passes on the shared
+		     MASTER_DATA_EDIT bulk-review surface. All state is read/written by bulk-review.js through the
+		     /api/grocy-ai/bulk/* endpoints; this fixture declares no write action of its own. -->
+		<div class="row permission-MASTER_DATA_EDIT"
+			id="grocy-ai-bulk-review"
+			data-plan-id=""
+			data-plans-endpoint="/api/grocy-ai/bulk/plans"
+			data-conversion-audit-endpoint="/api/grocy-ai/bulk/conversion-audit">
+			<div class="col">
+				<section class="grocy-ai-bulk-generate-section" aria-labelledby="grocy-ai-bulk-generate-heading">
+					<h3 id="grocy-ai-bulk-generate-heading">Generate plan</h3>
+					<div class="grocy-ai-actions">
+						<button type="button" class="btn btn-primary" id="grocy-ai-bulk-generate-button">Generate plan</button>
+						<button type="button" class="btn btn-primary" id="grocy-ai-bulk-generate-group-button">Suggest product groups</button>
+						<button type="button" class="btn btn-primary" id="grocy-ai-bulk-generate-classification-button">Classify products (conflict-first)</button>
+					</div>
+				</section>
+
+				<section class="grocy-ai-bulk-summary-section" aria-labelledby="grocy-ai-bulk-summary-heading">
+					<h3 id="grocy-ai-bulk-summary-heading">Plan summary</h3>
+					<div class="grocy-ai-bulk-summary" id="grocy-ai-bulk-summary" role="status" aria-live="polite" aria-labelledby="grocy-ai-bulk-summary-heading"></div>
+				</section>
+
+				<section class="grocy-ai-bulk-items-section" aria-labelledby="grocy-ai-bulk-items-heading">
+					<h3 id="grocy-ai-bulk-items-heading">Plan items</h3>
+					<div class="grocy-ai-bulk-items" id="grocy-ai-bulk-items" aria-labelledby="grocy-ai-bulk-items-heading"></div>
+				</section>
+
+				<section class="grocy-ai-bulk-diff-section" aria-labelledby="grocy-ai-bulk-selected-diff-heading">
+					<h3 id="grocy-ai-bulk-selected-diff-heading">Selected diff</h3>
+					<div class="grocy-ai-bulk-selected-diff" id="grocy-ai-bulk-selected-diff" role="status" aria-live="polite" aria-labelledby="grocy-ai-bulk-selected-diff-heading"></div>
+				</section>
+
+				<section class="grocy-ai-bulk-apply-section" aria-labelledby="grocy-ai-bulk-apply-heading">
+					<h3 id="grocy-ai-bulk-apply-heading">Apply</h3>
+					<div class="grocy-ai-actions">
+						<button type="button" class="btn btn-primary" id="grocy-ai-bulk-apply-button">Apply plan</button>
+					</div>
+					<div class="grocy-ai-bulk-apply-result" id="grocy-ai-bulk-apply-result" role="status" aria-live="polite"></div>
+				</section>
+
+				<section class="grocy-ai-bulk-rollback-section" aria-labelledby="grocy-ai-bulk-rollback-heading">
+					<h3 id="grocy-ai-bulk-rollback-heading">Rollback</h3>
+					<div class="grocy-ai-actions">
+						<button type="button" class="btn btn-secondary" id="grocy-ai-bulk-rollback-preview-button">Load rollback preview</button>
+						<button type="button" class="btn btn-danger" id="grocy-ai-bulk-rollback-button">Roll back reversible items</button>
+					</div>
+					<div class="grocy-ai-bulk-rollback-preview" id="grocy-ai-bulk-rollback-preview" role="status" aria-live="polite" aria-labelledby="grocy-ai-bulk-rollback-heading"></div>
+					<div class="grocy-ai-bulk-rollback-result" id="grocy-ai-bulk-rollback-result" role="status" aria-live="polite"></div>
+				</section>
+
+				<section class="grocy-ai-bulk-export-section" aria-labelledby="grocy-ai-bulk-export-heading">
+					<h3 id="grocy-ai-bulk-export-heading">Export</h3>
+					<div class="grocy-ai-actions">
+						<a class="btn btn-outline-secondary" id="grocy-ai-bulk-export-json" download>Download JSON (non-authoritative)</a>
+						<a class="btn btn-outline-secondary" id="grocy-ai-bulk-export-csv" download>Download CSV (non-authoritative)</a>
+					</div>
+				</section>
+
+				<section class="grocy-ai-bulk-conversion-audit-section" aria-labelledby="grocy-ai-bulk-conversion-audit-heading">
+					<h3 id="grocy-ai-bulk-conversion-audit-heading">Conversion audit (read-only report)</h3>
+					<div class="grocy-ai-actions">
+						<button type="button" class="btn btn-outline-secondary" id="grocy-ai-bulk-conversion-audit-button">Load conversion audit report</button>
+					</div>
+					<div class="grocy-ai-bulk-conversion-audit" id="grocy-ai-bulk-conversion-audit" role="status" aria-live="polite" aria-labelledby="grocy-ai-bulk-conversion-audit-heading"></div>
+				</section>
+			</div>
+		</div>
+	</main>
+
+	<script src="/assets/bulk-review.js?v=2.5.0"></script>
+</body>
+</html>

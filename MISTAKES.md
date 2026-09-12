@@ -35,6 +35,36 @@ store, not here.
 
 ## Observations (first sightings)
 
+- 2026-09-12: The group pass's "products + bulk tables only, native cache byte-identical" claim (06-04)
+  held ONLY on the trigger-less unit fixture. On the real snapshot, writing `products.product_group_id`
+  fires Grocy's native `products_default_qu_conversions_UPD` trigger, which rebuilds
+  `cache__quantity_unit_conversions_resolved` (224,602 rows) with regenerated surrogate ids — a full
+  delete+reinsert on ANY products write, regardless of column. → For DATA-06 over the real snapshot,
+  approve `cache__quantity_unit_conversions_resolved` as a Grocy-maintained DERIVED cache and prove its
+  content unchanged by an id-EXCLUDED hash (`SELECT product_id, from_qu_id, to_qu_id, factor, path`), not a
+  full-manifest byte match; the sole authoritative change is still `products.product_group_id`. (hits: 1)
+
+- 2026-09-12: After a classification rollback, `grocy_ai_taxonomy_classifications` is NOT byte-identical —
+  the rollback records the reversal in that same module store (new timestamped rows restoring the prior
+  leaf). Asserting byte-identity there FALSE-fails a correct rollback. → DATA-07's byte-identity guarantee
+  is for NATIVE data (`products`); prove the module store's logical restoration via zero-diff RERUN checksum
+  equality (the classification checksum is derived from every product's current leaf), never a row hash of
+  the classifications table. (hits: 1)
+
+- 2026-09-12: `GrocyAiApiController::GenerateBulkPlan` is pinned by `bulk-generate-endpoint` to a closed
+  `operation_type` and rejects any extra body key (candidate `array_intersect_key` !== body). To surface the
+  other two passes, keep ONE body key: widen `operation_type` to a closed 3-value set
+  (`taxonomy_assignment`/`product_group_assignment`/`classification_review`) and `match` to the explicit
+  generator — never add a second body key, and never route classification through a new stored operation_type
+  (its plan header must stay `taxonomy_assignment`, byte-identical to 06-05). (hits: 1)
+
+- 2026-09-12: `public/custom/grocy_AI/bulk-review.test.js` (node --test) pins the exact generate contract:
+  `buildGeneratePlanBody.length === 0` and `generate()` calls `requestGenerate` with 0 args, plus a deepEqual
+  of the `describePlan` itemRow key set. → Extend the client ADDITIVELY: add sibling `buildGroupPlanBody`/
+  `buildClassificationPlanBody` + new controller methods, derive the confidence-band badge at RENDER time
+  (not in itemRow), and generalize `isImage` to accept `{product_group_id}` — never widen the pinned
+  zero-arg functions or the itemRow shape. (hits: 1)
+
 - 2026-09-12: `GrocyAiBulkService::GeneratePlan`'s counts + item set are HARD-pinned by `bulk-generate`
   and `bulk-generate-endpoint` to EXACTLY `{included:2, excluded:1, skipped:3, changed:1, unchanged:1}`
   with 2 items (P4 low_confidence / P5 unclassified / P6 conflicting are SKIPPED, never emitted). → To add
