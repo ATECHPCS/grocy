@@ -19,6 +19,7 @@ if (!is_file($databasePath) || !is_readable($databasePath))
 }
 
 require_once __DIR__ . '/../src/GrocyAiTaxonomyMigration.php';
+require_once __DIR__ . '/../src/GrocyAiInventoryScope.php';
 require_once __DIR__ . '/../src/GrocyAiTaxonomyService.php';
 
 try

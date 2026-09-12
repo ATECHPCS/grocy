@@ -7,6 +7,7 @@ use PDO;
 class GrocyAiTaxonomyService
 {
 	private PDO $Db;
+	private ?GrocyAiInventoryScope $Scope = null;
 
 	public function __construct(?PDO $pdo = null, bool $bootstrap = true)
 	{
@@ -15,6 +16,21 @@ class GrocyAiTaxonomyService
 		{
 			GrocyAiTaxonomyMigration::Bootstrap($this->Db);
 		}
+	}
+
+	/**
+	 * The single owner of the in-scope predicate (06-03). The classification/taxonomy path consults it
+	 * here rather than restating "active AND group-not-excluded AND override != excluded" locally.
+	 */
+	private function Scope(): GrocyAiInventoryScope
+	{
+		return $this->Scope ??= new GrocyAiInventoryScope($this->Db);
+	}
+
+	/** Expose the shared in-scope predicate so the bulk profilers reuse the one owner, not a copy. */
+	public function IsProductInScope(int $productId): bool
+	{
+		return $this->Scope()->IsInScope($productId);
 	}
 
 	/**
@@ -196,8 +212,16 @@ class GrocyAiTaxonomyService
 			'low_confidence' => 0
 		];
 
+		$scope = $this->Scope();
 		foreach ($products as $productId)
 		{
+			// Out-of-scope products (inactive, excluded group, or override = excluded) are held out by
+			// the single scope owner and counted as excluded before any evidence outcome is computed.
+			if (!$scope->IsInScope((int)$productId))
+			{
+				$report['excluded']++;
+				continue;
+			}
 			$outcome = $this->ValidationOutcome((int)$productId);
 			$report[$outcome]++;
 		}

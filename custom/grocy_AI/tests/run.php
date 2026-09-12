@@ -38,6 +38,12 @@ if (is_file($taxonomyMigrationFile))
 	require_once $taxonomyMigrationFile;
 }
 
+$inventoryScopeFile = __DIR__ . '/../src/GrocyAiInventoryScope.php';
+if (is_file($inventoryScopeFile))
+{
+	require_once $inventoryScopeFile;
+}
+
 $taxonomyServiceFile = __DIR__ . '/../src/GrocyAiTaxonomyService.php';
 if (is_file($taxonomyServiceFile))
 {
@@ -1295,6 +1301,13 @@ if (is_file($inventoryDiffTestFile))
 {
 	require_once $inventoryDiffTestFile;
 	runInventoryDiffSuite();
+}
+
+$inventoryScopeTestFile = __DIR__ . '/inventory_scope.php';
+if (is_file($inventoryScopeTestFile))
+{
+	require_once $inventoryScopeTestFile;
+	runInventoryScopeSuite();
 }
 
 if ($failures > 0)

@@ -8,6 +8,21 @@ class GrocyAiTaxonomyMigration
 {
 	public const VERSION = 'v1';
 
+	/**
+	 * The reviewable, source-controlled set of Grocy product groups held out of scope (06-03).
+	 * On current prod this is only "Supplements" (~2 items); it is the config tripwire if the
+	 * non-food footprint ever grows. Exclusion is applied through the taxonomy mapping-rule seeded
+	 * from this list (disposition 'excluded'), never ad-hoc SQL, so it reruns identically.
+	 *
+	 * @var array<int, string>
+	 */
+	public const EXCLUDED_PRODUCT_GROUPS = ['Supplements'];
+
+	/** Per-product exclusion override userfield (Grocy `userfields` entity=products). */
+	public const SCOPE_OVERRIDE_USERFIELD = 'grocy_ai_scope_override';
+	public const SCOPE_OVERRIDE_INCLUDED = 'included';
+	public const SCOPE_OVERRIDE_EXCLUDED = 'excluded';
+
 	public static function Bootstrap(PDO $pdo): void
 	{
 		$startedTransaction = !$pdo->inTransaction();
@@ -32,6 +47,13 @@ class GrocyAiTaxonomyMigration
 				// Mapping additions are idempotent source-controlled rules, not a new taxonomy version.
 				self::SeedMappings($pdo);
 			}
+
+			// Additive, idempotent scope surface (06-03): the per-product override userfield definition
+			// and the excluded-group mapping-rules are re-asserted on every bootstrap (IF NOT EXISTS /
+			// INSERT OR IGNORE), so they land whether the base schema is fresh or already applied and
+			// never disturb the recorded ruleset VERSION or any native product/stock data.
+			self::SeedScopeExclusions($pdo);
+			self::SeedScopeOverrideUserfield($pdo);
 
 			if ($startedTransaction)
 			{
@@ -103,6 +125,61 @@ class GrocyAiTaxonomyMigration
 		{
 			$ruleStatement->execute([$category, self::VERSION, $targetSlug, $disposition]);
 		}
+	}
+
+	/**
+	 * Seed one closed exclusion mapping-rule per configured non-food group (06-03), keyed on the
+	 * same normalized group name the scope owner and the taxonomy scorer use. Idempotent: a rule that
+	 * already exists is left untouched (INSERT OR IGNORE), so exclusion reruns identically.
+	 */
+	private static function SeedScopeExclusions(PDO $pdo): void
+	{
+		$ruleStatement = $pdo->prepare('INSERT OR IGNORE INTO grocy_ai_taxonomy_mapping_rules (provider_category, version, target_slug, disposition) VALUES (?, ?, NULL, \'excluded\')');
+		foreach (self::EXCLUDED_PRODUCT_GROUPS as $groupName)
+		{
+			$ruleStatement->execute([self::NormalizeCategoryKey($groupName), self::VERSION]);
+		}
+	}
+
+	/**
+	 * Create the per-product exclusion override userfield definition (Grocy `userfields`, entity
+	 * products) with a closed value set {included, excluded} defaulting to included. Additive and
+	 * idempotent (INSERT OR IGNORE on the UNIQUE(entity, name) key); skipped entirely when the native
+	 * `userfields` table is absent (module unit fixtures) so it never fabricates native schema.
+	 */
+	private static function SeedScopeOverrideUserfield(PDO $pdo): void
+	{
+		if (!self::TableExists($pdo, 'userfields'))
+		{
+			return;
+		}
+
+		$statement = $pdo->prepare('INSERT OR IGNORE INTO userfields (entity, name, caption, type, config, default_value) VALUES (?, ?, ?, ?, ?, ?)');
+		$statement->execute([
+			'products',
+			self::SCOPE_OVERRIDE_USERFIELD,
+			'Grocy AI inventory scope',
+			'preset-list',
+			self::SCOPE_OVERRIDE_INCLUDED . "\n" . self::SCOPE_OVERRIDE_EXCLUDED,
+			self::SCOPE_OVERRIDE_INCLUDED
+		]);
+	}
+
+	/**
+	 * Normalize a provider category or product-group label to the mapping-rule key. Must stay in lock
+	 * step with GrocyAiTaxonomyService::ProviderCategoryKey and GrocyAiInventoryScope so a group name
+	 * resolves to the same seeded exclusion rule from every caller.
+	 */
+	public static function NormalizeCategoryKey(string $category): string
+	{
+		return strtolower((string)preg_replace('/[^a-z0-9]+/i', '_', trim($category)));
+	}
+
+	private static function TableExists(PDO $pdo, string $table): bool
+	{
+		$statement = $pdo->prepare('SELECT 1 FROM sqlite_master WHERE type = \'table\' AND name = ? LIMIT 1');
+		$statement->execute([$table]);
+		return $statement->fetchColumn() !== false;
 	}
 
 	private static function AssertSeedNode(string $id, ?string $parentId, string $slug, string $label, int $depth): void

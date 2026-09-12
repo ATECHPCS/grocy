@@ -14,6 +14,7 @@ require_once __DIR__ . '/src/GrocyAiGtin.php';
 require_once __DIR__ . '/src/GrocyAiBarcodeService.php';
 require_once __DIR__ . '/src/GrocyAiService.php';
 require_once __DIR__ . '/src/GrocyAiTaxonomyMigration.php';
+require_once __DIR__ . '/src/GrocyAiInventoryScope.php';
 require_once __DIR__ . '/src/GrocyAiTaxonomyService.php';
 require_once __DIR__ . '/src/GrocyAiConversionMigration.php';
 require_once __DIR__ . '/src/GrocyAiConversionService.php';

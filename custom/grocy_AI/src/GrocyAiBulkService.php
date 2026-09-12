@@ -136,6 +136,13 @@ class GrocyAiBulkService
 		$unchanged = 0;
 		foreach ($productIds as $productId)
 		{
+			// The classification profiler acts only on in-scope objects; the single scope owner (06-03)
+			// holds out inactive / excluded-group / override-excluded products already counted as
+			// `excluded` above, so they never produce an actionable plan item.
+			if (!$this->Taxonomy->IsProductInScope((int)$productId))
+			{
+				continue;
+			}
 			$current = $this->Taxonomy->ReadProductTaxonomy((int)$productId);
 			$suggested = $current['suggested_leaf'];
 			if (!is_array($suggested) || !is_string($suggested['slug'] ?? null))
