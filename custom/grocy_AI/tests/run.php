@@ -1317,6 +1317,13 @@ if (is_file($groupSuggestionTestFile))
 	runGroupSuggestionSuite();
 }
 
+$conversionAuditTestFile = __DIR__ . '/conversion_audit.php';
+if (is_file($conversionAuditTestFile))
+{
+	require_once $conversionAuditTestFile;
+	runConversionAuditSuite();
+}
+
 if (function_exists('runTaxonomyClassificationReview'))
 {
 	runTaxonomyClassificationReview();
