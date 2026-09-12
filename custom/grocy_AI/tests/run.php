@@ -1297,6 +1297,13 @@ if (is_file($inventoryDiffTestFile))
 	runInventoryDiffSuite();
 }
 
+$conversionAuditTestFile = __DIR__ . '/conversion_audit.php';
+if (is_file($conversionAuditTestFile))
+{
+	require_once $conversionAuditTestFile;
+	runConversionAuditSuite();
+}
+
 if ($failures > 0)
 {
 	fwrite(STDERR, "{$failures} of {$tests} checks failed\n");

@@ -9,7 +9,7 @@ store, not here.
   IMMEDIATE / COMMIT / ROLLBACK counts, forbidden PDO txn tokens), slice the body between
   `public function X` and the NEXT `function` declaration and grep only that slice; never grep the whole
   file. And never write a banned keyword (UPDATE/DELETE/REPLACE/BEGIN IMMEDIATE) adjacent to the guarded
-  table/identifier name in a docblock or comment — source-grep gates match prose too. (hits: 6)
+  table/identifier name in a docblock or comment — source-grep gates match prose too. (hits: 7)
 
 ## Patterns (promote at 3 hits)
 
@@ -34,6 +34,13 @@ store, not here.
   `portable-files.txt` rather than a literal. (hits: 2)
 
 ## Observations (first sightings)
+
+- 2026-09-12: 06-06-PLAN.md's premise "quantity_unit_conversions = 62 rows, all global, 0 product-specific"
+  (a 2026-09-08 fact-find) was stale. The live 06-01 snapshot actually holds **80 rows: 62 global + 18
+  product-specific across 9 products** (06-01-SUMMARY already recorded the total 80 and warned "use live
+  counts, not design-doc figures"). → Never hardcode or assert conversion counts (62/0/101/etc.) from a
+  plan/design doc; read them from the current `.snapshots/grocy-prod.sqlite` first. The 06-06 audit CLI
+  reports the live counts and its tripwire fires on any product-specific row. (hits: 1)
 
 - 2026-09-12: 06-01-PLAN.md (and STATE.md) asserted "no direct SSH key to 10.10.0.156" and pushed a
   Komodo-terminal `docker cp` acquisition path. Both were wrong: 1Password vault `API/SSH/Tokens` holds
