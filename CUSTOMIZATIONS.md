@@ -28,6 +28,42 @@ The small upstream integration surface is:
 
 Phase 4 adds one feature-gated native conversion safety boundary in `controllers/Api/GenericEntityApiController.php`: line 9 imports the module validator; line 54 validates filtered AddObject input before `createRow()->save()`; line 175 validates filtered EditObject input with the actual object ID before `row->update()`; and lines 329-367 contain the `quantity_unit_conversions`-only fail-closed helper. Product-scoped package/count and measured-density requests continue through Grocy's normal native save and cache triggers. Reusable or invalid requests return only bounded errors before native row/cache mutation; this hook never projects or activates reusable rules.
 
+Reusable conversion rules are owned entirely inside the module and stay inactive by default. One
+transaction, `GrocyAiConversionService::ActivateVerifiedRuleset()`, is the only authority allowed to
+transition a reusable revision active or to create the universal `quantity_unit_conversions` rows a
+projection needs; it requires current immutable main/stable characterization evidence plus every
+protected-consumer proof, and it fails closed otherwise. After it writes universal rows, Grocy's own
+characterized `quantity_unit_conversions_INS/UPD/DEL` triggers derive the inverse rows and rebuild
+`cache__quantity_unit_conversions_resolved`; the module issues no cache SQL. The current
+characterization records no selected projection, so activation is unreachable in production today.
+The only operational way to reach that transaction is the CLI command
+`custom/grocy_AI/bin/activate-verified-conversion-ruleset.php`, which authenticates the operator
+against a deployment-owned secret file (`GROCY_AI_MAINTAINER_AUTH_FILE`, here
+`/etc/komodo/grocy/maintainer-auth`) and accepts only a named revision plus the two immutable proof
+artifacts. There is no browser activation toggle, no HTTP route, and no API path to promotion, and
+no command argument accepts SQL, a cache key, an adapter, a factor, or a path. After a promotion the
+generic native universal POST/PUT remains rejected exactly as before, while product-scoped
+package/count and measured-density conversions keep their normal Grocy Save behavior.
+Activation never drops schema objects, removes superseded native rows, or reconciles redundant
+product overrides — all conversion cleanup remains Phase 6 work. Stable differs from the portable
+module bytes only in the documented adapters (controller namespace/base class, route syntax, Blade
+hooks and their asset-version literals, `custom/grocy_AI/version.json`, and the Docker overlay).
+
+Phase 5 adds the bulk maintenance & recovery engine (`GrocyAiBulkService`, the idempotent
+`GrocyAiBulkMigration` owning `grocy_ai_bulk_plans`/`grocy_ai_bulk_plan_items`/the append-only
+`grocy_ai_bulk_audit`, and the read-only `views/grocyai_bulkreview.blade.php` surface). Grocy remains
+the sole durable mutation authority: the engine opens no parallel write path and issues no ad-hoc
+native or cache SQL. Its apply and rollback execute only named typed operations from a closed
+server-side registry, each delegating to the shipped `GrocyAiTaxonomyService::AssignProductTaxonomy`
+write, through one short `BEGIN IMMEDIATE` transaction that is checksum-bound, optimistic-concurrency
+guarded, idempotent, and takes no network call while the write lock is held; the audit ledger is
+append-only. Preview generation, selection, the selected diff, export, and rollback preview are
+reads, and the durable apply and rollback are authenticated audited in-app actions — all under
+`PERMISSION_MASTER_DATA_EDIT` on the `/api/grocy-ai` group. There is no maintainer CLI apply. Every
+new Phase 5 module file is in `custom/grocy_AI/portable-files.txt`; the Blade view ships through the
+branch adapter / changed-paths mechanism like the conversion coverage view. The actual
+existing-inventory sweep and conversion cleanup remain Phase 6 work.
+
 The stable release mirrors the portable module bytes first, then carries one separately reviewable eight-path framework adapter commit. Stable retains its `Grocy\Controllers\BaseApiController` namespace and class-based `JsonMiddleware::class`; the other adapter paths are the feature-gated product-form hook, narrow normal-Save continuation, exact migration, cache marker, customization record, and the Docker overlay that installs both new core adapter files at their runtime paths.
 
 The module implementation and contract are documented in [`custom/grocy_AI/README.md`](custom/grocy_AI/README.md).

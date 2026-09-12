@@ -117,7 +117,15 @@ class GrocyAiTaxonomyService
 		];
 	}
 
-	public function AssignProductTaxonomy(int $productId, array $assignment): array
+	/**
+	 * @param bool $joinExistingTransaction When false (the default, unchanged for the controller
+	 *   endpoint and the taxonomy test callers) this method opens and commits its own transaction.
+	 *   When true it runs the identical validation and the same single `INSERT ... ON CONFLICT` upsert
+	 *   but issues no `beginTransaction()`/`commit()`/`rollBack()` of its own, so a caller such as the
+	 *   bulk engine's `ApplyPlan` can own one outer `BEGIN IMMEDIATE` and nest this delegate inside it.
+	 *   The write statement itself is unchanged either way.
+	 */
+	public function AssignProductTaxonomy(int $productId, array $assignment, bool $joinExistingTransaction = false): array
 	{
 		if ($productId < 1 || array_keys($assignment) !== ['leaf_slug', 'ruleset_version'] && array_keys($assignment) !== ['unclassified', 'ruleset_version'])
 		{
@@ -134,7 +142,11 @@ class GrocyAiTaxonomyService
 			throw new \InvalidArgumentException('Invalid taxonomy assignment');
 		}
 
-		$this->Db->beginTransaction();
+		$ownsTransaction = !$joinExistingTransaction;
+		if ($ownsTransaction)
+		{
+			$this->Db->beginTransaction();
+		}
 		try
 		{
 			$product = $this->Db->prepare('SELECT id FROM products WHERE id = ?');
@@ -153,11 +165,14 @@ class GrocyAiTaxonomyService
 			}
 			$write = $this->Db->prepare('INSERT INTO grocy_ai_taxonomy_classifications (product_id, leaf_id, ruleset_version, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(product_id) DO UPDATE SET leaf_id = excluded.leaf_id, ruleset_version = excluded.ruleset_version, updated_at = CURRENT_TIMESTAMP');
 			$write->execute([$productId, $leafId, GrocyAiTaxonomyMigration::VERSION]);
-			$this->Db->commit();
+			if ($ownsTransaction)
+			{
+				$this->Db->commit();
+			}
 		}
 		catch (\Throwable $ex)
 		{
-			if ($this->Db->inTransaction())
+			if ($ownsTransaction && $this->Db->inTransaction())
 			{
 				$this->Db->rollBack();
 			}

@@ -258,11 +258,17 @@ details.grocy-ai-diagnostics:not([open]) > .grocy-ai-diagnostic-body {
 }
 
 .grocy-ai-field-review,
-.grocy-ai-diff-item {
+.grocy-ai-diff-item,
+.grocy-ai-bulk-item {
 	border: 1px solid #dee2e6;
 	padding: 16px;
 	min-width: 0;
 	overflow-wrap: anywhere;
+}
+
+.grocy-ai-bulk-item + .grocy-ai-bulk-item,
+.grocy-ai-bulk-diff-item + .grocy-ai-bulk-diff-item {
+	margin-top: 16px;
 }
 
 .grocy-ai-field-header {
@@ -594,6 +600,163 @@ details.grocy-ai-diagnostics:not([open]) > .grocy-ai-diagnostic-body {
 	border-color: #6c757d;
 }
 
+.grocy-ai-bulk-summary-section,
+.grocy-ai-bulk-items-section,
+.grocy-ai-bulk-diff-section,
+.grocy-ai-bulk-apply-section,
+.grocy-ai-bulk-rollback-section,
+.grocy-ai-bulk-export-section {
+	margin-bottom: 24px;
+}
+
+.grocy-ai-bulk-summary-section > h3,
+.grocy-ai-bulk-items-section > h3,
+.grocy-ai-bulk-diff-section > h3,
+.grocy-ai-bulk-apply-section > h3,
+.grocy-ai-bulk-rollback-section > h3,
+.grocy-ai-bulk-export-section > h3 {
+	font-size: 20px;
+	font-weight: 500;
+	line-height: 1.2;
+	margin: 0 0 8px;
+}
+
+.grocy-ai-bulk-export-note {
+	font-size: 14px;
+	line-height: 1.5;
+	margin: 0 0 8px;
+}
+
+.grocy-ai-bulk-apply-result,
+.grocy-ai-bulk-rollback-result {
+	margin-top: 16px;
+}
+
+.grocy-ai-bulk-rollback-preview {
+	margin-top: 16px;
+}
+
+.grocy-ai-bulk-rollback-reversible,
+.grocy-ai-bulk-rollback-refused {
+	margin-bottom: 16px;
+}
+
+.grocy-ai-bulk-rollback-reversible > h4,
+.grocy-ai-bulk-rollback-refused > h4 {
+	font-size: 16px;
+	font-weight: 500;
+	line-height: 1.5;
+	margin: 0 0 8px;
+}
+
+.grocy-ai-bulk-rollback-item {
+	border: 1px solid #ced4da;
+	border-radius: .25rem;
+	padding: 12px;
+	margin-bottom: 8px;
+}
+
+.grocy-ai-bulk-rollback-item h5 {
+	font-size: 16px;
+	font-weight: 500;
+	line-height: 1.5;
+	margin: 0;
+}
+
+.grocy-ai-bulk-rollback-badge-reversible {
+	background: var(--success);
+	color: #fff;
+}
+
+.grocy-ai-bulk-rollback-badge-refused {
+	background: var(--danger);
+	color: #fff;
+}
+
+.night-mode .grocy-ai-bulk-rollback-item {
+	background: inherit;
+	border-color: #6c757d;
+}
+
+.grocy-ai-bulk-summary-heading-line {
+	font-size: 16px;
+	font-weight: 500;
+	line-height: 1.5;
+	margin: 0 0 8px;
+}
+
+.grocy-ai-bulk-summary-list {
+	margin: 0 0 8px;
+	font-size: 14px;
+	font-variant-numeric: tabular-nums;
+	overflow-wrap: anywhere;
+}
+
+.grocy-ai-bulk-summary-list > dt {
+	font-weight: 500;
+}
+
+.grocy-ai-bulk-summary-list > dd {
+	margin: 0 0 8px;
+}
+
+.grocy-ai-bulk-checksum {
+	font-size: 14px;
+	font-family: monospace;
+	overflow-wrap: anywhere;
+	margin: 0;
+}
+
+.grocy-ai-bulk-item h4,
+.grocy-ai-bulk-diff-item h5 {
+	font-size: 16px;
+	font-weight: 500;
+	line-height: 1.5;
+	margin: 0;
+}
+
+.grocy-ai-bulk-outcome {
+	font-size: 14px;
+	font-weight: 400;
+}
+
+.grocy-ai-bulk-outcome-conflict {
+	background: var(--danger);
+	color: #fff;
+}
+
+.grocy-ai-bulk-outcome-applied {
+	background: var(--success);
+	color: #fff;
+}
+
+.grocy-ai-bulk-outcome-pending,
+.grocy-ai-bulk-outcome-skipped,
+.grocy-ai-bulk-outcome-rejected,
+.grocy-ai-bulk-outcome-rolled_back {
+	background: #6c757d;
+	color: #fff;
+}
+
+.grocy-ai-bulk-conflict-note {
+	font-size: 14px;
+	line-height: 1.5;
+	margin: 8px 0 0;
+}
+
+.grocy-ai-bulk-diff-summary {
+	font-size: 16px;
+	font-weight: 500;
+	line-height: 1.5;
+	margin: 0 0 16px;
+}
+
+.night-mode .grocy-ai-bulk-item,
+.night-mode .grocy-ai-bulk-diff-item {
+	background: inherit;
+	border-color: #6c757d;
+}
+
 
 @media (max-width: 575.98px) {
 	.grocy-ai-actions .btn {
@@ -614,7 +777,10 @@ details.grocy-ai-diagnostics:not([open]) > .grocy-ai-diagnostic-body {
 	.grocy-ai-diff-item,
 	.grocy-ai-value-cell,
 	.grocy-ai-final-diff,
-	.grocy-ai-barcode-ownership {
+	.grocy-ai-barcode-ownership,
+	.grocy-ai-bulk-item,
+	.grocy-ai-bulk-diff-item,
+	.grocy-ai-bulk-rollback-item {
 		padding: 8px;
 	}
 

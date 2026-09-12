@@ -1,0 +1,33 @@
+{
+	"description": "Deterministic, non-household structured fixtures fixing the Phase 5 bulk-engine contract. No product names, barcodes, secrets, or URLs appear here.",
+	"dto_shapes": {
+		"plan": ["id", "created_at", "created_by", "ruleset_version", "operation_type", "scope_json", "counts_json", "checksum", "status", "module_version"],
+		"plan_item": ["id", "plan_id", "seq", "object_type", "object_id", "operation", "before_image_json", "proposed_value_json", "reason", "provenance", "selected", "outcome", "applied_at"],
+		"audit": ["id", "plan_id", "plan_item_id", "actor", "event", "event_at", "module_version", "before_json", "after_json", "outcome"]
+	},
+	"count_keys": ["included", "excluded", "skipped", "conflicted", "changed", "unchanged"],
+	"status_vocabulary": ["draft", "applied", "partially_applied", "rolled_back"],
+	"selected_values": [0, 1],
+	"outcome_vocabulary": ["pending", "applied", "conflict", "skipped", "rejected", "rolled_back"],
+	"blocker_vocabulary": ["unknown_operation", "before_image_stale", "plan_checksum_mismatch", "not_selected", "already_applied", "manual_edit_after_apply"],
+	"reason_vocabulary": ["mapped_provider_category", "mapped_grocy_product_group"],
+	"checksum_cases": {
+		"operation_type": "taxonomy_assignment",
+		"ruleset_version": "v1",
+		"base": [
+			{"object_type": "product", "object_id": 101, "operation": "assign_taxonomy_leaf", "before_image": null, "proposed_value": "produce", "reason": "mapped_provider_category", "provenance": "provider_food_type"},
+			{"object_type": "product", "object_id": 102, "operation": "assign_taxonomy_leaf", "before_image": "beverages", "proposed_value": "dairy-eggs", "reason": "mapped_provider_category", "provenance": "provider_food_type"},
+			{"object_type": "product", "object_id": 103, "operation": "set_unclassified", "before_image": "snacks", "proposed_value": null, "reason": "mapped_grocy_product_group", "provenance": "grocy_product_group"}
+		],
+		"reordered": [
+			{"object_type": "product", "object_id": 103, "operation": "set_unclassified", "before_image": "snacks", "proposed_value": null, "reason": "mapped_grocy_product_group", "provenance": "grocy_product_group"},
+			{"object_type": "product", "object_id": 101, "operation": "assign_taxonomy_leaf", "before_image": null, "proposed_value": "produce", "reason": "mapped_provider_category", "provenance": "provider_food_type"},
+			{"object_type": "product", "object_id": 102, "operation": "assign_taxonomy_leaf", "before_image": "beverages", "proposed_value": "dairy-eggs", "reason": "mapped_provider_category", "provenance": "provider_food_type"}
+		],
+		"mutated": [
+			{"object_type": "product", "object_id": 101, "operation": "assign_taxonomy_leaf", "before_image": null, "proposed_value": "produce", "reason": "mapped_provider_category", "provenance": "provider_food_type"},
+			{"object_type": "product", "object_id": 102, "operation": "assign_taxonomy_leaf", "before_image": "beverages", "proposed_value": "produce", "reason": "mapped_provider_category", "provenance": "provider_food_type"},
+			{"object_type": "product", "object_id": 103, "operation": "set_unclassified", "before_image": "snacks", "proposed_value": null, "reason": "mapped_grocy_product_group", "provenance": "grocy_product_group"}
+		]
+	}
+}

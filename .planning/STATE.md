@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Phase 4 Plan 04-07 complete
-last_updated: "2026-08-28T00:00:00.000Z"
-last_activity: 2026-08-28 -- Phase 4 Plan 04-07 complete
+stopped_at: Phase 4 complete
+last_updated: "2026-08-29T00:00:00.000Z"
+last_activity: 2026-08-29 -- Phase 4 complete (04-10 shipped)
 progress:
   total_phases: 7
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 44
-  completed_plans: 42
-  percent: 33
+  completed_plans: 44
+  percent: 43
 ---
 
 # Project State
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-08-20)
 
 **Core value:** Adding and maintaining real household food inventory must be fast, accurate, and dependable from a phone without surrendering control of the data to automatic guesses.
-**Current focus:** Phase 4 — reusable conversion model
+**Current focus:** Phase 5 COMPLETE 2026-08-30 (11 plans shipped + generation surface; each wave adversarially verified); pending only the maintainer human-verify checkpoint. Phase 6 (Inventory Categorization & Conversion Cleanup) is next.
 
 ## Current Position
 
-Phase: 4
-Plan: 04-07 complete; 04-08 next (autonomous: false)
-Status: Executing
-Last activity: 2026-08-23 -- Phase 4 planning complete
+Phase: 5 (Bulk Maintenance & Recovery Engine) — COMPLETE (pending maintainer human-verify)
+Plan: 05-01 through 05-11 shipped on `codex/phase5-bulk-engine`; generation endpoint/UI added (BULK-01 surface); branch not pushed
+Status: Phase complete; awaiting the 05-11 Task 3 human-verify session, then Phase 6
+Last activity: 2026-08-30 -- Phase 5 executed wave-by-wave with per-wave adversarial verification; bulk release gate PASS, 127 unit checks + 34 JS tests green; CSV formula-injection (CWE-1236) caught and fixed; BULK-01..10 all satisfied
 
 Progress: [████░░░░░░] 43%
 
@@ -132,7 +132,13 @@ Recent decisions affecting current work:
 
 - [Phase 04]: `GrocyAiConversionService::UnitKeyForName` is the single owner of the Grocy-unit-name to catalog-key mapping; inspection callers must not restate it.
 
-- [Phase 04]: `portable-files.txt` is missing five module files added by Plans 04-06, 04-07, and 04-09; Plan 04-08 must add them before parity can be trusted.
+- [Phase 04]: `portable-files.txt` is missing five module files added by Plans 04-06, 04-07, and 04-09; Plan 04-08 must add them before parity can be trusted. — RESOLVED by 04-08: the manifest now lists 35 paths including all 15 Phase 4 artifacts.
+
+- [Phase 04]: `GrocyAiConversionService::ActivateVerifiedRuleset()` is the sole authority allowed to activate a reusable revision or create the universal native rows a projection needs; `04-CHARACTERIZATION.md` on disk is the only evidence authority and a bundle that disagrees with it is stale by construction.
+
+- [Phase 04]: The generic native pre-save hook returns the fixed inactive-revision rejection and writes no module row, because `ValidateNativeConversionBeforeWrite` is shared with the read-only validation GET whose zero-write guarantee is asserted on schema, state, and `total_changes`.
+
+- [Phase 04]: Grocy's `quantity_unit_conversions_INS` trigger derives the inverse of every conversion, and `cache__quantity_unit_conversions_resolved` is product-scoped — a universal rule never yields a `product_id IS NULL` cache row.
 
 ### Pending Todos
 
@@ -144,7 +150,11 @@ None yet.
 
 - [Phase 1]: Actual supported phone/browser versions and acceptable LAN latency thresholds require recorded physical-device measurement.
 - [Phase 2]: Companion provider concurrency, timeout, cache, authentication, and secure-media behavior require direct inspection during planning.
-- [Phase 4]: Final conversion projection is intentionally unresolved until the mandatory dual-branch characterization spike.
+- [Phase 4]: Final conversion projection remains unselected. `04-CHARACTERIZATION.md` records no projection, so `ActivateVerifiedRuleset` fails closed with `selected_projection_absent` in production. Selecting one requires exercising a named candidate against current immutable dual-branch evidence, then updating both the document and the pinned `CHARACTERIZATION_FACTS_SHA256` constant.
+
+- [Phase 4]: Deployment still needs `/etc/komodo/grocy/maintainer-auth` created (0600, 64-hex) and `GROCY_AI_MAINTAINER_AUTH_FILE` set before the promotion command can be used there.
+
+- [Phase 4]: Phase 4 module files are not yet mirrored to `atech-release`, and `release-gate.sh` Phase 2 modes still hardcode a 12-path portable count against a 36-path manifest. Both belong to the Phase 4 stable mirroring work.
 - [Phase 6]: Cleanup planning requires a scrubbed production-shaped snapshot to confirm conversion and inventory edge cases.
 - [Phase 2]: Goal verification found three blocking contract gaps: reject duplicate suggestion fields, bind media provenance to evidence class, and bound/depth-limit companion JSON before recursive parsing. — Plan 02 gap closure before phase completion.
 
@@ -164,6 +174,8 @@ None yet.
 | Phase 02 P19 | resumed checkpoint | 2 tasks | 8 stable adapters + manifest |
 | Phase 02 P20 | resumed checkpoint | 2 tasks | 1 deployment-evidence record |
 | Phase 02 P21 | resumed checkpoint | 2 tasks | 2 provenance gates + live certification |
+| Phase 04 P08 | 2 tasks + checkpoint | 8 files | activation gate + release parity |
+| Phase 04 P10 | 2 tasks | 8 files | maintainer promotion command |
 
 ## Deferred Items
 
@@ -177,6 +189,6 @@ Items acknowledged for v2 after the preview/audit model is proven:
 
 ## Session Continuity
 
-Last session: 2026-08-28
-Stopped at: Phase 4 Plan 04-07 complete
-Resume file: .planning/phases/04-reusable-conversion-model/04-08-PLAN.md
+Last session: 2026-08-29
+Stopped at: Phase 4 complete
+Resume file: .planning/ROADMAP.md (Phase 5: Bulk Maintenance & Recovery Engine)

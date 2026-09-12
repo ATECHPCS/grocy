@@ -7,6 +7,17 @@ use PDO;
 class GrocyAiConversionService
 {
 	private const RELATIVE_TOLERANCE = 0.000000000001;
+	/**
+	 * The pinned checksum of every immutable Plan 01 fact: both branch revisions, the characterized
+	 * migration hashes, the cache objects, the cache key schema, the query-plan checksum, and all
+	 * eight protected-consumer outputs. The selected projection is deliberately excluded — it is the
+	 * one field the gate exists to let change.
+	 *
+	 * A characterization document that disagrees with this constant cannot activate anything, so
+	 * editing the document is not enough to widen the gate: the constant must change too, and the
+	 * release gate re-derives the document's facts from the two immutable git revisions.
+	 */
+	private const CHARACTERIZATION_FACTS_SHA256 = '92e23d21fa9caa3c96e9b28cbade9ef6f38c9797393196b51293225a1be3c0e1';
 	// Redundancy is a maintainer-facing observation about a hand-entered override, so it uses a
 	// looser tolerance than the exact reciprocal checks that block a rule.
 	private const COVERAGE_REDUNDANCY_TOLERANCE = 0.0001;
@@ -116,6 +127,587 @@ class GrocyAiConversionService
 		}
 
 		return $this->Dto('inactive', 'reusable', [], $this->CandidateFactor($candidate), $from['dimension'], $sourceVersion);
+	}
+
+	/**
+	 * The sole operation allowed to transition a reusable rule revision active or to create the
+	 * gate-created universal native rows whose cache effects Grocy's own characterized triggers
+	 * rebuild. It runs in one transaction and fails closed — leaving module records, native rows,
+	 * and cache snapshots untouched — unless the supplied bundle equals the current immutable
+	 * dual-branch characterization on disk in every field, including every protected-consumer
+	 * output. It never modifies product-scoped rows and never performs Phase 6 cleanup.
+	 */
+	public function ActivateVerifiedRuleset(array $bundle): array
+	{
+		foreach (['grocy_ai_conversion_activation_evidence', 'grocy_ai_conversion_rule_revisions', 'grocy_ai_conversion_rules', 'grocy_ai_conversion_catalog_units'] as $relation)
+		{
+			if (!$this->ModuleRelationAvailable($relation))
+			{
+				return $this->ActivationResult('inactive', ['activation_schema_unavailable']);
+			}
+		}
+
+		$documentPath = is_string($bundle['characterization_path'] ?? null) ? (string)$bundle['characterization_path'] : '';
+		$document = $documentPath === '' || !is_file($documentPath) ? false : file_get_contents($documentPath);
+		if (!is_string($document) || $document === '')
+		{
+			return $this->ActivationResult('inactive', ['characterization_unavailable']);
+		}
+		$characterization = $this->ParseCharacterization($document);
+		if ($characterization === null)
+		{
+			return $this->ActivationResult('inactive', ['characterization_unreadable']);
+		}
+		if (!hash_equals(self::CHARACTERIZATION_FACTS_SHA256, $this->CharacterizationFactsHash($characterization)))
+		{
+			return $this->ActivationResult('inactive', ['characterization_facts_mismatch']);
+		}
+		if (!is_string($bundle['characterization_sha256'] ?? null) || hash('sha256', $document) !== (string)$bundle['characterization_sha256'])
+		{
+			return $this->ActivationResult('inactive', ['characterization_stale']);
+		}
+
+		$blocker = $this->ValidateImmutableEvidence($bundle, $characterization);
+		if ($blocker !== null)
+		{
+			return $this->ActivationResult('inactive', [$blocker]);
+		}
+
+		$revisionIds = $this->ActivationRevisionIds($bundle);
+		if ($revisionIds === null)
+		{
+			return $this->ActivationResult('inactive', ['revision_set_empty']);
+		}
+		$revisions = $this->LoadCandidateRevisions($revisionIds);
+		if (is_string($revisions))
+		{
+			return $this->ActivationResult('inactive', [$revisions]);
+		}
+
+		$documentAdapter = $characterization['selected_adapter'];
+		$bundleAdapter = is_string($bundle['selected_adapter'] ?? null) ? (string)$bundle['selected_adapter'] : '';
+		if ($bundleAdapter !== $documentAdapter)
+		{
+			return $this->ActivationResult('inactive', ['selected_adapter_mismatch']);
+		}
+		if ($documentAdapter === 'none')
+		{
+			return $this->ActivationResult('inactive', ['selected_projection_absent']);
+		}
+		if (!in_array($documentAdapter, GrocyAiConversionMigration::SELECTED_ADAPTERS, true))
+		{
+			return $this->ActivationResult('inactive', ['selected_adapter_unsupported']);
+		}
+
+		$catalog = $this->Catalog();
+		$graphBlocker = $this->ValidateInspectionUniversalGraph($catalog);
+		if ($graphBlocker !== null)
+		{
+			return $this->ActivationResult('inactive', [$graphBlocker]);
+		}
+
+		$evidenceHash = $this->EvidenceHash($bundle, $characterization, $revisionIds);
+		$startedTransaction = !$this->Db->inTransaction();
+		if ($startedTransaction)
+		{
+			$this->Db->beginTransaction();
+		}
+
+		try
+		{
+			$existing = $this->Db->prepare('SELECT id FROM grocy_ai_conversion_activation_evidence WHERE evidence_hash = ?');
+			$existing->execute([$evidenceHash]);
+			$evidenceId = $existing->fetchColumn();
+			$projected = 0;
+			if ($evidenceId === false)
+			{
+				$evidenceId = $this->RecordActivationEvidence($bundle, $characterization, $evidenceHash);
+				$activate = $this->Db->prepare("UPDATE grocy_ai_conversion_rule_revisions SET status = 'active', activation_evidence_id = ? WHERE id = ? AND status = 'inactive'");
+				foreach ($revisionIds as $revisionId)
+				{
+					$activate->execute([$evidenceId, $revisionId]);
+				}
+				$projected = $this->ApplySelectedProjection($documentAdapter, $revisions, $catalog);
+			}
+
+			if ($startedTransaction)
+			{
+				$this->Db->commit();
+			}
+		}
+		catch (\Throwable $exception)
+		{
+			if ($startedTransaction && $this->Db->inTransaction())
+			{
+				$this->Db->rollBack();
+			}
+			return $this->ActivationResult('inactive', ['activation_transaction_failed']);
+		}
+
+		return [
+			'status' => 'active',
+			'blockers' => [],
+			'evidence_hash' => $evidenceHash,
+			'activated_revision_ids' => $revisionIds,
+			'selected_adapter' => $documentAdapter,
+			'projected_universal_rows' => $projected
+		];
+	}
+
+	/**
+	 * The two immutable branch revisions the current characterization names, for a caller that must
+	 * assert which evidence it reviewed. Returns null when the document is unavailable or
+	 * unparseable, so the caller defers the real refusal to `ActivateVerifiedRuleset`.
+	 *
+	 * @return array{main: string, stable: string}|null
+	 */
+	public function ImmutableProofArtifacts(string $characterizationPath): ?array
+	{
+		$document = is_file($characterizationPath) ? file_get_contents($characterizationPath) : false;
+		if (!is_string($document) || $document === '')
+		{
+			return null;
+		}
+		$characterization = $this->ParseCharacterization($document);
+		if ($characterization === null)
+		{
+			return null;
+		}
+		return ['main' => $characterization['main_commit'], 'stable' => $characterization['stable_commit']];
+	}
+
+	/**
+	 * Whether a named revision is one this module owns and could still be promoted. It is a bounded
+	 * pre-check for a caller's error reporting only; `ActivateVerifiedRuleset` re-proves everything.
+	 */
+	public function RevisionIsPromotable(string $revisionId): bool
+	{
+		if (preg_match('/^[a-z][a-z0-9_-]{0,63}$/D', $revisionId) !== 1
+			|| !$this->ModuleRelationAvailable('grocy_ai_conversion_rule_revisions'))
+		{
+			return false;
+		}
+		$statement = $this->Db->prepare("SELECT 1 FROM grocy_ai_conversion_rule_revisions WHERE id = ? AND status = 'inactive'");
+		$statement->execute([$revisionId]);
+		return $statement->fetchColumn() !== false;
+	}
+
+	/**
+	 * Builds the activation bundle from the current characterization document so no caller has to
+	 * restate — or can substitute — an adapter, factor, cache key, or protected-consumer proof.
+	 * `ActivateVerifiedRuleset` re-reads the same document independently and re-proves every field,
+	 * so a document changed between the two reads still fails closed.
+	 */
+	public function ActivationBundleFromCharacterization(string $characterizationPath, array $revisionIds): array
+	{
+		$document = is_file($characterizationPath) ? file_get_contents($characterizationPath) : false;
+		if (!is_string($document) || $document === '')
+		{
+			return ['characterization_path' => $characterizationPath, 'revision_ids' => $revisionIds];
+		}
+		$characterization = $this->ParseCharacterization($document);
+		if ($characterization === null)
+		{
+			return ['characterization_path' => $characterizationPath, 'revision_ids' => $revisionIds];
+		}
+
+		$protectedOutputs = [];
+		foreach ($characterization['protected_outputs'] as $category => $proof)
+		{
+			$protectedOutputs[] = [
+				'category' => $category,
+				'main' => $proof['value'],
+				'stable' => $proof['value'],
+				'path' => $proof['path']
+			];
+		}
+
+		return [
+			'characterization_path' => $characterizationPath,
+			'characterization_sha256' => hash('sha256', $document),
+			'main_commit' => $characterization['main_commit'],
+			'stable_commit' => $characterization['stable_commit'],
+			'migration_hashes' => $characterization['migration_hashes'],
+			'cache_objects' => $characterization['cache_objects'],
+			'cache_key_schema' => $characterization['cache_key_schema'],
+			'query_plan_sha256' => $characterization['query_plan_sha256'],
+			'selected_adapter' => $characterization['selected_adapter'],
+			'protected_outputs' => $protectedOutputs,
+			'revision_ids' => $revisionIds
+		];
+	}
+
+	/**
+	 * The named Plan 01 adapter. It writes universal `quantity_unit_conversions` rows for the
+	 * activated mass and volume rules whose units Grocy already owns, then stops: the resolved
+	 * cache is rebuilt only by the characterized native INSERT trigger.
+	 */
+	private function ApplySelectedProjection(string $adapter, array $revisions, array $catalog): int
+	{
+		if ($adapter !== 'universal_native_rows_v1')
+		{
+			throw new \RuntimeException('selected_adapter_unsupported');
+		}
+
+		$nativeUnits = [];
+		foreach ($this->Db->query('SELECT id, name FROM quantity_units ORDER BY id')->fetchAll(PDO::FETCH_ASSOC) as $unit)
+		{
+			$key = self::UnitKeyForName((string)$unit['name']);
+			if ($key === null)
+			{
+				continue;
+			}
+			if (isset($nativeUnits[$key]))
+			{
+				throw new \RuntimeException('native_unit_ambiguous');
+			}
+			$nativeUnits[$key] = (int)$unit['id'];
+		}
+
+		$existing = $this->Db->prepare('SELECT COUNT(*) FROM quantity_unit_conversions WHERE product_id IS NULL AND from_qu_id = ? AND to_qu_id = ?');
+		$insert = $this->Db->prepare('INSERT INTO quantity_unit_conversions (product_id, from_qu_id, to_qu_id, factor) VALUES (NULL, ?, ?, ?)');
+		$projected = 0;
+		foreach ($revisions as $revision)
+		{
+			$from = (string)$revision['from_unit_key'];
+			$to = (string)$revision['to_unit_key'];
+			// D-01: only cataloged universal mass and volume rules may be projected.
+			if ((string)$revision['kind'] !== 'universal'
+				|| !isset($catalog[$from], $catalog[$to], $nativeUnits[$from], $nativeUnits[$to])
+				|| $catalog[$from]['dimension'] !== $catalog[$to]['dimension']
+				|| !in_array($catalog[$from]['dimension'], ['mass', 'volume'], true))
+			{
+				continue;
+			}
+			$existing->execute([$nativeUnits[$from], $nativeUnits[$to]]);
+			if ((int)$existing->fetchColumn() > 0)
+			{
+				continue;
+			}
+			$insert->execute([$nativeUnits[$from], $nativeUnits[$to], (string)$revision['factor']]);
+			$projected++;
+		}
+		return $projected;
+	}
+
+	private function RecordActivationEvidence(array $bundle, array $characterization, string $evidenceHash): int
+	{
+		$statement = $this->Db->prepare('INSERT INTO grocy_ai_conversion_activation_evidence (main_commit, stable_commit, characterization_sha256, selected_adapter, cache_key_schema, query_plan_sha256, migration_hashes, cache_objects, protected_outputs_sha256, evidence_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+		$statement->execute([
+			$characterization['main_commit'],
+			$characterization['stable_commit'],
+			(string)$bundle['characterization_sha256'],
+			$characterization['selected_adapter'],
+			$characterization['cache_key_schema'],
+			$characterization['query_plan_sha256'],
+			$this->CanonicalJson($characterization['migration_hashes']),
+			$this->CanonicalJson($characterization['cache_objects']),
+			hash('sha256', $this->CanonicalJson($characterization['protected_outputs'])),
+			$evidenceHash
+		]);
+		return (int)$this->Db->lastInsertId();
+	}
+
+	private function ActivationRevisionIds(array $bundle): ?array
+	{
+		$ids = $bundle['revision_ids'] ?? null;
+		if (!is_array($ids) || $ids === [])
+		{
+			return null;
+		}
+		$normalized = [];
+		foreach ($ids as $id)
+		{
+			if (!is_string($id) || preg_match('/^[a-z][a-z0-9_-]{0,63}$/D', $id) !== 1)
+			{
+				return null;
+			}
+			$normalized[$id] = true;
+		}
+		$normalized = array_keys($normalized);
+		sort($normalized, SORT_STRING);
+		return $normalized;
+	}
+
+	/**
+	 * @return array<int, array<string, mixed>>|string the eligible revisions, or a bounded blocker
+	 */
+	private function LoadCandidateRevisions(array $revisionIds): array|string
+	{
+		$placeholders = implode(', ', array_fill(0, count($revisionIds), '?'));
+		$statement = $this->Db->prepare('SELECT id, kind, version, source_name, source_version, from_unit_key, to_unit_key, factor, revision_hash, status FROM grocy_ai_conversion_rule_revisions WHERE id IN (' . $placeholders . ') ORDER BY id');
+		$statement->execute($revisionIds);
+		$rows = $statement->fetchAll(PDO::FETCH_ASSOC);
+		if (count($rows) !== count($revisionIds))
+		{
+			return 'revision_unknown';
+		}
+
+		foreach ($rows as $row)
+		{
+			if ((string)$row['version'] !== GrocyAiConversionMigration::VERSION)
+			{
+				return 'revision_version_invalid';
+			}
+			$expectedSourceVersion = (string)$row['kind'] === 'profile'
+				? GrocyAiConversionMigration::PROFILE_SOURCE_VERSION
+				: GrocyAiConversionMigration::SOURCE_VERSION;
+			if ((string)$row['source_version'] !== $expectedSourceVersion)
+			{
+				return 'revision_source_version_invalid';
+			}
+			if ($this->Factor($row['factor']) === null || $this->Factor($row['factor']) <= 0)
+			{
+				return 'revision_factor_invalid';
+			}
+			$expectedHash = GrocyAiConversionMigration::RevisionHash(
+				(string)$row['kind'], (string)$row['source_name'], (string)$row['source_version'],
+				(string)$row['from_unit_key'], (string)$row['to_unit_key'], (string)$row['factor']
+			);
+			if (!hash_equals($expectedHash, (string)$row['revision_hash']))
+			{
+				return 'revision_hash_mismatch';
+			}
+		}
+		return $rows;
+	}
+
+	private function ValidateImmutableEvidence(array $bundle, array $characterization): ?string
+	{
+		if (($bundle['main_commit'] ?? null) !== $characterization['main_commit'])
+		{
+			return 'main_commit_mismatch';
+		}
+		if (($bundle['stable_commit'] ?? null) !== $characterization['stable_commit'])
+		{
+			return 'stable_commit_mismatch';
+		}
+		$migrations = $bundle['migration_hashes'] ?? null;
+		if (!is_array($migrations) || $this->CanonicalJson($migrations) !== $this->CanonicalJson($characterization['migration_hashes']))
+		{
+			return 'migration_hash_mismatch';
+		}
+		$cacheObjects = $bundle['cache_objects'] ?? null;
+		if (!is_array($cacheObjects) || $this->NormalizedCacheObjects($cacheObjects) !== $this->NormalizedCacheObjects($characterization['cache_objects']))
+		{
+			return 'cache_contract_mismatch';
+		}
+		if (($bundle['cache_key_schema'] ?? null) !== $characterization['cache_key_schema'])
+		{
+			return 'cache_key_schema_mismatch';
+		}
+		if (($bundle['query_plan_sha256'] ?? null) !== $characterization['query_plan_sha256'])
+		{
+			return 'query_plan_mismatch';
+		}
+		return $this->ValidateProtectedOutputs($bundle['protected_outputs'] ?? null, $characterization['protected_outputs']);
+	}
+
+	private function ValidateProtectedOutputs(mixed $supplied, array $expected): ?string
+	{
+		if (!is_array($supplied) || count($supplied) !== count($expected))
+		{
+			return 'protected_outputs_incomplete';
+		}
+		$byCategory = [];
+		foreach ($supplied as $entry)
+		{
+			if (!is_array($entry) || !is_string($entry['category'] ?? null) || isset($byCategory[$entry['category']]))
+			{
+				return 'protected_outputs_incomplete';
+			}
+			$byCategory[(string)$entry['category']] = $entry;
+		}
+		foreach ($expected as $category => $proof)
+		{
+			$entry = $byCategory[$category] ?? null;
+			if ($entry === null)
+			{
+				return 'protected_outputs_incomplete';
+			}
+			$main = is_string($entry['main'] ?? null) ? (string)$entry['main'] : null;
+			$stable = is_string($entry['stable'] ?? null) ? (string)$entry['stable'] : null;
+			if ($main === null || $stable === null)
+			{
+				return 'protected_outputs_incomplete';
+			}
+			// D-13: every protected consumer must be proved equivalent on both maintained branches.
+			if ($main !== $stable)
+			{
+				return 'protected_outputs_unequal';
+			}
+			if ($main !== $proof['value'] || ($entry['path'] ?? null) !== $proof['path'])
+			{
+				return 'protected_outputs_mismatch';
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * Reads the immutable Plan 01 facts out of `04-CHARACTERIZATION.md`. Every field is required
+	 * and single-valued: a document that has drifted into an unparseable shape is never guessed at.
+	 *
+	 * @return array<string, mixed>|null
+	 */
+	private function ParseCharacterization(string $document): ?array
+	{
+		if (preg_match_all('/^\|\s*main\s*\|\s*`([0-9a-f]{40})`\s*\|\s*$/m', $document, $mainMatch) !== 1
+			|| preg_match_all('/^\|\s*stable\s*\|\s*`([0-9a-f]{40})`\s*\|\s*$/m', $document, $stableMatch) !== 1)
+		{
+			return null;
+		}
+		if (preg_match_all('/^- `(migrations\/[0-9]{4}\.sql)` SHA-256: `([0-9a-f]{64})` on both branches\.$/m', $document, $migrationMatch) < 1)
+		{
+			return null;
+		}
+		$migrationHashes = [];
+		foreach ($migrationMatch[1] as $index => $path)
+		{
+			if (isset($migrationHashes[$path]))
+			{
+				return null;
+			}
+			$migrationHashes[$path] = $migrationMatch[2][$index];
+		}
+		ksort($migrationHashes);
+
+		if (preg_match('/^- The matching cache objects are (?P<objects>.+)$/m', $document, $cacheMatch) !== 1)
+		{
+			return null;
+		}
+		$cacheObjects = $this->ParseCacheObjects($cacheMatch['objects']);
+		if ($cacheObjects === null)
+		{
+			return null;
+		}
+		if (preg_match_all('/`(ix_[a-z0-9_]+)` for the cache key `(\([^`]+\))` on both branches/m', $document, $keyMatch) !== 1)
+		{
+			return null;
+		}
+		array_unshift($cacheObjects, $keyMatch[1][0]);
+		if (preg_match_all('/^- The deterministic redacted manifest has query-plan SHA-256 `([0-9a-f]{64})` on main and stable\.$/m', $document, $planMatch) !== 1)
+		{
+			return null;
+		}
+
+		$protected = [];
+		if (preg_match_all('/^\| (?P<category>[a-z][a-z-]*) \| (?P<value>[0-9]+(?:\.[0-9]+)?) \| `(?P<path>\/[0-9\/]+)` \|$/m', $document, $protectedMatch, PREG_SET_ORDER) < 1)
+		{
+			return null;
+		}
+		foreach ($protectedMatch as $row)
+		{
+			if (isset($protected[$row['category']]))
+			{
+				return null;
+			}
+			$protected[$row['category']] = ['value' => $row['value'], 'path' => $row['path']];
+		}
+
+		$selectsNone = preg_match_all('/\*\*No projection is selected\.\*\*/', $document);
+		$selectsAdapter = preg_match_all('/\*\*Selected adapter:\*\* `([a-z][a-z0-9_]{0,63})`/', $document, $adapterMatch);
+		if ($selectsNone + $selectsAdapter !== 1)
+		{
+			return null;
+		}
+
+		return [
+			'main_commit' => $mainMatch[1][0],
+			'stable_commit' => $stableMatch[1][0],
+			'migration_hashes' => $migrationHashes,
+			'cache_objects' => $cacheObjects,
+			'cache_key_schema' => $keyMatch[2][0],
+			'query_plan_sha256' => $planMatch[1][0],
+			'protected_outputs' => $protected,
+			'selected_adapter' => $selectsNone === 1 ? 'none' : $adapterMatch[1][0]
+		];
+	}
+
+	/**
+	 * Expands the characterized cache sentence into its exact object names. The trigger suffixes are
+	 * written against the `quantity_unit_conversions` prefix, so each one is reconstructed rather
+	 * than accepted as free text.
+	 */
+	private function ParseCacheObjects(string $sentence): ?array
+	{
+		if (preg_match_all('/`([a-zA-Z_][a-zA-Z0-9_]*)`/', $sentence, $matches) < 1)
+		{
+			return null;
+		}
+		$objects = [];
+		foreach ($matches[1] as $token)
+		{
+			$name = str_starts_with($token, '_') ? 'quantity_unit_conversions' . $token : $token;
+			if (in_array($name, $objects, true))
+			{
+				return null;
+			}
+			$objects[] = $name;
+		}
+		return $objects;
+	}
+
+	/**
+	 * The characterized cache objects are an unordered set: the document names the table, the index,
+	 * and the three triggers in prose order, so comparison is order-independent but exact.
+	 */
+	private function NormalizedCacheObjects(array $objects): ?string
+	{
+		$normalized = [];
+		foreach ($objects as $object)
+		{
+			if (!is_string($object))
+			{
+				return null;
+			}
+			$normalized[] = $object;
+		}
+		sort($normalized, SORT_STRING);
+		return $this->CanonicalJson($normalized);
+	}
+
+	/**
+	 * The checksum of the immutable facts only. Excluding the selected projection is what lets a
+	 * maintainer record a chosen adapter without being able to restate any characterized fact.
+	 */
+	private function CharacterizationFactsHash(array $characterization): string
+	{
+		unset($characterization['selected_adapter']);
+		return hash('sha256', $this->CanonicalJson($characterization));
+	}
+
+	private function EvidenceHash(array $bundle, array $characterization, array $revisionIds): string
+	{
+		return hash('sha256', $this->CanonicalJson([
+			'characterization_sha256' => (string)$bundle['characterization_sha256'],
+			'main_commit' => $characterization['main_commit'],
+			'stable_commit' => $characterization['stable_commit'],
+			'migration_hashes' => $characterization['migration_hashes'],
+			'cache_objects' => $characterization['cache_objects'],
+			'cache_key_schema' => $characterization['cache_key_schema'],
+			'query_plan_sha256' => $characterization['query_plan_sha256'],
+			'protected_outputs' => $characterization['protected_outputs'],
+			'selected_adapter' => $characterization['selected_adapter'],
+			'revision_ids' => $revisionIds
+		]));
+	}
+
+	private function CanonicalJson(mixed $value): string
+	{
+		return (string)json_encode($value, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
+	}
+
+	private function ActivationResult(string $status, array $blockers): array
+	{
+		return [
+			'status' => $status,
+			'blockers' => $blockers,
+			'evidence_hash' => null,
+			'activated_revision_ids' => [],
+			'selected_adapter' => null,
+			'projected_universal_rows' => 0
+		];
 	}
 
 	public function InspectSourcedProfile(int $productId, string $fromUnitKey, string $toUnitKey): array
@@ -347,6 +939,20 @@ class GrocyAiConversionService
 		{
 			$report['gate']['state'] = 'blocked';
 		}
+		elseif (($activation = $this->RecordedActivation()) !== null)
+		{
+			// D-12: the gate reports itself ready only from immutable evidence actually recorded by
+			// `ActivateVerifiedRuleset`. `04-CHARACTERIZATION.md` alone is never live evidence.
+			$report['gate']['state'] = 'ready';
+			$report['gate']['main_branch_evidence'] = 'present';
+			$report['gate']['stable_branch_evidence'] = 'present';
+			$report['gate']['selected_projection'] = $activation['selected_adapter'];
+			$report['protected_behavior'] = [];
+			foreach (self::PROTECTED_CONSUMER_CATEGORIES as $category)
+			{
+				$report['protected_behavior'][] = ['category' => $category, 'state' => 'passed'];
+			}
+		}
 
 		$report['effective_sources'] = $this->CoverageEffectiveSources(
 			$report['counts']['redundant_product_overrides'],
@@ -355,6 +961,28 @@ class GrocyAiConversionService
 		);
 
 		return $report;
+	}
+
+	/**
+	 * The single recorded activation, if one exists. A ledger row only counts when at least one
+	 * reusable revision is actually bound to it, so an orphaned or hand-inserted row reports nothing.
+	 *
+	 * @return array{selected_adapter: string}|null
+	 */
+	private function RecordedActivation(): ?array
+	{
+		if (!$this->ModuleRelationAvailable('grocy_ai_conversion_activation_evidence')
+			|| !$this->ModuleRelationAvailable('grocy_ai_conversion_rule_revisions'))
+		{
+			return null;
+		}
+		$statement = $this->Db->query("SELECT evidence.selected_adapter FROM grocy_ai_conversion_activation_evidence AS evidence INNER JOIN grocy_ai_conversion_rule_revisions AS revision ON revision.activation_evidence_id = evidence.id WHERE revision.status = 'active' GROUP BY evidence.id, evidence.selected_adapter ORDER BY evidence.id");
+		$rows = $statement->fetchAll(PDO::FETCH_COLUMN);
+		if (count($rows) !== 1 || !in_array((string)$rows[0], GrocyAiConversionMigration::SELECTED_ADAPTERS, true))
+		{
+			return null;
+		}
+		return ['selected_adapter' => (string)$rows[0]];
 	}
 
 	private function CoverageEffectiveSources(int $productOverrides, int $profiles, int $universalRules): array
