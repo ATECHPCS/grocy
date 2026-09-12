@@ -764,6 +764,18 @@ if (($argv[1] ?? null) === 'bulk-export')
 	runBulkExport();
 }
 
+if (($argv[1] ?? null) === 'capture-contract')
+{
+	require_once __DIR__ . '/capture.php';
+	runCaptureContract();
+}
+
+if (($argv[1] ?? null) === 'capture-invariants')
+{
+	require_once __DIR__ . '/capture.php';
+	runCaptureInvariants();
+}
+
 if (($argv[1] ?? null) === '--list')
 {
 	foreach ([

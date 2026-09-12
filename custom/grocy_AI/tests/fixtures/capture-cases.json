@@ -1,0 +1,27 @@
+{
+	"description": "Deterministic, non-household structured fixtures fixing the Phase 8 purchase-capture contract. No product names, real barcodes, secrets, or URLs appear here.",
+	"dto_shapes": {
+		"trip": ["id", "created_at", "created_by", "status", "default_location_id", "default_shopping_location_id", "transaction_id", "committed_at", "checksum", "module_version"],
+		"line": ["id", "trip_id", "seq", "scanned_barcode", "canonical_gtin", "resolved_product_id", "status", "quantity", "price", "best_before_override", "selected", "applied_at", "outcome", "created_at", "updated_at"],
+		"audit": ["id", "trip_id", "line_id", "actor", "action", "before_json", "after_json", "transaction_id", "created_at"]
+	},
+	"trip_status_vocabulary": ["open", "reviewing", "committed"],
+	"line_status_vocabulary": ["known", "unknown", "conflict"],
+	"line_outcome_vocabulary": ["applied", "conflict", "skipped"],
+	"selected_values": [0, 1],
+	"coalesce_key": ["trip_id", "COALESCE(canonical_gtin, scanned_barcode)"],
+	"checksum_cases": {
+		"base": [
+			{"resolved_product_id": 101, "canonical_gtin": "00012345678905", "quantity": 2, "price": null, "best_before_override": null},
+			{"resolved_product_id": 102, "canonical_gtin": "00087654321006", "quantity": 1, "price": "3.49", "best_before_override": "2026-12-01"}
+		],
+		"reordered": [
+			{"resolved_product_id": 102, "canonical_gtin": "00087654321006", "quantity": 1, "price": "3.49", "best_before_override": "2026-12-01"},
+			{"resolved_product_id": 101, "canonical_gtin": "00012345678905", "quantity": 2, "price": null, "best_before_override": null}
+		],
+		"mutated": [
+			{"resolved_product_id": 101, "canonical_gtin": "00012345678905", "quantity": 3, "price": null, "best_before_override": null},
+			{"resolved_product_id": 102, "canonical_gtin": "00087654321006", "quantity": 1, "price": "3.49", "best_before_override": "2026-12-01"}
+		]
+	}
+}

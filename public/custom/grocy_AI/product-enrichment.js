@@ -1898,6 +1898,30 @@
 		if (validation.valid) search('scan');
 	});
 
+	// Purchase-capture handoff (CAP-04): when the create form is opened via
+	// /product/new?barcode=<gtin> from an unknown capture line, prefill the GTIN field so the user can
+	// search + create the product, then return to the trip where the line auto-re-resolves. Inert unless
+	// the field is empty and a plausibly-shaped barcode is present in the URL; it never auto-searches.
+	(function prefillFromCaptureHandoff()
+	{
+		if (upcInput.value)
+		{
+			return;
+		}
+		var match = /[?&]barcode=([^&]+)/.exec(window.location.search || '');
+		if (!match)
+		{
+			return;
+		}
+		var candidate = decodeURIComponent(match[1]).replace(/[^0-9]/g, '');
+		if ([8, 12, 13, 14].indexOf(candidate.length) === -1)
+		{
+			return;
+		}
+		upcInput.value = candidate;
+		validateInput();
+	})();
+
 	window.addEventListener('pagehide', function () { lifecycleCancel('pagehide'); });
 	window.addEventListener('orientationchange', function () { lifecycleCancel('orientationchange'); });
 	document.addEventListener('visibilitychange', function ()

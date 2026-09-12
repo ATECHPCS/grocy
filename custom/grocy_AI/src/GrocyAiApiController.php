@@ -7,6 +7,7 @@ use Grocy\Controllers\Users\User;
 use Grocy\Services\DatabaseService;
 use GrocyAI\Services\GrocyAiBarcodeService;
 use GrocyAI\Services\GrocyAiBulkService;
+use GrocyAI\Services\GrocyAiCaptureService;
 use GrocyAI\Services\GrocyAiConversionMigration;
 use GrocyAI\Services\GrocyAiDiagnostic;
 use GrocyAI\Services\GrocyAiService;
@@ -804,6 +805,254 @@ class GrocyAiApiController extends BaseApiController
 		catch (\RuntimeException)
 		{
 			return $this->GenericErrorResponse($response, 'Selected product image unavailable', 502);
+		}
+	}
+
+	/**
+	 * Open a fresh capture trip (CAP-01). STOCK_PURCHASE-gated; the actor is the authenticated session user
+	 * only, never a browser-supplied value. Writes no stock.
+	 */
+	public function StartCaptureTrip(Request $request, Response $response, array $args): Response
+	{
+		User::CheckPermission($request, User::PERMISSION_STOCK_PURCHASE);
+		try
+		{
+			$service = new GrocyAiCaptureService(DatabaseService::GetInstance()->GetDbConnectionRaw());
+			return $this->ApiResponse($response->withStatus(201), $service->StartTrip((string)GROCY_USER_ID));
+		}
+		catch (\RuntimeException)
+		{
+			return $this->GenericErrorResponse($response, 'Capture unavailable', 503);
+		}
+	}
+
+	/**
+	 * List capture trips, newest first (CAP-03 review surface). STOCK_PURCHASE-gated read.
+	 */
+	public function ListCaptureTrips(Request $request, Response $response, array $args): Response
+	{
+		User::CheckPermission($request, User::PERMISSION_STOCK_PURCHASE);
+		try
+		{
+			$service = new GrocyAiCaptureService(DatabaseService::GetInstance()->GetDbConnectionRaw());
+			return $this->ApiResponse($response, ['trips' => $service->ListTrips()]);
+		}
+		catch (\RuntimeException)
+		{
+			return $this->GenericErrorResponse($response, 'Capture unavailable', 503);
+		}
+	}
+
+	/**
+	 * Scan a barcode into a trip (CAP-01/CAP-02): resolve ownership immediately and coalesce duplicates. The
+	 * body is the closed `{ "barcode": "..." }` shape only. STOCK_PURCHASE-gated; writes no stock.
+	 */
+	public function ScanCaptureTrip(Request $request, Response $response, array $args): Response
+	{
+		User::CheckPermission($request, User::PERMISSION_STOCK_PURCHASE);
+		$tripId = $args['tripId'] ?? null;
+		if (!is_string($tripId) || preg_match('/^[1-9][0-9]{0,9}$/D', $tripId) !== 1)
+		{
+			return $this->GenericErrorResponse($response, 'Invalid capture trip', 400);
+		}
+		$body = $request->getParsedBody();
+		if (!is_array($body))
+		{
+			return $this->GenericErrorResponse($response, 'Invalid capture scan', 400);
+		}
+		$candidate = array_intersect_key($body, array_flip(['barcode']));
+		if ($candidate !== $body || !array_key_exists('barcode', $candidate) || !is_string($candidate['barcode']) || $candidate['barcode'] === '')
+		{
+			return $this->GenericErrorResponse($response, 'Invalid capture scan', 400);
+		}
+
+		try
+		{
+			$service = new GrocyAiCaptureService(DatabaseService::GetInstance()->GetDbConnectionRaw());
+			return $this->ApiResponse($response->withStatus(201), $service->ScanIntoTrip((int)$tripId, $candidate['barcode'], (string)GROCY_USER_ID));
+		}
+		catch (\InvalidArgumentException)
+		{
+			return $this->GenericErrorResponse($response, 'Invalid capture scan', 400);
+		}
+		catch (\RuntimeException)
+		{
+			return $this->GenericErrorResponse($response, 'Capture unavailable', 409);
+		}
+	}
+
+	/**
+	 * Load a trip and its ordered lines (CAP-01), re-resolving still-unknown lines by barcode, plus the
+	 * current commit checksum so the review UI can echo it back on commit. STOCK_PURCHASE-gated read.
+	 */
+	public function CaptureTrip(Request $request, Response $response, array $args): Response
+	{
+		User::CheckPermission($request, User::PERMISSION_STOCK_PURCHASE);
+		$tripId = $args['tripId'] ?? null;
+		if (!is_string($tripId) || preg_match('/^[1-9][0-9]{0,9}$/D', $tripId) !== 1)
+		{
+			return $this->GenericErrorResponse($response, 'Invalid capture trip', 400);
+		}
+
+		try
+		{
+			$service = new GrocyAiCaptureService(DatabaseService::GetInstance()->GetDbConnectionRaw());
+			$loaded = $service->LoadTrip((int)$tripId, (string)GROCY_USER_ID);
+			$loaded['checksum'] = $service->ChecksumForTrip((int)$tripId);
+			return $this->ApiResponse($response, $loaded);
+		}
+		catch (\InvalidArgumentException)
+		{
+			return $this->GenericErrorResponse($response, 'Invalid capture trip', 400);
+		}
+		catch (\RuntimeException)
+		{
+			return $this->GenericErrorResponse($response, 'Capture trip unavailable', 404);
+		}
+	}
+
+	/**
+	 * Commit a reviewed trip to real Grocy stock (CAP-05..CAP-08) — the only stock-write endpoint. The body
+	 * is the closed `{ "confirmed_checksum": "<64-hex>" }` shape; the actor is the authenticated session
+	 * user. A checksum mismatch / already-committed / transaction failure returns the result DTO at 409 (no
+	 * write); a successful full or partial commit returns it at 200. STOCK_PURCHASE-gated.
+	 */
+	public function CommitCaptureTrip(Request $request, Response $response, array $args): Response
+	{
+		User::CheckPermission($request, User::PERMISSION_STOCK_PURCHASE);
+		$tripId = $args['tripId'] ?? null;
+		if (!is_string($tripId) || preg_match('/^[1-9][0-9]{0,9}$/D', $tripId) !== 1)
+		{
+			return $this->GenericErrorResponse($response, 'Invalid capture trip', 400);
+		}
+		$body = $request->getParsedBody();
+		if (!is_array($body))
+		{
+			return $this->GenericErrorResponse($response, 'Invalid capture commit', 400);
+		}
+		$candidate = array_intersect_key($body, array_flip(['confirmed_checksum']));
+		if ($candidate !== $body || !array_key_exists('confirmed_checksum', $candidate)
+			|| !is_string($candidate['confirmed_checksum']) || preg_match('/^[0-9a-f]{64}$/D', $candidate['confirmed_checksum']) !== 1)
+		{
+			return $this->GenericErrorResponse($response, 'Invalid capture commit', 400);
+		}
+
+		try
+		{
+			$service = new GrocyAiCaptureService(DatabaseService::GetInstance()->GetDbConnectionRaw());
+			$result = $service->CommitTrip((int)$tripId, (string)GROCY_USER_ID, $candidate['confirmed_checksum']);
+			if (in_array($result['outcome'], ['checksum_mismatch', 'already_committed', 'commit_failed'], true))
+			{
+				return $this->ApiResponse($response->withStatus(409), $result);
+			}
+			return $this->ApiResponse($response, $result);
+		}
+		catch (\InvalidArgumentException)
+		{
+			return $this->GenericErrorResponse($response, 'Invalid capture trip', 400);
+		}
+		catch (\RuntimeException)
+		{
+			return $this->GenericErrorResponse($response, 'Capture commit unavailable', 503);
+		}
+	}
+
+	/**
+	 * Advance a trip's status (open -> reviewing) OR set its location/shopping-location defaults (CAP-01).
+	 * The body is exactly one closed shape: `{ "status": "reviewing" }`, or a non-empty subset of
+	 * `{ "default_location_id", "default_shopping_location_id" }` with integer-or-null values.
+	 * STOCK_PURCHASE-gated; writes no stock.
+	 */
+	public function UpdateCaptureTrip(Request $request, Response $response, array $args): Response
+	{
+		User::CheckPermission($request, User::PERMISSION_STOCK_PURCHASE);
+		$tripId = $args['tripId'] ?? null;
+		if (!is_string($tripId) || preg_match('/^[1-9][0-9]{0,9}$/D', $tripId) !== 1)
+		{
+			return $this->GenericErrorResponse($response, 'Invalid capture trip', 400);
+		}
+		$body = $request->getParsedBody();
+		if (!is_array($body) || $body === [])
+		{
+			return $this->GenericErrorResponse($response, 'Invalid capture trip update', 400);
+		}
+
+		try
+		{
+			$service = new GrocyAiCaptureService(DatabaseService::GetInstance()->GetDbConnectionRaw());
+
+			if (array_key_exists('status', $body))
+			{
+				if ($body !== ['status' => 'reviewing'])
+				{
+					return $this->GenericErrorResponse($response, 'Invalid capture trip update', 400);
+				}
+				return $this->ApiResponse($response, $service->SetStatus((int)$tripId, 'reviewing', (string)GROCY_USER_ID));
+			}
+
+			$defaults = array_intersect_key($body, array_flip(['default_location_id', 'default_shopping_location_id']));
+			if ($defaults !== $body)
+			{
+				return $this->GenericErrorResponse($response, 'Invalid capture trip update', 400);
+			}
+			foreach ($defaults as $value)
+			{
+				if ($value !== null && !is_int($value))
+				{
+					return $this->GenericErrorResponse($response, 'Invalid capture trip update', 400);
+				}
+			}
+			$location = array_key_exists('default_location_id', $defaults) ? $defaults['default_location_id'] : null;
+			$store = array_key_exists('default_shopping_location_id', $defaults) ? $defaults['default_shopping_location_id'] : null;
+			return $this->ApiResponse($response, $service->SetTripDefaults((int)$tripId, $location, $store, (string)GROCY_USER_ID));
+		}
+		catch (\InvalidArgumentException)
+		{
+			return $this->GenericErrorResponse($response, 'Invalid capture trip update', 400);
+		}
+		catch (\RuntimeException)
+		{
+			return $this->GenericErrorResponse($response, 'Capture trip unavailable', 404);
+		}
+	}
+
+	/**
+	 * Edit one line of a trip (CAP-01): the closed change set is one or more of `quantity` / `price` /
+	 * `selected`, or `{ "delete": true }` alone. STOCK_PURCHASE-gated; writes no stock.
+	 */
+	public function UpdateCaptureLine(Request $request, Response $response, array $args): Response
+	{
+		User::CheckPermission($request, User::PERMISSION_STOCK_PURCHASE);
+		$tripId = $args['tripId'] ?? null;
+		$seq = $args['seq'] ?? null;
+		if (!is_string($tripId) || preg_match('/^[1-9][0-9]{0,9}$/D', $tripId) !== 1
+			|| !is_string($seq) || preg_match('/^[1-9][0-9]{0,9}$/D', $seq) !== 1)
+		{
+			return $this->GenericErrorResponse($response, 'Invalid capture line', 400);
+		}
+		$body = $request->getParsedBody();
+		if (!is_array($body) || $body === [])
+		{
+			return $this->GenericErrorResponse($response, 'Invalid capture line update', 400);
+		}
+		$candidate = array_intersect_key($body, array_flip(['quantity', 'price', 'selected', 'delete']));
+		if ($candidate !== $body)
+		{
+			return $this->GenericErrorResponse($response, 'Invalid capture line update', 400);
+		}
+
+		try
+		{
+			$service = new GrocyAiCaptureService(DatabaseService::GetInstance()->GetDbConnectionRaw());
+			return $this->ApiResponse($response, $service->UpdateLine((int)$tripId, (int)$seq, $candidate, (string)GROCY_USER_ID));
+		}
+		catch (\InvalidArgumentException)
+		{
+			return $this->GenericErrorResponse($response, 'Invalid capture line update', 400);
+		}
+		catch (\RuntimeException)
+		{
+			return $this->GenericErrorResponse($response, 'Capture line unavailable', 404);
 		}
 	}
 

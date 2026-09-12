@@ -136,6 +136,27 @@ const allowlistedFiles = new Map([
 		path: resolve(browserRoot, 'fixtures/quantityunitconversionsresolved.html'),
 		contentType: 'text/html; charset=utf-8'
 	}],
+	['/fixtures/capture.html', {
+		path: resolve(browserRoot, 'fixtures/capture.html'),
+		contentType: 'text/html; charset=utf-8'
+	}],
+	['/fixtures/capture-review.html', {
+		path: resolve(browserRoot, 'fixtures/capture-review.html'),
+		contentType: 'text/html; charset=utf-8'
+	}],
+	['/fixtures/capture-harness.js', {
+		path: resolve(browserRoot, 'fixtures/capture-harness.js'),
+		root: resolve(browserRoot, 'fixtures'),
+		contentType: 'text/javascript; charset=utf-8'
+	}],
+	['/assets/capture.js', {
+		path: resolve(repositoryRoot, 'public/custom/grocy_AI/capture.js'),
+		contentType: 'text/javascript; charset=utf-8'
+	}],
+	['/assets/capture-review.js', {
+		path: resolve(repositoryRoot, 'public/custom/grocy_AI/capture-review.js'),
+		contentType: 'text/javascript; charset=utf-8'
+	}],
 	['/assets/quantityunitconversionform.js', {
 		path: resolve(repositoryRoot, 'public/viewjs/quantityunitconversionform.js'),
 		root: resolve(repositoryRoot, 'public/viewjs'),
