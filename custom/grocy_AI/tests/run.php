@@ -1278,6 +1278,13 @@ if (class_exists(GrocyAiDiagnostic::class))
 	check(!str_contains($failureJson, '012345678905'), 'Failure envelopes never include GTIN values');
 }
 
+$inventoryDiffTestFile = __DIR__ . '/inventory_diff.php';
+if (is_file($inventoryDiffTestFile))
+{
+	require_once $inventoryDiffTestFile;
+	runInventoryDiffSuite();
+}
+
 if ($failures > 0)
 {
 	fwrite(STDERR, "{$failures} of {$tests} checks failed\n");

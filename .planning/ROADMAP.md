@@ -19,8 +19,9 @@ This milestone turns the deployed product-enrichment baseline into a dependable,
 - [x] **Phase 3: Food Taxonomy & Categorization Pilot** - Establish and validate stable household food identities before any bulk classification. (completed 2026-08-20)
 - [ ] **Phase 4: Reusable Conversion Model** - Provide deterministic universal and food-type conversions without breaking existing Grocy quantity behavior.
 - [ ] **Phase 5: Bulk Maintenance & Recovery Engine** - Give users one immutable, auditable, conflict-safe workflow for reviewed bulk changes and rollback.
-- [ ] **Phase 6: Inventory Categorization & Conversion Cleanup** - Apply the proven models safely to existing household inventory and redundant conversions.
+- [ ] **Phase 6: Inventory Categorization** - Group and classify existing household inventory via reviewed bulk passes; conversion cleanup closed by verification (0 targets in prod).
 - [ ] **Phase 7: Upstream & Stable Release Sustainment** - Make the completed milestone reproducibly portable, deployable, identifiable, and recoverable.
+- [ ] **Phase 8: Purchase Capture & Deferred Stock Intake** - Let a user rapid-scan a shopping trip, review it later, and commit selected items to stock as one native Grocy purchase batch. *(added 2026-09-01, post-milestone)*
 
 ## Phase Details
 
@@ -307,21 +308,43 @@ Plans:
 
 **UI hint:** yes
 
-### Phase 6: Inventory Categorization & Conversion Cleanup
+### Phase 6: Inventory Categorization
 
-**Goal**: Users can apply only reviewed classifications and redundant-conversion removals to existing inventory while preserving all unrelated Grocy behavior and retaining guarded recovery.
+**Goal**: Users can apply only reviewed product-group and food-classification assignments to existing inventory while preserving all unrelated Grocy behavior and retaining guarded recovery. Conversion cleanup is closed by verification.
 **Mode:** mvp
-**Depends on**: Phase 5
+**Depends on**: Phase 5 (bulk engine), Phase 3 (taxonomy scorer + storage)
 **Requirements**: DATA-01, DATA-02, DATA-03, DATA-04, DATA-05, DATA-06, DATA-07
+
+**Re-scoped 2026-09-08 (grilled) — live-prod fact-find (434 products) invalidated the original premise:**
+- 0 product-specific conversions exist (all 62 conversion rows are global); the "~101 unwanted conversions" figure is stale. DATA-03/04/05 have no targets → closed by a no-op audit.
+- Classification lives in module tables (`grocy_ai_taxonomy_classifications` + `_evidence`), not a Grocy userfield; the Phase 3 scorer + schema are intact but 0 products classified (pilot never bulk-applied). Phase 6 bulk-fills it.
+- The real data gap is 214 ungrouped products (~49%); no baby/pet/non-food groups and 0 inactive products exist, so the exclusion filter guards only ~2 Supplements items (kept as config + tripwire).
+
+**Design decisions (grilled 2026-09-08):**
+
+| Q | Decision |
+|---|----------|
+| Test data | Clone live prod → light scrub (secrets only) → local gitignored snapshot + documented refresh command |
+| Pass structure | Three independent reviewed passes, each own preview/apply/rollback + DATA-06 zero-diff verify |
+| Pass order | (1) product-group suggestion for the 214 ungrouped → (2) food classification → (3) conversion audit |
+| Scope filter | Grocy product-group + active flag, mapping in module config constant, per-product override userfield (migration-seeded); near-vestigial on current data, kept as tripwire |
+| Engine | Reuse the Phase 5 apply/rollback/idempotency/export spine unchanged; add three profilers/plan-generators only |
+| Classification store | Bulk-populate existing `grocy_ai_taxonomy_classifications` via the Phase 3 scorer + evidence; no new schema, no Grocy userfield |
+| Classify conflicts | Reuse Phase 3 evidence scoring; conflict = suggestion contradicts existing group signal OR two candidate types tie; review order conflicts → low-confidence → confident; below threshold → Unclassified |
+| Conversion pass | No-op profiler: assert 0 product-specific conversions, read-only audit the 62 globals; closes DATA-03/04/05 by verification + leaves a regression tripwire; no deletion code built |
+| DATA-06 verify | Per-table row-count + content-hash before/after each pass; only the approved rows/columns may change, any other delta fails the pass |
+| DATA-07 rollback | Per-pass atomic `BEGIN IMMEDIATE` + pre-apply snapshot of every touched row into the audit record; rollback restores from that record (works with no full DB backup); both passes rehearsed on the local snapshot before prod |
+| Profiler output | Emit standard BULK plan rows; confidence/evidence rides along as structured audit payload into export/rollback; no engine changes |
+
 **Success Criteria** (what must be TRUE):
 
-  1. Maintainer can profile every in-scope food product and generate suggestions while excluding baby food, pet food, inactive/non-food exceptions, and explicitly out-of-scope records.
-  2. User can review conflicting and low-confidence classifications first, retain Unclassified where appropriate, and apply only explicitly approved assignments.
-  3. Maintainer can profile existing conversions as logical unit pairs with origin, factor, usage, duplicates, malformed rows, and dependencies.
-  4. User can remove only reviewed redundant conversions after before/after effective-path comparison proves equivalent coverage and retains package/count, measured-density, purchase-to-stock, and named exceptions.
-  5. Maintainer can verify that all unrelated product, stock, history, recipe, price, due-date, authentication, and normal Grocy behavior is unchanged, then rerun with zero additional diffs and rehearse guarded rollback on production-shaped data.
+  1. Maintainer can profile every in-scope food product and generate product-group and classification suggestions while excluding the configured non-food groups (Supplements), inactive, and per-product override-excluded records.
+  2. User can review conflicting and low-confidence classifications first, retain Unclassified where appropriate, and apply only explicitly approved product-group and classification assignments.
+  3. Maintainer can audit the existing conversion set and confirm there are no product-specific conversions to remove (verification-closed), leaving the 62 global conversions untouched.
+  4. Conversion-removal machinery is not built; a regression tripwire fails the audit if product-specific conversions ever reappear.
+  5. Maintainer can verify that all unrelated product, stock, history, recipe, price, due-date, authentication, and normal Grocy behavior is unchanged (per-table checksum), then rerun with zero additional diffs and rehearse guarded rollback on the local production-shaped snapshot.
 
-**Plans**: TBD
+**Plans**: 06-01 snapshot gate · 06-02 DATA-06/07 checksum+rollback harness · 06-03 exclusion scope+override · 06-04 suggest_product_group op (214 ungrouped) · 06-05 classification conflict-first hardening · 06-06 conversion no-op audit+tripwire · 06-07 UI+full-phase acceptance. Waves: 1=[01], 2=[02,03,06], 3=[04], 4=[05], 5=[07]. Design + plans in `.planning/phases/06-inventory-categorization/`.
 **UI hint:** yes
 
 ### Phase 7: Upstream & Stable Release Sustainment
@@ -341,10 +364,62 @@ Plans:
 **Plans**: TBD
 **UI hint:** no
 
+### Phase 8: Purchase Capture & Deferred Stock Intake
+
+**Goal**: A user can rapid-scan groceries into a discrete shopping trip over a live connection, review and adjust the trip later, and commit the selected known items to stock as one auditable native Grocy purchase batch — with unknown barcodes flagged and handed off to the existing enrichment flow.
+**Mode:** mvp (lean rigor — build + test + deploy; portable/stable mirroring deferred to Phase 7)
+**Depends on**: Phase 2 (barcode/enrichment services). Independent of Phases 4–6; may ship before them.
+**Requirements**: CAP-01, CAP-02, CAP-03, CAP-04, CAP-05, CAP-06, CAP-07, CAP-08
+**Success Criteria** (what must be TRUE):
+
+  1. User can start/close a trip and rapid-scan over a live connection; duplicate barcodes coalesce into one incrementing line; each scan resolves known/unknown with no prompts.
+  2. User can review a trip with lean per-line edits (quantity, optional price, select/deselect, delete) plus trip-level location/store defaults and auto-computed best-before.
+  3. Unknown lines hand off to the existing `/product/new` enrichment flow and auto re-resolve to known by barcode when the trip is reopened.
+  4. Commit writes only selected known lines as one native `AddProduct` purchase transaction with the purchase→stock factor and barcode overrides applied; unresolved/deselected lines remain in the trip.
+  5. Commit is idempotent and conflict-safe (checksum + per-item `applied_at` ledger + in-lock re-resolve); committed trips archive read-only with the Grocy `transaction_id`; nothing but the approved commit path writes stock.
+
+**Design decisions (grilled 2026-09-01):** build fresh in module; live-connection server-side queue (no offline); discrete trips `open→reviewing→committed`; coalesce+increment; purchase-units+factor at commit; dedicated pages + sidebar tile; reuse enrichment scan component; `STOCK_PURCHASE` gate; partial commit; auto re-resolve unknowns; lean review + trip defaults; mirror the Phase 5 `BEGIN IMMEDIATE`/checksum/idempotency safety pattern in a NEW stock-writing service (first module code allowed to write stock).
+
+**Reuses:** `GrocyAiBarcodeService::ResolveOwner` (known/unknown), `GrocyAiService::EnrichByUpc` (unknowns), `GrocyAiBulkMigration` schema pattern, native `StockService::AddProduct` (commit).
+
+**Plans**: 6 (lean)
+
+Plans:
+**Wave 1**
+
+- [ ] 08-01-PLAN.md — RED contract tests + inactive namespaced `grocy_ai_capture_*` schema/migration (trips/lines/audit/migrations ledger).
+
+**Wave 2** *(blocked on Wave 1)*
+
+- [ ] 08-02-PLAN.md — Start/close trip + live scan-into-trip with immediate ownership resolution and same-barcode coalescing.
+
+**Wave 3** *(blocked on Wave 2)*
+
+- [ ] 08-03-PLAN.md — Mobile capture page (scan loop reusing the enrichment scanner) + sidebar menu tile.
+
+**Wave 4** *(blocked on Wave 3)*
+
+- [ ] 08-04-PLAN.md — Review page: lean per-line edits, trip-level defaults, unknown handoff link, and auto re-resolve on open.
+
+**Wave 5** *(blocked on Wave 4)*
+
+- [ ] 08-05-PLAN.md — Commit: single `BEGIN IMMEDIATE` native purchase batch, purchase→stock factor, partial commit, checksum + idempotency ledger + in-lock conflict re-check, audit + read-only archive.
+
+**Wave 6** *(blocked on Wave 5)*
+
+- [ ] 08-06-PLAN.md — Acceptance: native + mobile-browser tests (stock-write safety, idempotency, partial commit, unknown lifecycle) and deploy.
+
+**Cross-cutting constraints:**
+
+- No capture, scan, or review action may write stock; only the single approved commit path calls native `AddProduct`.
+- The module's existing "never disturb `stock`/`purchase`" invariant is intentionally superseded for this phase ONLY through the audited commit path; all other protected-consumer guarantees remain.
+
+**UI hint:** yes
+
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7. Dual-branch and stable-image checks established in Phase 1 remain exit gates throughout; Phase 7 consolidates and rehearses final promotion and recovery.
+Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7. Dual-branch and stable-image checks established in Phase 1 remain exit gates throughout; Phase 7 consolidates and rehearses final promotion and recovery. Phase 8 is a post-milestone addition (added 2026-09-01) that depends only on Phase 2's barcode/enrichment services and may be scheduled independently of Phases 4–6; its portable/stable mirroring folds into Phase 7.
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -355,3 +430,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7. Dual-bra
 | 5. Bulk Maintenance & Recovery Engine | 11/11 | Complete (pending human-verify) | 2026-08-30 |
 | 6. Inventory Categorization & Conversion Cleanup | 0/TBD | Not started | - |
 | 7. Upstream & Stable Release Sustainment | 0/TBD | Not started | - |
+| 8. Purchase Capture & Deferred Stock Intake | 0/6 | Not started | - |

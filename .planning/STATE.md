@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Phase 4 complete
-last_updated: "2026-08-29T00:00:00.000Z"
-last_activity: 2026-08-29 -- Phase 4 complete (04-10 shipped)
+stopped_at: Phase 6 executing (06-01 complete)
+last_updated: "2026-09-12T00:00:00.000Z"
+last_activity: 2026-09-12 -- Phase 6 06-02 complete (DATA-06/07 harness GREEN)
 progress:
   total_phases: 7
   completed_phases: 3
-  total_plans: 44
-  completed_plans: 44
+  total_plans: 51
+  completed_plans: 46
   percent: 43
 ---
 
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-08-20)
 
 **Core value:** Adding and maintaining real household food inventory must be fast, accurate, and dependable from a phone without surrendering control of the data to automatic guesses.
-**Current focus:** Phase 5 COMPLETE 2026-08-30 (11 plans shipped + generation surface; each wave adversarially verified); pending only the maintainer human-verify checkpoint. Phase 6 (Inventory Categorization & Conversion Cleanup) is next.
+**Current focus:** Phase 5 COMPLETE 2026-08-30 (11 plans shipped + generation surface; each wave adversarially verified); pending only the maintainer human-verify checkpoint. Phase 6 (Inventory Categorization) RE-SCOPED 2026-09-08 via grilling after a live-prod fact-find — ready to plan, not yet executing.
 
 ## Current Position
 
-Phase: 5 (Bulk Maintenance & Recovery Engine) — COMPLETE (pending maintainer human-verify)
-Plan: 05-01 through 05-11 shipped on `codex/phase5-bulk-engine`; generation endpoint/UI added (BULK-01 surface); branch not pushed
-Status: Phase complete; awaiting the 05-11 Task 3 human-verify session, then Phase 6
-Last activity: 2026-08-30 -- Phase 5 executed wave-by-wave with per-wave adversarial verification; bulk release gate PASS, 127 unit checks + 34 JS tests green; CSV formula-injection (CWE-1236) caught and fixed; BULK-01..10 all satisfied
+Phase: 6 (Inventory Categorization) — EXECUTING
+Plan: 06-01 + 06-02 COMPLETE 2026-09-12. 06-01 = snapshot tooling (snapshot-refresh.sh + snapshot-scrub.sql + SNAPSHOT.md + gitignore; scrubbed local snapshot landed). 06-02 = DATA-06/07 harness GREEN (bin/verify-inventory-diff.php + tests/inventory_diff.php, registered in run.php; suite 147/147). Resume at 06-03 (exclusion override userfield migration + Supplements mapping-rule seed). Phases 1-5 as before (Phase 5 awaiting 05-11 Task 3 human-verify).
+Status: 06-02 shipped + verified (All 147 grocy_AI checks passed). DATA-06 proves apply changes only grocy_ai_taxonomy_classifications + grocy_ai_bulk_*, native tables byte-identical; DATA-07 rollback restores native byte-identical + effective classification reverts (raw classifications keep NULL-leaf tombstones by engine design); idempotent re-apply zero-diff; rehearsed on the real snapshot. Live-prod counts: 444 products / 224 ungrouped / 21 groups / 80 conversions (design's 434/214/62 stale). Acquisition = direct SSH root@10.10.0.156 via 1Password key `ssh:Personal Docker (102)` + PDO VACUUM INTO + scp (NOT the Komodo terminal — 16 MiB frame cap wedges periphery). Resume at 06-03.
+Last activity: 2026-09-12 -- 06-02 complete. (06-01 incident, resolved: first transport dumped ~27MB through a Komodo Server terminal, wedged core<->periphery for host 102; recovered via `systemctl restart periphery.service` over SSH; committed script uses scp so it cannot recur.)
 
 Progress: [████░░░░░░] 43%
 
@@ -62,9 +62,12 @@ Progress: [████░░░░░░] 43%
 Decisions are logged in PROJECT.md Key Decisions table.
 Recent decisions affecting current work:
 
+- [Phase 6 — RE-SCOPED 2026-09-08, grilled]: A read-only live-prod fact-find (434 products) invalidated the phase's premise. **0 product-specific conversions exist** (all 62 rows global; "~101 unwanted" was stale) → DATA-03/04/05 closed by a no-op audit + regression tripwire, no deletion code built. **Classification lives in module tables** (`grocy_ai_taxonomy_classifications`/`_evidence`), not a Grocy userfield; Phase 3 scorer+schema intact but 0 products classified → Phase 6 bulk-fills it. **Real gap = 214 ungrouped products (~49%)**; no baby/pet/non-food groups, 0 inactive products, so the exclusion filter is near-vestigial (guards ~2 Supplements) — kept as config + tripwire. New shape: three reviewed bulk passes on the Phase 5 engine — (1) product-group suggestion for the 214 ungrouped, (2) food classification (conflict-first review), (3) conversion audit (no-op) — each with per-table checksum zero-diff verify, atomic `BEGIN IMMEDIATE` + pre-apply row-snapshot rollback rehearsed on a clone→light-scrub→local snapshot. Full decision table in ROADMAP.md Phase 6.
+
 - [Milestone]: Use seven dependency-ordered vertical MVP phases with fine granularity; each v1 requirement belongs to exactly one phase.
 - [Phase 1]: Treat deployed enrichment/name/image behavior as validated brownfield context, while beginning this milestone with safety, diagnostics, mobile verification, and the recurring dual-branch gate.
 - [Phase 4]: Require a dual-branch characterization spike before choosing the resolved/cache projection for food-type conversions.
+- [Phase 8 — added 2026-09-01, post-milestone]: Drafted "Purchase Capture & Deferred Stock Intake" (CAP-01…08, 6 lean waves) via a grilling session. Build fresh in-module; live-connection server-side queue; discrete trips; coalesce+increment; purchase-units+factor commit; partial commit; auto re-resolve unknowns; mirror the Phase 5 BEGIN IMMEDIATE/checksum/idempotency safety in a NEW stock-writing service — the first module code permitted to write stock, only through the audited CommitTrip path. Depends only on Phase 2; may ship independently of Phases 4–6; portable/stable mirror deferred to Phase 7. Plans in .planning/phases/08-purchase-capture-stock-intake/.
 - [All phases]: External data remains reviewable evidence; Grocy remains the sole durable mutation authority.
 - [Phase 01]: Authorized only the official @playwright/test package at exact version 1.62.1 for installation by Plan 01-02. — Registry identity, Microsoft source, exact dependency pin, and absence of a postinstall script were verified before the user replied approved.
 - [Phase 01]: Kept Plan 01-01 approval-only with no dependency or package-file changes. — Installation and lockfile creation remain scoped to Plan 01-02.
@@ -155,7 +158,7 @@ None yet.
 - [Phase 4]: Deployment still needs `/etc/komodo/grocy/maintainer-auth` created (0600, 64-hex) and `GROCY_AI_MAINTAINER_AUTH_FILE` set before the promotion command can be used there.
 
 - [Phase 4]: Phase 4 module files are not yet mirrored to `atech-release`, and `release-gate.sh` Phase 2 modes still hardcode a 12-path portable count against a 36-path manifest. Both belong to the Phase 4 stable mirroring work.
-- [Phase 6]: Cleanup planning requires a scrubbed production-shaped snapshot to confirm conversion and inventory edge cases.
+- [Phase 6 — UPDATED 2026-09-08]: Live-prod fact-find done (read-only, GET-only). Confirmed 0 product-specific conversions and classification stored in module tables. Planning now needs the actual clone→light-scrub→local snapshot built (refresh script + gitignore) before profiling/rollback rehearsal; the group→exclude config constant needs the real group list (fetched: 21 groups, only Supplements borderline non-food).
 - [Phase 2]: Goal verification found three blocking contract gaps: reject duplicate suggestion fields, bind media provenance to evidence class, and bound/depth-limit companion JSON before recursive parsing. — Plan 02 gap closure before phase completion.
 
 ### Quick Tasks Completed

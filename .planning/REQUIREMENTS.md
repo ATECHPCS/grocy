@@ -65,11 +65,11 @@
 
 ### Existing Inventory Classification and Conversion Cleanup
 
-- [ ] **DATA-01**: Maintainer can profile every in-scope existing food product and generate classification suggestions while excluding baby food, pet food, inactive/non-food exceptions, and explicitly out-of-scope records.
-- [ ] **DATA-02**: User can review low-confidence and conflicting food classifications first, leave items `Unclassified`, and apply only the explicitly approved assignments.
-- [ ] **DATA-03**: Maintainer can profile the existing product-specific conversion set as logical unit pairs with origin/source, factor, usage, duplicates, malformed rows, and dependencies.
-- [ ] **DATA-04**: Maintainer can compare effective conversion paths before and after proposed cleanup and block deletion when stock, recipes, purchase units, or named exceptions would lose equivalent coverage.
-- [ ] **DATA-05**: User can remove only reviewed redundant product-specific conversions while retaining required package/count, measured-density, purchase-to-stock, and other named exceptions.
+- [ ] **DATA-01**: Maintainer can profile every in-scope existing food product and generate product-group and food-classification suggestions while excluding the configured non-food groups (Supplements), inactive products, and per-product override-excluded records. *(Re-scoped 2026-09-08: adds a reviewed product-group-suggestion pass for the 214 ungrouped products; no baby/pet groups exist in prod.)*
+- [ ] **DATA-02**: User can review low-confidence and conflicting food classifications first, leave items `Unclassified`, and apply only the explicitly approved product-group and classification assignments (bulk-populating the module `grocy_ai_taxonomy_classifications` table).
+- [~] **DATA-03**: *(Verification-closed 2026-09-08)* Maintainer can audit the existing conversion set and confirm 0 product-specific conversions exist (all 62 rows global); the "~101 unwanted" figure was stale. No cleanup targets — satisfied by a read-only audit + regression tripwire.
+- [~] **DATA-04**: *(Verification-closed 2026-09-08)* No product-specific conversions exist to compare or block; effective-path comparison machinery is not built. Tripwire fails the audit if product-specific conversions reappear.
+- [~] **DATA-05**: *(Verification-closed 2026-09-08)* No redundant product-specific conversions to remove; deletion code not built. Named exceptions (package/count, measured-density, purchase-to-stock) are moot on current data.
 - [ ] **DATA-06**: Maintainer can verify after classification/cleanup that product and stock counts, stock amounts, history, recipes, prices, due dates, authentication, and normal Grocy behavior remain unchanged except for approved fields/rules.
 - [ ] **DATA-07**: Maintainer can rerun completed classification and cleanup plans with zero additional diffs and rehearse guarded rollback against production-shaped data.
 
@@ -82,6 +82,17 @@
 - [ ] **REL-05**: Maintainer can deploy a stable image while preserving `/etc/komodo/grocy` data and confirm database, product images, routes, flags, and module status after restart.
 - [ ] **REL-06**: User can complete the end-to-end mobile product workflow on the promoted stable image before the release is accepted.
 - [ ] **REL-07**: Maintainer can execute a rehearsed prior-image and database recovery procedure if a promoted module or migration fails.
+
+### Purchase Capture and Deferred Stock Intake
+
+- [ ] **CAP-01**: User can start and close a discrete shopping trip and rapid-scan barcodes into it over a live connection, with repeated scans of the same barcode coalescing into one line whose quantity increments.
+- [ ] **CAP-02**: Each scan resolves barcode ownership immediately as known (canonical GTIN/existing owner) or unknown, with no per-item prompts interrupting scanning.
+- [ ] **CAP-03**: User can review a trip and adjust per-line quantity, optional price, and selection, delete lines, and set trip-level location/store defaults while best-before is auto-computed from product defaults.
+- [ ] **CAP-04**: User can hand an unknown line to the existing enrichment product-create flow, and the line auto re-resolves to known by barcode when the trip is reopened.
+- [ ] **CAP-05**: User can commit the selected known lines as one native Grocy purchase transaction (shared `transaction_id`) applying the product's purchase→stock factor and any barcode amount override, while unresolved and deselected lines remain in the trip (partial commit).
+- [ ] **CAP-06**: Commit is idempotent and conflict-safe through a plan checksum, per-item `applied_at` ledger, and in-lock ownership re-resolution, so a re-tapped or interrupted commit cannot double-add stock.
+- [ ] **CAP-07**: Committed trips are archived read-only with their scanned/resolved/committed record and the Grocy `transaction_id` for audit.
+- [ ] **CAP-08**: Capture and commit are gated on `STOCK_PURCHASE` (enrichment handoff on `MASTER_DATA_EDIT`), and no capture, scan, or review action writes stock except the single approved commit path via native `AddProduct`.
 
 ## v2 Requirements
 
@@ -156,9 +167,9 @@
 | BULK-10 | Phase 5 | Pending |
 | DATA-01 | Phase 6 | Pending |
 | DATA-02 | Phase 6 | Pending |
-| DATA-03 | Phase 6 | Pending |
-| DATA-04 | Phase 6 | Pending |
-| DATA-05 | Phase 6 | Pending |
+| DATA-03 | Phase 6 | Verification-closed (0 targets) |
+| DATA-04 | Phase 6 | Verification-closed (0 targets) |
+| DATA-05 | Phase 6 | Verification-closed (0 targets) |
 | DATA-06 | Phase 6 | Pending |
 | DATA-07 | Phase 6 | Pending |
 | REL-01 | Phase 7 | Pending |
@@ -168,12 +179,20 @@
 | REL-05 | Phase 7 | Pending |
 | REL-06 | Phase 7 | Pending |
 | REL-07 | Phase 7 | Pending |
+| CAP-01 | Phase 8 | Pending |
+| CAP-02 | Phase 8 | Pending |
+| CAP-03 | Phase 8 | Pending |
+| CAP-04 | Phase 8 | Pending |
+| CAP-05 | Phase 8 | Pending |
+| CAP-06 | Phase 8 | Pending |
+| CAP-07 | Phase 8 | Pending |
+| CAP-08 | Phase 8 | Pending |
 
 **Coverage:**
-- v1 requirements: 57 total
-- Mapped to phases: 57
+- v1 requirements: 65 total
+- Mapped to phases: 65
 - Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-08-12*
-*Last updated: 2026-08-12 after roadmap creation*
+*Last updated: 2026-09-01 — added Phase 8 (Purchase Capture & Deferred Stock Intake), CAP-01…CAP-08*

@@ -4,3 +4,7 @@ embedded.txt
 /.worktrees
 /packages
 /public/packages
+
+# Phase 6 local prod snapshots — contain real household data; never commit.
+custom/grocy_AI/.snapshots/
+custom/grocy_AI/**/*.sqlite
