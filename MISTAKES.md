@@ -9,7 +9,7 @@ store, not here.
   IMMEDIATE / COMMIT / ROLLBACK counts, forbidden PDO txn tokens), slice the body between
   `public function X` and the NEXT `function` declaration and grep only that slice; never grep the whole
   file. And never write a banned keyword (UPDATE/DELETE/REPLACE/BEGIN IMMEDIATE) adjacent to the guarded
-  table/identifier name in a docblock or comment — source-grep gates match prose too. (hits: 6)
+  table/identifier name in a docblock or comment — source-grep gates match prose too. (hits: 7)
 
 ## Patterns (promote at 3 hits)
 
@@ -34,6 +34,20 @@ store, not here.
   `portable-files.txt` rather than a literal. (hits: 2)
 
 ## Observations (first sightings)
+
+- 2026-09-12: `GrocyAiBulkService::GeneratePlan`'s counts + item set are HARD-pinned by `bulk-generate`
+  and `bulk-generate-endpoint` to EXACTLY `{included:2, excluded:1, skipped:3, changed:1, unchanged:1}`
+  with 2 items (P4 low_confidence / P5 unclassified / P6 conflicting are SKIPPED, never emitted). → To add
+  conflict-first ordering + below-threshold `set_unclassified` emission (06-05), add a sibling generator
+  (`GenerateClassificationPlan`), never mutate `GeneratePlan`. Same philosophy as 06-04's `GenerateGroupPlan`
+  and the RegisteredOperations decision: extend beside the pinned contract, don't edit it. (hits: 1)
+
+- 2026-09-12: `GrocyAiTaxonomyService::ReadProductTaxonomy`'s return is pinned to EXACTLY 8 keys by
+  `taxonomy-api` (`array_keys($result) !== $allowed`) and re-asserted by `taxonomy-production-paths`;
+  `AssignProductTaxonomy` returns it too. Adding a conflict flag / review band to that DTO breaks both
+  suites. → Surface new read-path fields (06-05 conflict + confidence band) on a NEW method
+  (`ReviewProductTaxonomy`), leaving the closed 8-key shape and the single
+  `INSERT INTO grocy_ai_taxonomy_classifications` (pinned `=== 1` by `bulk-registry`) untouched. (hits: 1)
 
 - 2026-09-12: Adding a new bulk operation to `GrocyAiBulkService::RegisteredOperations()` breaks the
   arg-based `bulk-contract` + `bulk-registry` suites: both pin `array_keys(RegisteredOperations()) ===

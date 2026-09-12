@@ -6,6 +6,21 @@ use PDO;
 
 class GrocyAiTaxonomyService
 {
+	/**
+	 * Deterministic candidate scoring for the classification review path (06-05). Each evidence source
+	 * implies a candidate leaf with a score; the Grocy product-group signal scores as a high band. The
+	 * scores drive the confidence band and the two conflict forms surfaced by ReviewProductTaxonomy, and
+	 * are derived only from stored evidence + the group signal (no network, no volatile input).
+	 */
+	public const GROUP_SIGNAL_SCORE = 3;
+	private const EVIDENCE_BAND_SCORES = ['high' => 3, 'medium' => 2, 'low' => 1, 'unverified' => 0];
+
+	/** The minimum candidate score (>= a medium band) for a classification to be reviewed as confident. */
+	public const CONFIDENCE_THRESHOLD = 2;
+
+	/** Two distinct candidate leaves whose scores are within this margin are a tie (Q7 conflict form b). */
+	public const CANDIDATE_TIE_MARGIN = 1;
+
 	private PDO $Db;
 	private ?GrocyAiInventoryScope $Scope = null;
 
@@ -130,6 +145,127 @@ class GrocyAiTaxonomyService
 			'provider_category' => $evidence['provider_category'],
 			'confidence_band' => $evidence['confidence_band'],
 			'reason_code' => $evidence['reason_code']
+		];
+	}
+
+	/**
+	 * The deterministic classification-review view for one product (06-05): the winning candidate leaf,
+	 * its confidence band/score, and the two conflict signals. It is surfaced WITHOUT changing the closed
+	 * ReadProductTaxonomy shape or the AssignProductTaxonomy write path; it reads only stored evidence +
+	 * the Grocy product-group signal, so the same committed state always yields the same review.
+	 *
+	 * Conflict is defined two ways (Q7 / DATA-02):
+	 *   (a) group_signal_contradiction — the product carries a Grocy product-group signal implying one leaf
+	 *       while its provider evidence implies a different leaf; and
+	 *   (b) candidate_tie — the top two DISTINCT candidate leaves score within CANDIDATE_TIE_MARGIN.
+	 * A winner scoring below CONFIDENCE_THRESHOLD and NOT in conflict is reviewed `low_confidence`, so the
+	 * classification pass retains Unclassified rather than forcing a leaf. No evidence at all → `unclassified`.
+	 *
+	 * @return array{product_id:int, current_leaf:?array, suggested_leaf:?array, evidence_source:?string, confidence_band:?string, confidence_score:int, review_band:string, conflict:bool, conflict_reasons:array<int,string>, reason_code:string, candidates:array<int,array<string,mixed>>}
+	 */
+	public function ReviewProductTaxonomy(int $productId): array
+	{
+		if ($productId < 1)
+		{
+			throw new \InvalidArgumentException('Invalid product ID');
+		}
+		$product = $this->Db->prepare('SELECT id FROM products WHERE id = ?');
+		$product->execute([$productId]);
+		if ($product->fetchColumn() === false)
+		{
+			throw new \RuntimeException('Product unavailable');
+		}
+
+		$currentLeaf = $this->CurrentLeaf($productId);
+		$candidates = [];
+		$group = $this->GroupSignalCandidate($productId);
+		if ($group !== null)
+		{
+			$candidates[] = $group;
+		}
+		$provider = $this->ProviderCandidate($productId);
+		if ($provider !== null)
+		{
+			$candidates[] = $provider;
+		}
+
+		if ($candidates === [])
+		{
+			return [
+				'product_id' => $productId,
+				'current_leaf' => $currentLeaf,
+				'suggested_leaf' => null,
+				'evidence_source' => null,
+				'confidence_band' => null,
+				'confidence_score' => 0,
+				'review_band' => 'unclassified',
+				'conflict' => false,
+				'conflict_reasons' => [],
+				'reason_code' => 'no_accepted_evidence',
+				'candidates' => []
+			];
+		}
+
+		// The winner is the highest-scoring candidate; the group signal (added first) precedes provider
+		// evidence on an equal score, the same precedence ReadProductTaxonomy uses, so the choice is stable.
+		$winner = $candidates[0];
+		foreach ($candidates as $candidate)
+		{
+			if ($candidate['score'] > $winner['score'])
+			{
+				$winner = $candidate;
+			}
+		}
+
+		// Distinct candidate leaves (best score per slug) drive the tie/contradiction tests below.
+		$bySlug = [];
+		foreach ($candidates as $candidate)
+		{
+			$slug = $candidate['slug'];
+			if (!isset($bySlug[$slug]) || $candidate['score'] > $bySlug[$slug]['score'])
+			{
+				$bySlug[$slug] = $candidate;
+			}
+		}
+
+		$conflictReasons = [];
+		if ($group !== null && $provider !== null && $group['slug'] !== $provider['slug'])
+		{
+			$conflictReasons[] = 'group_signal_contradiction';
+		}
+		if (count($bySlug) >= 2)
+		{
+			$scores = array_map(static fn(array $candidate): int => (int)$candidate['score'], array_values($bySlug));
+			rsort($scores);
+			if (($scores[0] - $scores[1]) <= self::CANDIDATE_TIE_MARGIN)
+			{
+				$conflictReasons[] = 'candidate_tie';
+			}
+		}
+
+		$reviewBand = $conflictReasons !== []
+			? 'conflict'
+			: ((int)$winner['score'] >= self::CONFIDENCE_THRESHOLD ? 'confident' : 'low_confidence');
+
+		$reasonCode = match ($reviewBand)
+		{
+			'conflict' => 'review_conflict',
+			'low_confidence' => 'below_confidence_threshold',
+			default => $winner['source'] === 'grocy_product_group' ? 'mapped_grocy_product_group' : 'mapped_provider_category'
+		};
+
+		return [
+			'product_id' => $productId,
+			'current_leaf' => $currentLeaf,
+			'suggested_leaf' => $winner['leaf'],
+			'evidence_source' => $winner['source'],
+			'confidence_band' => $winner['confidence_band'],
+			'confidence_score' => (int)$winner['score'],
+			'review_band' => $reviewBand,
+			'conflict' => $conflictReasons !== [],
+			'conflict_reasons' => $conflictReasons,
+			'reason_code' => $reasonCode,
+			'candidates' => array_values($candidates)
 		];
 	}
 
@@ -304,6 +440,65 @@ class GrocyAiTaxonomyService
 			'provider_category' => $productGroup,
 			'confidence_band' => 'high',
 			'reason_code' => 'mapped_grocy_product_group'
+		];
+	}
+
+	/**
+	 * The Grocy product-group signal as a scored candidate leaf (06-05), or null when the product is
+	 * ungrouped / its group maps to no leaf. Reuses the shipped ProductGroupEvidence read; scores high.
+	 *
+	 * @return array{slug:string, leaf:array<string,string>, source:string, confidence_band:string, score:int}|null
+	 */
+	private function GroupSignalCandidate(int $productId): ?array
+	{
+		$group = $this->ProductGroupEvidence($productId);
+		if ($group === null)
+		{
+			return null;
+		}
+		$leaf = $group['suggested_leaf'];
+		return [
+			'slug' => (string)$leaf['slug'],
+			'leaf' => $leaf,
+			'source' => 'grocy_product_group',
+			'confidence_band' => 'high',
+			'score' => self::GROUP_SIGNAL_SCORE
+		];
+	}
+
+	/**
+	 * The provider enrichment evidence as a scored candidate leaf (06-05), or null when there is no
+	 * accepted provider evidence, the category maps to no leaf, or the mapping is excluded. Unlike the
+	 * classification Evidence() path this keeps low/unverified bands as candidates (scored low) so a weak
+	 * signal surfaces as `low_confidence` rather than vanishing. Pure read of stored evidence + rules.
+	 *
+	 * @return array{slug:string, leaf:array<string,string>, source:string, confidence_band:string, score:int}|null
+	 */
+	private function ProviderCandidate(int $productId): ?array
+	{
+		$statement = $this->Db->prepare('SELECT provider_category, mapping_version, confidence_band FROM grocy_ai_taxonomy_evidence WHERE product_id = ?');
+		$statement->execute([$productId]);
+		$evidence = $statement->fetch(PDO::FETCH_ASSOC);
+		if (!is_array($evidence) || $evidence['mapping_version'] !== GrocyAiTaxonomyMigration::VERSION)
+		{
+			return null;
+		}
+		$providerCategory = self::ProviderCategoryKey((string)$evidence['provider_category']);
+		$rule = $this->Db->prepare('SELECT target_slug, disposition FROM grocy_ai_taxonomy_mapping_rules WHERE provider_category = ? AND version = ?');
+		$rule->execute([$providerCategory, GrocyAiTaxonomyMigration::VERSION]);
+		$mapping = $rule->fetch(PDO::FETCH_ASSOC);
+		if (!is_array($mapping) || $mapping['disposition'] !== 'mapped' || !is_string($mapping['target_slug']))
+		{
+			return null;
+		}
+		$band = (string)$evidence['confidence_band'];
+		$leaf = $this->LeafBySlug($mapping['target_slug']);
+		return [
+			'slug' => (string)$leaf['slug'],
+			'leaf' => $leaf,
+			'source' => 'provider_food_type',
+			'confidence_band' => $band,
+			'score' => self::EVIDENCE_BAND_SCORES[$band] ?? 0
 		];
 	}
 

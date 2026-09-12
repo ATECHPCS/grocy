@@ -386,6 +386,174 @@ class GrocyAiBulkService
 	}
 
 	/**
+	 * Produce a bounded, zero-native-mutation CLASSIFICATION plan (06-05) ordered for review as
+	 * conflicts -> low-confidence -> confident (DATA-02 / Q7), mirroring `GeneratePlan`'s spine and write
+	 * shape: it writes only the two module bulk tables, seals a deterministic checksum over the immutable
+	 * content, and re-uses the two closed taxonomy operations (`assign_taxonomy_leaf` / `set_unclassified`).
+	 *
+	 * Unlike `GeneratePlan` (which emits only the confident, actionable suggestions and is pinned by the
+	 * 05-03 contract), this generator surfaces the full reviewable set using the deterministic
+	 * `GrocyAiTaxonomyService::ReviewProductTaxonomy` bands:
+	 *   - CONFLICT (suggestion contradicts the group signal, or a candidate tie): the winning leaf is
+	 *     proposed via `assign_taxonomy_leaf` but emitted DESELECTED so a human resolves it first;
+	 *   - LOW-CONFIDENCE (winner below the confidence threshold): emitted as a DESELECTED `set_unclassified`
+	 *     so Unclassified is RETAINED and no leaf is ever forced;
+	 *   - CONFIDENT: `assign_taxonomy_leaf`, pre-selected only when it actually changes the current leaf.
+	 * A product with no accepted evidence yields no item (counted `skipped`); out-of-scope products are
+	 * held out by the single scope owner and counted `excluded`. The write shape is byte-identical to the
+	 * taxonomy plan (`operation_type = taxonomy_assignment`, `{"leaf_slug":…}` before/proposed images).
+	 *
+	 * @param array{actor?: string} $scope
+	 * @return array<string, mixed> the closed plan header DTO
+	 */
+	public function GenerateClassificationPlan(array $scope = []): array
+	{
+		$rulesetVersion = GrocyAiTaxonomyMigration::VERSION;
+		$actor = is_string($scope['actor'] ?? null) ? (string)$scope['actor'] : null;
+
+		$report = $this->Taxonomy->ValidateInventoryTaxonomy();
+		$excluded = (int)$report['excluded'];
+
+		$productIds = $this->Db->query('SELECT id FROM products ORDER BY id LIMIT ' . self::MAX_SCOPE_OBJECTS)->fetchAll(PDO::FETCH_COLUMN);
+
+		$conflictItems = [];
+		$lowItems = [];
+		$confidentItems = [];
+		$skipped = 0;
+		$changed = 0;
+		$unchanged = 0;
+		foreach ($productIds as $productId)
+		{
+			$productId = (int)$productId;
+			// The single scope owner (06-03) holds out inactive / excluded-group / override-excluded products
+			// already counted `excluded` in the validation report, so they never produce an actionable item.
+			if (!$this->Taxonomy->IsProductInScope($productId))
+			{
+				continue;
+			}
+			$review = $this->Taxonomy->ReviewProductTaxonomy($productId);
+			$band = (string)$review['review_band'];
+			$beforeSlug = is_array($review['current_leaf']) ? (string)$review['current_leaf']['slug'] : null;
+
+			if ($band === 'unclassified')
+			{
+				$skipped++;
+				continue;
+			}
+			if ($band === 'low_confidence')
+			{
+				// Below the confidence threshold: retain Unclassified (never force a leaf), emitted deselected.
+				$isChanged = $beforeSlug !== null;
+				$isChanged ? $changed++ : $unchanged++;
+				$lowItems[] = [
+					'object_type' => 'product',
+					'object_id' => $productId,
+					'operation' => 'set_unclassified',
+					'before_image' => $beforeSlug,
+					'proposed_value' => null,
+					'reason' => (string)$review['reason_code'],
+					'provenance' => (string)$review['evidence_source'],
+					'selected' => 0
+				];
+				continue;
+			}
+
+			$proposedSlug = (string)$review['suggested_leaf']['slug'];
+			$isChanged = $beforeSlug !== $proposedSlug;
+			$isChanged ? $changed++ : $unchanged++;
+			$item = [
+				'object_type' => 'product',
+				'object_id' => $productId,
+				'operation' => 'assign_taxonomy_leaf',
+				'before_image' => $beforeSlug,
+				'proposed_value' => $proposedSlug,
+				'reason' => (string)$review['reason_code'],
+				'provenance' => (string)$review['evidence_source'],
+				// A conflicting suggestion is emitted deselected for human review; a confident change pre-selected.
+				'selected' => ($band === 'confident' && $isChanged) ? 1 : 0
+			];
+			if ($band === 'conflict')
+			{
+				$conflictItems[] = $item;
+			}
+			else
+			{
+				$confidentItems[] = $item;
+			}
+		}
+
+		// Review order (DATA-02 / Q7): conflicts first, then low-confidence, then confident.
+		$items = array_merge($conflictItems, $lowItems, $confidentItems);
+
+		$included = count($items);
+		$counts = [
+			'included' => $included,
+			'excluded' => $excluded,
+			'skipped' => $skipped,
+			'conflicted' => 0,
+			'changed' => $changed,
+			'unchanged' => $unchanged
+		];
+
+		$checksum = $this->ChecksumForPlan(self::OPERATION_TYPE, $rulesetVersion, $items);
+		$scopeJson = $this->CanonicalJson([
+			'selector' => 'in_scope_classification_review',
+			'object_type' => 'product',
+			'max_objects' => self::MAX_SCOPE_OBJECTS,
+			'examined' => count($productIds)
+		]);
+		$moduleVersion = $this->ModuleVersion();
+
+		$startedTransaction = !$this->Db->inTransaction();
+		if ($startedTransaction)
+		{
+			$this->Db->beginTransaction();
+		}
+		try
+		{
+			$planStatement = $this->Db->prepare('INSERT INTO grocy_ai_bulk_plans (created_by, ruleset_version, operation_type, scope_json, counts_json, checksum, status, module_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+			$planStatement->execute([$actor, $rulesetVersion, self::OPERATION_TYPE, $scopeJson, $this->CanonicalJson($counts), $checksum, 'draft', $moduleVersion]);
+			$planId = (int)$this->Db->lastInsertId();
+
+			$itemStatement = $this->Db->prepare('INSERT INTO grocy_ai_bulk_plan_items (plan_id, seq, object_type, object_id, operation, before_image_json, proposed_value_json, reason, provenance, selected, outcome, applied_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)');
+			$seq = 0;
+			foreach ($items as $item)
+			{
+				$itemStatement->execute([
+					$planId,
+					$seq++,
+					$item['object_type'],
+					$item['object_id'],
+					$item['operation'],
+					$this->CanonicalJson(['leaf_slug' => $item['before_image']]),
+					$this->CanonicalJson(['leaf_slug' => $item['proposed_value']]),
+					$item['reason'],
+					$item['provenance'],
+					$item['selected'],
+					'pending'
+				]);
+			}
+
+			if ($startedTransaction)
+			{
+				$this->Db->commit();
+			}
+		}
+		catch (\Throwable $exception)
+		{
+			if ($startedTransaction && $this->Db->inTransaction())
+			{
+				$this->Db->rollBack();
+			}
+			throw $exception;
+		}
+
+		$header = $this->Db->prepare('SELECT * FROM grocy_ai_bulk_plans WHERE id = ?');
+		$header->execute([$planId]);
+		return $header->fetch(PDO::FETCH_ASSOC);
+	}
+
+	/**
 	 * The closed, server-side typed-operation registry (D-05/D-06). Its only members are
 	 * `assign_taxonomy_leaf` and `set_unclassified`; each delegates to the shipped
 	 * `GrocyAiTaxonomyService::AssignProductTaxonomy` write with a fixed assignment key set. It is not

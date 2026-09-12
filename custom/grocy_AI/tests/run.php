@@ -1317,6 +1317,11 @@ if (is_file($groupSuggestionTestFile))
 	runGroupSuggestionSuite();
 }
 
+if (function_exists('runTaxonomyClassificationReview'))
+{
+	runTaxonomyClassificationReview();
+}
+
 if ($failures > 0)
 {
 	fwrite(STDERR, "{$failures} of {$tests} checks failed\n");
