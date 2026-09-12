@@ -1310,6 +1310,13 @@ if (is_file($inventoryScopeTestFile))
 	runInventoryScopeSuite();
 }
 
+$groupSuggestionTestFile = __DIR__ . '/group_suggestion.php';
+if (is_file($groupSuggestionTestFile))
+{
+	require_once $groupSuggestionTestFile;
+	runGroupSuggestionSuite();
+}
+
 if ($failures > 0)
 {
 	fwrite(STDERR, "{$failures} of {$tests} checks failed\n");

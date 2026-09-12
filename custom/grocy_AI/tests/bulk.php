@@ -7,7 +7,7 @@ use GrocyAI\Services\GrocyAiBulkMigration;
 use GrocyAI\Services\GrocyAiTaxonomyMigration;
 use GrocyAI\Services\GrocyAiTaxonomyService;
 
-foreach (['GrocyAiInventoryScope', 'GrocyAiBulkMigration', 'GrocyAiBulkService'] as $bulkClassFile)
+foreach (['GrocyAiInventoryScope', 'GrocyAiGroupSuggestionService', 'GrocyAiBulkMigration', 'GrocyAiBulkService'] as $bulkClassFile)
 {
 	$bulkClassPath = __DIR__ . '/../src/' . $bulkClassFile . '.php';
 	if (is_file($bulkClassPath))

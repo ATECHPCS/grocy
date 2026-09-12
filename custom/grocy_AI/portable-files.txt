@@ -12,6 +12,7 @@ custom/grocy_AI/src/GrocyAiConversionController.php
 custom/grocy_AI/src/GrocyAiConversionMigration.php
 custom/grocy_AI/src/GrocyAiConversionService.php
 custom/grocy_AI/src/GrocyAiDiagnostic.php
+custom/grocy_AI/src/GrocyAiGroupSuggestionService.php
 custom/grocy_AI/src/GrocyAiGtin.php
 custom/grocy_AI/src/GrocyAiInventoryScope.php
 custom/grocy_AI/src/GrocyAiService.php

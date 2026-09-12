@@ -19,6 +19,7 @@ require_once __DIR__ . '/src/GrocyAiTaxonomyService.php';
 require_once __DIR__ . '/src/GrocyAiConversionMigration.php';
 require_once __DIR__ . '/src/GrocyAiConversionService.php';
 require_once __DIR__ . '/src/GrocyAiBulkMigration.php';
+require_once __DIR__ . '/src/GrocyAiGroupSuggestionService.php';
 require_once __DIR__ . '/src/GrocyAiBulkService.php';
 require_once __DIR__ . '/src/GrocyAiCaptureMigration.php';
 require_once __DIR__ . '/src/GrocyAiCaptureService.php';

@@ -28,6 +28,12 @@ class GrocyAiBulkService
 	public const OPERATION_TYPE = 'taxonomy_assignment';
 
 	/**
+	 * The plan operation type for the product-group suggestion pass (06-04). Distinct from the taxonomy
+	 * `OPERATION_TYPE` so a reviewer can tell the two reviewed passes apart in the plan header and export.
+	 */
+	public const GROUP_OPERATION_TYPE = 'product_group_assignment';
+
+	/**
 	 * The closed, default-deny export field allowlist (D-12/BULK-10). `ExportPlan` emits ONLY these
 	 * per-item fields in EXACTLY this order, in both JSON and CSV. Redaction is default-deny: the
 	 * snapshot is projected field-by-field through this constant, so a future column added to any bulk
@@ -64,6 +70,7 @@ class GrocyAiBulkService
 
 	private PDO $Db;
 	private GrocyAiTaxonomyService $Taxonomy;
+	private ?GrocyAiGroupSuggestionService $GroupSuggestions = null;
 
 	public function __construct(?PDO $pdo = null, bool $bootstrap = true)
 	{
@@ -246,6 +253,139 @@ class GrocyAiBulkService
 	}
 
 	/**
+	 * Produce a bounded, zero-native-mutation product-group suggestion plan (06-04) and persist its
+	 * header and immutable items, exactly mirroring `GeneratePlan`'s spine (D-01/D-02/D-03): it writes
+	 * only the two module bulk tables, seals a deterministic checksum over the immutable content, and
+	 * produces one item per ungrouped in-scope product that maps to an existing group.
+	 *
+	 * Scope: the single owner (`GrocyAiInventoryScope`, via `IsProductInScope`) holds out inactive /
+	 * excluded-group / override-excluded products (counted `excluded`). An already-grouped in-scope
+	 * product needs no suggestion; an ungrouped in-scope product with no confident/ambiguous match to an
+	 * existing group produces no item (both counted `skipped`). Each emitted item's before-image is the
+	 * product's prior group id (always null here — the pass targets the ungrouped set) and its proposed
+	 * value is the suggested EXISTING group id; only confident (`high`) suggestions are pre-selected.
+	 *
+	 * @param array{actor?: string} $scope
+	 * @return array<string, mixed> the closed plan header DTO
+	 */
+	public function GenerateGroupPlan(array $scope = []): array
+	{
+		$rulesetVersion = GrocyAiTaxonomyMigration::VERSION;
+		$actor = is_string($scope['actor'] ?? null) ? (string)$scope['actor'] : null;
+
+		$groupService = $this->GroupSuggestions();
+		$productIds = $this->Db->query('SELECT id FROM products ORDER BY id LIMIT ' . self::MAX_SCOPE_OBJECTS)->fetchAll(PDO::FETCH_COLUMN);
+
+		$items = [];
+		$excluded = 0;
+		$skipped = 0;
+		$changed = 0;
+		foreach ($productIds as $productId)
+		{
+			$productId = (int)$productId;
+			if (!$this->Taxonomy->IsProductInScope($productId))
+			{
+				$excluded++;
+				continue;
+			}
+			// Grouping targets only the ungrouped set; an already-grouped product is a no-op skip here.
+			if ($groupService->CurrentProductGroupId($productId) !== null)
+			{
+				$skipped++;
+				continue;
+			}
+			$suggestion = $groupService->Suggest($productId);
+			if ($suggestion === null)
+			{
+				$skipped++;
+				continue;
+			}
+
+			$confident = (string)$suggestion['confidence'] === GrocyAiGroupSuggestionService::CONFIDENCE_HIGH;
+			$changed++;
+			$items[] = [
+				'object_type' => 'product',
+				'object_id' => $productId,
+				'operation' => 'suggest_product_group',
+				// The written field is the native product group id; ungrouped before, an existing id proposed.
+				'before_image' => null,
+				'proposed_value' => (int)$suggestion['product_group_id'],
+				'reason' => (string)$suggestion['reason'],
+				'provenance' => (string)$suggestion['provenance'],
+				// Default selection: pre-select confident suggestions; low-confidence starts deselected.
+				'selected' => $confident ? 1 : 0
+			];
+		}
+
+		$included = count($items);
+		$counts = [
+			'included' => $included,
+			'excluded' => $excluded,
+			'skipped' => $skipped,
+			'conflicted' => 0,
+			'changed' => $changed,
+			'unchanged' => 0
+		];
+
+		$checksum = $this->ChecksumForPlan(self::GROUP_OPERATION_TYPE, $rulesetVersion, $items);
+		$scopeJson = $this->CanonicalJson([
+			'selector' => 'ungrouped_in_scope',
+			'object_type' => 'product',
+			'max_objects' => self::MAX_SCOPE_OBJECTS,
+			'examined' => count($productIds)
+		]);
+		$moduleVersion = $this->ModuleVersion();
+
+		$startedTransaction = !$this->Db->inTransaction();
+		if ($startedTransaction)
+		{
+			$this->Db->beginTransaction();
+		}
+		try
+		{
+			$planStatement = $this->Db->prepare('INSERT INTO grocy_ai_bulk_plans (created_by, ruleset_version, operation_type, scope_json, counts_json, checksum, status, module_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+			$planStatement->execute([$actor, $rulesetVersion, self::GROUP_OPERATION_TYPE, $scopeJson, $this->CanonicalJson($counts), $checksum, 'draft', $moduleVersion]);
+			$planId = (int)$this->Db->lastInsertId();
+
+			$itemStatement = $this->Db->prepare('INSERT INTO grocy_ai_bulk_plan_items (plan_id, seq, object_type, object_id, operation, before_image_json, proposed_value_json, reason, provenance, selected, outcome, applied_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)');
+			$seq = 0;
+			foreach ($items as $item)
+			{
+				$itemStatement->execute([
+					$planId,
+					$seq++,
+					$item['object_type'],
+					$item['object_id'],
+					$item['operation'],
+					$this->CanonicalJson(['product_group_id' => $item['before_image']]),
+					$this->CanonicalJson(['product_group_id' => $item['proposed_value']]),
+					$item['reason'],
+					$item['provenance'],
+					$item['selected'],
+					'pending'
+				]);
+			}
+
+			if ($startedTransaction)
+			{
+				$this->Db->commit();
+			}
+		}
+		catch (\Throwable $exception)
+		{
+			if ($startedTransaction && $this->Db->inTransaction())
+			{
+				$this->Db->rollBack();
+			}
+			throw $exception;
+		}
+
+		$header = $this->Db->prepare('SELECT * FROM grocy_ai_bulk_plans WHERE id = ?');
+		$header->execute([$planId]);
+		return $header->fetch(PDO::FETCH_ASSOC);
+	}
+
+	/**
 	 * The closed, server-side typed-operation registry (D-05/D-06). Its only members are
 	 * `assign_taxonomy_leaf` and `set_unclassified`; each delegates to the shipped
 	 * `GrocyAiTaxonomyService::AssignProductTaxonomy` write with a fixed assignment key set. It is not
@@ -285,6 +425,19 @@ class GrocyAiBulkService
 	 */
 	public function ResolveOperation(string $operation): array
 	{
+		// The product-group operation (06-04) resolves to the group service's audited native write, which
+		// sets ONLY products.product_group_id and joins the caller's outer transaction. It is dispatched
+		// here rather than through the closed taxonomy `RegisteredOperations()` map (whose every member is
+		// pinned to the AssignProductTaxonomy delegate) so the taxonomy registry contract stays byte-for-
+		// byte unchanged; the proposed value it receives is the suggested existing group id.
+		if ($operation === 'suggest_product_group')
+		{
+			$groupService = $this->GroupSuggestions();
+			$delegate = static fn(int $objectId, mixed $proposedValue): array =>
+				$groupService->AssignProductGroup($objectId, $proposedValue === null ? null : (int)$proposedValue, true);
+			return ['operation' => $operation, 'delegate' => $delegate, 'blockers' => []];
+		}
+
 		$registry = $this->RegisteredOperations();
 		if (!isset($registry[$operation]))
 		{
@@ -519,6 +672,7 @@ class GrocyAiBulkService
 		$before = json_decode((string)$row['before_image_json'], true, 512, JSON_THROW_ON_ERROR);
 		$proposed = json_decode((string)$row['proposed_value_json'], true, 512, JSON_THROW_ON_ERROR);
 		$objectId = (int)$row['object_id'];
+		$payloadKey = $this->OperationPayloadKey((string)$row['operation']);
 
 		return [
 			'plan_checksum' => $checksum,
@@ -526,8 +680,8 @@ class GrocyAiBulkService
 			'object_id' => $objectId,
 			'product_name' => $productNames[$objectId] ?? null,
 			'operation' => (string)$row['operation'],
-			'before_value' => is_array($before) ? ($before['leaf_slug'] ?? null) : null,
-			'proposed_or_after_value' => is_array($proposed) ? ($proposed['leaf_slug'] ?? null) : null,
+			'before_value' => is_array($before) ? ($before[$payloadKey] ?? null) : null,
+			'proposed_or_after_value' => is_array($proposed) ? ($proposed[$payloadKey] ?? null) : null,
 			'reason' => (string)$row['reason'],
 			'provenance' => (string)$row['provenance'],
 			'ruleset_version' => $rulesetVersion,
@@ -707,9 +861,9 @@ class GrocyAiBulkService
 			$currentValue = null;
 			try
 			{
-				// The immutable written-field before-image (the leaf slug / null). A malformed or absent
-				// image fails closed to a conflict rather than being assumed to match reality.
-				$beforeValue = $this->WrittenBeforeImage((string)$row['before_image_json']);
+				// The immutable written-field before-image (the leaf slug / group id / null). A malformed
+				// or absent image fails closed to a conflict rather than being assumed to match reality.
+				$beforeValue = $this->WrittenBeforeImage((string)$row['before_image_json'], $this->OperationPayloadKey((string)$row['operation']));
 				// Re-read the CURRENT written field through the shipped public read path — never the stored plan.
 				$currentValue = $this->CurrentWrittenValue((string)$row['operation'], (string)$row['object_type'], (int)$row['object_id']);
 				// Exact, normalized comparison over the written field ONLY.
@@ -896,12 +1050,16 @@ class GrocyAiBulkService
 				{
 					throw new \RuntimeException('unknown_operation');
 				}
+				// Generic dispatch: decode the reviewed proposed value under this operation's declared
+				// payload key and hand it to the registered delegate. For the taxonomy operations the key
+				// is `leaf_slug`, so the value passed is exactly the leaf slug (or null) as before.
 				$proposed = json_decode((string)$row['proposed_value_json'], true, 512, JSON_THROW_ON_ERROR);
-				$leafSlug = is_array($proposed) && isset($proposed['leaf_slug']) && is_string($proposed['leaf_slug']) ? (string)$proposed['leaf_slug'] : null;
+				$payloadKey = $this->OperationPayloadKey((string)$row['operation']);
+				$proposedValue = is_array($proposed) ? ($proposed[$payloadKey] ?? null) : null;
 
 				// The delegate joins THIS outer transaction ($joinExistingTransaction = true) and performs
 				// only the native/module upsert — no network, no own BEGIN/COMMIT, no per-item commit.
-				($resolution['delegate'])((int)$row['object_id'], $leafSlug);
+				($resolution['delegate'])((int)$row['object_id'], $proposedValue);
 				$markApplied->execute([$appliedAt, $planId, $seq]);
 				// Append the immutable audit row for this applied item: before = the reviewed before-image,
 				// after = the value actually written (the reviewed proposed value). Same transaction, so a
@@ -962,12 +1120,13 @@ class GrocyAiBulkService
 		{
 			$before = json_decode((string)$row['before_image_json'], true, 512, JSON_THROW_ON_ERROR);
 			$proposed = json_decode((string)$row['proposed_value_json'], true, 512, JSON_THROW_ON_ERROR);
+			$payloadKey = $this->OperationPayloadKey((string)$row['operation']);
 			$items[] = [
 				'object_type' => (string)$row['object_type'],
 				'object_id' => (int)$row['object_id'],
 				'operation' => (string)$row['operation'],
-				'before_image' => is_array($before) ? ($before['leaf_slug'] ?? null) : null,
-				'proposed_value' => is_array($proposed) ? ($proposed['leaf_slug'] ?? null) : null
+				'before_image' => is_array($before) ? ($before[$payloadKey] ?? null) : null,
+				'proposed_value' => is_array($proposed) ? ($proposed[$payloadKey] ?? null) : null
 			];
 		}
 
@@ -1137,8 +1296,11 @@ class GrocyAiBulkService
 					continue;
 				}
 
-				$afterJson = $this->CanonicalJson(['leaf_slug' => $candidate['after_image']]);
-				$beforeJson = $this->CanonicalJson(['leaf_slug' => $candidate['before_image']]);
+				// The audited images use this operation's payload key, so taxonomy rows stay {"leaf_slug":…}
+				// byte-for-byte while a group row records {"product_group_id":…}.
+				$payloadKey = (string)$candidate['payload_key'];
+				$afterJson = $this->CanonicalJson([$payloadKey => $candidate['after_image']]);
+				$beforeJson = $this->CanonicalJson([$payloadKey => $candidate['before_image']]);
 
 				// Optimistic concurrency: the live value MUST still equal the audited after-image. A field
 				// hand-edited after the original apply has drifted, so it is refused and never overwritten.
@@ -1205,24 +1367,30 @@ class GrocyAiBulkService
 	 */
 	private function RollbackAppliedLedger(int $planId): array
 	{
-		$statement = $this->Db->prepare('SELECT audit.plan_item_id, audit.before_json, audit.after_json, item.object_type, item.object_id, item.outcome FROM grocy_ai_bulk_audit AS audit INNER JOIN grocy_ai_bulk_plan_items AS item ON item.id = audit.plan_item_id WHERE audit.plan_id = ? AND audit.plan_item_id IS NOT NULL AND audit.event = ? AND audit.outcome = ? ORDER BY audit.plan_item_id');
+		$statement = $this->Db->prepare('SELECT audit.plan_item_id, audit.before_json, audit.after_json, item.object_type, item.object_id, item.operation, item.outcome FROM grocy_ai_bulk_audit AS audit INNER JOIN grocy_ai_bulk_plan_items AS item ON item.id = audit.plan_item_id WHERE audit.plan_id = ? AND audit.plan_item_id IS NOT NULL AND audit.event = ? AND audit.outcome = ? ORDER BY audit.plan_item_id');
 		$statement->execute([$planId, self::AUDIT_EVENT_APPLIED, 'applied']);
 
 		$candidates = [];
 		foreach ($statement->fetchAll(PDO::FETCH_ASSOC) as $row)
 		{
 			// Both images are the closed written-field shape captured at apply; a malformed image fails closed.
-			$beforeImage = $this->WrittenBeforeImage((string)$row['before_json']);
-			$afterImage = $this->WrittenBeforeImage((string)$row['after_json']);
+			$operation = (string)$row['operation'];
+			$payloadKey = $this->OperationPayloadKey($operation);
+			$beforeImage = $this->WrittenBeforeImage((string)$row['before_json'], $payloadKey);
+			$afterImage = $this->WrittenBeforeImage((string)$row['after_json'], $payloadKey);
 			$candidates[] = [
 				'plan_item_id' => (int)$row['plan_item_id'],
 				'object_type' => (string)$row['object_type'],
 				'object_id' => (int)$row['object_id'],
+				'payload_key' => $payloadKey,
 				'before_image' => $beforeImage,
 				'after_image' => $afterImage,
-				// The inverse restores the before-image: a prior leaf via assign_taxonomy_leaf, a prior
-				// unclassified state via set_unclassified.
-				'inverse_operation' => $beforeImage === null ? 'set_unclassified' : 'assign_taxonomy_leaf',
+				// The inverse restores the before-image. For taxonomy: a prior leaf via assign_taxonomy_leaf,
+				// a prior unclassified state via set_unclassified. For grouping the same operation restores
+				// the prior group id (including null, the ungrouped state).
+				'inverse_operation' => $operation === 'suggest_product_group'
+					? 'suggest_product_group'
+					: ($beforeImage === null ? 'set_unclassified' : 'assign_taxonomy_leaf'),
 				'current_outcome' => (string)$row['outcome']
 			];
 		}
@@ -1275,36 +1443,47 @@ class GrocyAiBulkService
 	}
 
 	/**
-	 * Decode a stored item's immutable written-field before-image to the leaf slug (`null` when the item
-	 * was unclassified at review). Fails closed on any malformed/absent image so the stored plan can never
-	 * be trusted as a self-certifying "match".
+	 * Decode a stored item's immutable written-field before-image to its single written value under the
+	 * operation's payload key (the leaf slug for taxonomy, the product group id for grouping; `null` when
+	 * the item had no value at review). Fails closed on any malformed/absent image so the stored plan can
+	 * never be trusted as a self-certifying "match". The value is a string (taxonomy) or int (group id).
 	 */
-	private function WrittenBeforeImage(string $beforeImageJson): ?string
+	private function WrittenBeforeImage(string $beforeImageJson, string $payloadKey = 'leaf_slug'): mixed
 	{
 		$decoded = json_decode($beforeImageJson, true, 512, JSON_THROW_ON_ERROR);
-		if (!is_array($decoded) || array_keys($decoded) !== ['leaf_slug'])
+		if (!is_array($decoded) || array_keys($decoded) !== [$payloadKey])
 		{
 			throw new \RuntimeException('before_image_malformed');
 		}
-		$slug = $decoded['leaf_slug'];
-		if ($slug !== null && !is_string($slug))
+		$value = $decoded[$payloadKey];
+		if ($value !== null && !is_string($value) && !is_int($value))
 		{
 			throw new \RuntimeException('before_image_malformed');
 		}
 
-		return $slug;
+		return $value;
 	}
 
 	/**
-	 * Re-read the current WRITTEN field for a named operation through the shipped public read path. Both
-	 * closed taxonomy operations write the product's classification leaf, so the written value is the
-	 * current leaf slug (`null` when unclassified) via `ReadProductTaxonomy['current_leaf']`. Fails closed
-	 * for an operation outside the closed registry or an unreadable object.
+	 * Re-read the current WRITTEN field for a named operation through the shipped read path. The two closed
+	 * taxonomy operations write the product's classification leaf, so the value is the current leaf slug
+	 * (`null` when unclassified) via `ReadProductTaxonomy['current_leaf']`; the group operation writes the
+	 * native product group id, re-read via the group service. Fails closed for an operation outside the
+	 * dispatchable set or an unreadable object.
 	 */
-	private function CurrentWrittenValue(string $operation, string $objectType, int $objectId): ?string
+	private function CurrentWrittenValue(string $operation, string $objectType, int $objectId): mixed
 	{
+		if ($objectType !== 'product')
+		{
+			throw new \RuntimeException('unreadable_current_value');
+		}
+		if ($operation === 'suggest_product_group')
+		{
+			return $this->GroupSuggestions()->CurrentProductGroupId($objectId);
+		}
+
 		$registry = $this->RegisteredOperations();
-		if (!isset($registry[$operation]) || $objectType !== 'product')
+		if (!isset($registry[$operation]))
 		{
 			throw new \RuntimeException('unreadable_current_value');
 		}
@@ -1354,6 +1533,24 @@ class GrocyAiBulkService
 			'selected' => (int)$row['selected'] === 1,
 			'outcome' => (string)$row['outcome']
 		];
+	}
+
+	/**
+	 * The single key under which a dispatchable operation stores its one written field in the before/
+	 * proposed images and the audit before/after JSON. The two closed taxonomy operations use `leaf_slug`
+	 * (so their stored bytes, checksum content, and audit JSON are unchanged by the generic dispatch); the
+	 * group operation uses `product_group_id`. Any other operation falls back to `leaf_slug` and still
+	 * fails closed at resolve/read time, so this never widens the set of operations that can be applied.
+	 */
+	private function OperationPayloadKey(string $operation): string
+	{
+		return $operation === 'suggest_product_group' ? 'product_group_id' : 'leaf_slug';
+	}
+
+	/** The lazily-constructed product-group suggestion service, bound to this engine's connection. */
+	private function GroupSuggestions(): GrocyAiGroupSuggestionService
+	{
+		return $this->GroupSuggestions ??= new GrocyAiGroupSuggestionService($this->Db);
 	}
 
 	private function ModuleVersion(): string
