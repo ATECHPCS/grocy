@@ -1,0 +1,18 @@
+{
+  "_comment": "Copy this to device-profile.json and fill with the ACTUAL phone/session values. All strings must be safe: no GTIN/UPC, no URLs, no '://', no 8+ digit runs, no tokens. Versions come from the Copy-diagnostic report's `versions` block. Delete this _comment key before use.",
+  "device_model": "Pixel 7",
+  "os_name": "Android",
+  "os_version": "15",
+  "browser_name": "Chrome",
+  "browser_version": "141.0",
+  "viewport_width_px": 412,
+  "viewport_height_px": 915,
+  "orientation": "portrait",
+  "network_route": "wifi_lan",
+  "network_condition": "normal",
+  "server_instance": "household_lan",
+  "grocy_version": "4.6.0",
+  "module_version": "1.0.0",
+  "companion_version": "0.1.0",
+  "contract_version": "1"
+}
