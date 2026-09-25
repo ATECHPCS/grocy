@@ -25,6 +25,7 @@ The small upstream integration surface is:
 - `views/productform.blade.php`: conditional product-enrichment panel and assets, with its cache literal synchronized to the portable module token.
 - `public/viewjs/productform.js`: one post-Save continuation invokes the transient barcode attachment only after Grocy establishes a trusted product ID and before redirect.
 - `migrations/0256.php`: transactional checksum-valid canonical GTIN uniqueness; collisions block without deleting or reassigning household data.
+- `services/StockService.php`: `CompactStockEntries()` joins a caller-owned transaction when purchase capture calls native `AddProduct()` inside its `BEGIN IMMEDIATE` batch. Standalone Grocy calls still own and commit their compaction transaction. The focused `capture_native_transaction.php` regression exercises both paths and caller rollback.
 
 Phase 4 adds one feature-gated native conversion safety boundary in `controllers/Api/GenericEntityApiController.php`: line 9 imports the module validator; line 54 validates filtered AddObject input before `createRow()->save()`; line 175 validates filtered EditObject input with the actual object ID before `row->update()`; and lines 329-367 contain the `quantity_unit_conversions`-only fail-closed helper. Product-scoped package/count and measured-density requests continue through Grocy's normal native save and cache triggers. Reusable or invalid requests return only bounded errors before native row/cache mutation; this hook never projects or activates reusable rules.
 

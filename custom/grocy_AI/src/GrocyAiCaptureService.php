@@ -272,7 +272,8 @@ class GrocyAiCaptureService
 	 * Commit a reviewed trip to real Grocy stock — the ONLY module path that writes stock (CAP-05..CAP-08).
 	 *
 	 * Mirrors `GrocyAiBulkService::ApplyPlan`: the recomputed checksum is `hash_equals`-checked against the
-	 * caller's confirmed checksum and refuses BEFORE any write; the write set is taken under one raw
+	 * caller's confirmed checksum before and after acquiring the write lock, refusing BEFORE any write;
+	 * the write set is taken under one raw
 	 * `BEGIN IMMEDIATE` with a single `COMMIT` (or `ROLLBACK` on any `\Throwable`), never PDO's
 	 * begin/commit. Only selected known lines with a null `applied_at` are written; each is re-resolved
 	 * in-lock (a changed owner is recorded `conflict` and skipped), its stock amount is
@@ -306,6 +307,15 @@ class GrocyAiCaptureService
 		$this->Db->exec('BEGIN IMMEDIATE');
 		try
 		{
+			$lockedTrip = $this->FetchTrip($tripId);
+			$lockedStatus = (string)$lockedTrip['status'];
+			$lockedChecksum = $this->ChecksumForTrip($tripId);
+			if ($lockedStatus === 'committed' || !hash_equals($lockedChecksum, $confirmedChecksum))
+			{
+				$this->Db->exec('ROLLBACK');
+				return $this->CommitResult($tripId, $lockedStatus, $lockedTrip['transaction_id'] === null ? null : (string)$lockedTrip['transaction_id'], $lockedChecksum, $lockedStatus === 'committed' ? 'already_committed' : 'checksum_mismatch', 0, 0, 0);
+			}
+
 			$appliedAt = (string)$this->Db->query('SELECT CURRENT_TIMESTAMP')->fetchColumn();
 			$auditInsert = $this->Db->prepare('INSERT INTO grocy_ai_capture_audit (trip_id, line_id, actor, action, before_json, after_json, transaction_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
 			$markConflict = $this->Db->prepare("UPDATE grocy_ai_capture_lines SET status = 'conflict', outcome = 'conflict', updated_at = ? WHERE id = ?");

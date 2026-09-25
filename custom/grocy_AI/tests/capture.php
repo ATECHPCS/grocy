@@ -102,9 +102,25 @@ function captureMissing(array $methods): array
  * forbidden to write (`products`, `product_barcodes`, `stock`, `stock_log`) are created here; the module
  * capture tables are created by the migration under test.
  */
-function captureFixturePdo(): PDO
+final class CaptureBeginRacePdo extends PDO
 {
-	$pdo = new PDO('sqlite::memory:');
+	public ?Closure $beforeBegin = null;
+
+	public function exec(string $statement): int|false
+	{
+		if ($statement === 'BEGIN IMMEDIATE' && $this->beforeBegin !== null)
+		{
+			$callback = $this->beforeBegin;
+			$this->beforeBegin = null;
+			$callback($this);
+		}
+		return parent::exec($statement);
+	}
+}
+
+function captureFixturePdo(?PDO $pdo = null): PDO
+{
+	$pdo ??= new PDO('sqlite::memory:');
 	$pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 	$pdo->exec('CREATE TABLE products (id INTEGER NOT NULL PRIMARY KEY, name TEXT NOT NULL, qu_factor_purchase_to_stock REAL NOT NULL DEFAULT 1)');
 	$pdo->exec("INSERT INTO products (id, name, qu_factor_purchase_to_stock) VALUES (101, 'Fixture product A', 1), (102, 'Fixture product B', 6), (103, 'Fixture product C', 1)");
@@ -436,6 +452,18 @@ function runCaptureInvariants(): never
 	// Q12 checksum gate: a stale/wrong confirmed checksum refuses before any write.
 	$refused = $service->CommitTrip($tripId, 'capture-actor', str_repeat('0', 64));
 	captureAssert($refused['outcome'] === 'checksum_mismatch' && (int)$refused['applied'] === 0 && $fake->calls === [], CAPTURE_INVARIANTS_MARKER, 'A checksum mismatch did not refuse the commit before any write');
+	$racePdo = captureFixturePdo(new CaptureBeginRacePdo('sqlite::memory:'));
+	$raceStock = new CaptureFakeStockService();
+	$raceService = new GrocyAiCaptureService($racePdo, true, $raceStock);
+	$raceTripId = (int)$raceService->StartTrip('capture-actor')['id'];
+	$raceService->ScanIntoTrip($raceTripId, '012345678905', 'capture-actor');
+	$raceChecksum = $raceService->ChecksumForTrip($raceTripId);
+	$racePdo->beforeBegin = static function (PDO $connection): void
+	{
+		$connection->exec('UPDATE grocy_ai_capture_lines SET quantity = 9');
+	};
+	$raceResult = $raceService->CommitTrip($raceTripId, 'capture-actor', $raceChecksum);
+	captureAssert($raceResult['outcome'] === 'checksum_mismatch' && $raceStock->calls === [] && !$racePdo->inTransaction(), CAPTURE_INVARIANTS_MARKER, 'A reviewed line changed before the write lock and still reached native stock');
 
 	// Partial commit: the three selected known lines post as one native purchase batch; the selected
 	// unknown line is not written and remains, so the trip stays reviewing (Q9).
