@@ -455,6 +455,28 @@
 						</li>
 					</ul>
 				</li>
+				@if(GROCY_FEATURE_FLAG_GROCY_AI)
+				<li class="nav-item nav-item-sidebar permission-MASTER_DATA_EDIT @if($viewName == 'grocyai_bulkreview') active-page @endif"
+					data-toggle="tooltip"
+					data-placement="right"
+					title="{{ $__t('Bulk maintenance') }}">
+					<a class="nav-link discrete-link"
+						href="{{ $U('/grocyai/bulkreview') }}">
+						<i class="fa-solid fa-fw fa-list-check"></i>
+						<span class="nav-link-text">{{ $__t('Bulk maintenance') }}</span>
+					</a>
+				</li>
+				<li class="nav-item nav-item-sidebar permission-STOCK_PURCHASE @if($viewName == 'grocyai_capture') active-page @endif"
+					data-toggle="tooltip"
+					data-placement="right"
+					title="{{ $__t('Purchase capture') }}">
+					<a class="nav-link discrete-link"
+						href="{{ $U('/grocyai/capture') }}">
+						<i class="fa-solid fa-fw fa-cart-shopping"></i>
+						<span class="nav-link-text">{{ $__t('Purchase capture') }}</span>
+					</a>
+				</li>
+				@endif
 			</ul>
 
 			<ul class="navbar-nav sidenav-toggler">

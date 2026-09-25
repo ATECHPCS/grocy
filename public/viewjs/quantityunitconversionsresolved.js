@@ -8,6 +8,22 @@
 $('#qu-conversions-resolved-table tbody').removeClass("d-none");
 quConversionsResolvedTable.columns.adjust().draw();
 
+// grocy_AI: read-only source/status provenance. Attached only after native DataTables
+// initialization so the existing quantity-unit filter and colReorder.transpose stay authoritative.
+if (window.GrocyAIConversionExplanations)
+{
+	window.GrocyAIConversionExplanations.attachResolvedProvenance(document, {
+		onRowPainted: function(row)
+		{
+			quConversionsResolvedTable.row(row).invalidate('dom');
+		},
+		onComplete: function()
+		{
+			quConversionsResolvedTable.draw(false);
+		}
+	});
+}
+
 $("#quantity-unit-filter").on("change", function()
 {
 	var value = $("#quantity-unit-filter option:selected").text();

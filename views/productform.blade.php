@@ -4,7 +4,7 @@
 
 @if(GROCY_FEATURE_FLAG_GROCY_AI)
 @php
-$grocyAiAssetVersion = '2.4.2';
+$grocyAiAssetVersion = '2.5.0';
 @endphp
 @push('pageStyles')
 <link rel="stylesheet"
@@ -13,6 +13,7 @@ $grocyAiAssetVersion = '2.4.2';
 @push('pageScripts')
 <script src="{{ $U('/custom/grocy_AI/product-enrichment.js?v=', true) }}{{ $grocyAiAssetVersion }}"></script>
 <script src="{{ $U('/custom/grocy_AI/product-taxonomy.js?v=', true) }}{{ $grocyAiAssetVersion }}"></script>
+<script src="{{ $U('/custom/grocy_AI/conversion-explanations.js?v=', true) }}{{ $grocyAiAssetVersion }}"></script>
 @endpush
 @endif
 
@@ -870,6 +871,33 @@ $grocyAiAssetVersion = '2.4.2';
 					</div>
 					@endif
 				</div>
+
+				@if(GROCY_FEATURE_FLAG_GROCY_AI && $mode == 'edit')
+				<div class="grocy-ai-conversion-status permission-MASTER_DATA_EDIT"
+					id="grocy-ai-product-conversion-status"
+					data-product-id="{{ $product->id }}"
+					data-from-unit-key="cup"
+					data-to-unit-key="g"
+					data-form-revision="product-{{ $product->id }}-{{ $product->row_created_timestamp }}">
+					<h5 class="grocy-ai-conversion-heading">
+						{{ $__t('Reusable conversion status') }}
+						<small class="text-muted">1 cup &rarr; g</small>
+					</h5>
+					<div class="grocy-ai-conversion-summary"
+						role="status"
+						aria-live="polite"
+						data-grocy-ai-conversion-summary></div>
+					<span class="grocy-ai-conversion-badge"
+						data-grocy-ai-conversion-badge></span>
+					<details class="grocy-ai-conversion-disclosure"
+						data-grocy-ai-conversion-disclosure
+						hidden>
+						<summary>{{ $__t('Show conversion details') }}</summary>
+						<dl class="grocy-ai-conversion-details"
+							data-grocy-ai-conversion-details></dl>
+					</details>
+				</div>
+				@endif
 
 				<table id="qu-conversions-table-products"
 					class="table table-sm table-striped nowrap w-100">

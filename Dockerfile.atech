@@ -6,9 +6,20 @@ FROM lscr.io/linuxserver/grocy:v4.6.0-ls334
 COPY config-dist.php routes.php /app/www/
 COPY custom/grocy_AI/version.json /app/www/version.json
 COPY migrations/0256.php /app/www/migrations/0256.php
+COPY controllers/GenericEntityApiController.php /app/www/controllers/GenericEntityApiController.php
+COPY services/StockService.php /app/www/services/StockService.php
 COPY public/viewjs/productform.js /app/www/public/viewjs/productform.js
+COPY public/viewjs/quantityunitconversionform.js /app/www/public/viewjs/quantityunitconversionform.js
+COPY public/viewjs/quantityunitconversionsresolved.js /app/www/public/viewjs/quantityunitconversionsresolved.js
 COPY public/viewjs/components/productamountpicker.js /app/www/public/viewjs/components/productamountpicker.js
 COPY views/productform.blade.php /app/www/views/productform.blade.php
+COPY views/layout/default.blade.php /app/www/views/layout/default.blade.php
+COPY views/quantityunitconversionform.blade.php /app/www/views/quantityunitconversionform.blade.php
+COPY views/quantityunitconversionsresolved.blade.php /app/www/views/quantityunitconversionsresolved.blade.php
+COPY views/grocyai_conversioncoverage.blade.php /app/www/views/grocyai_conversioncoverage.blade.php
+COPY views/grocyai_bulkreview.blade.php /app/www/views/grocyai_bulkreview.blade.php
+COPY views/grocyai_capture.blade.php /app/www/views/grocyai_capture.blade.php
+COPY views/grocyai_capture_review.blade.php /app/www/views/grocyai_capture_review.blade.php
 COPY views/consume.blade.php /app/www/views/consume.blade.php
 COPY views/inventory.blade.php /app/www/views/inventory.blade.php
 COPY views/mealplan.blade.php /app/www/views/mealplan.blade.php

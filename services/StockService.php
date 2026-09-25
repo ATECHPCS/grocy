@@ -1739,7 +1739,13 @@ class StockService extends BaseService
 
 		foreach ($splittedStockEntries as $splittedStockEntry)
 		{
-			$this->getDatabaseService()->GetDbConnectionRaw()->beginTransaction();
+			$connection = DatabaseService::GetInstance()->GetDbConnectionRaw();
+			// Purchase-capture batches own their outer transaction; compaction must not commit it.
+			$ownsTransaction = !$connection->inTransaction();
+			if ($ownsTransaction)
+			{
+				$connection->beginTransaction();
+			}
 			try
 			{
 				$stockIds = explode(',', $splittedStockEntry->stock_id_group);
@@ -1765,12 +1771,18 @@ class StockService extends BaseService
 					}
 				}
 			}
-			catch (\Exception $ex)
+			catch (\Throwable $ex)
 			{
-				$this->getDatabaseService()->GetDbConnectionRaw()->rollback();
+				if ($ownsTransaction)
+				{
+					$connection->rollBack();
+				}
 				throw $ex;
 			}
-			$this->getDatabaseService()->GetDbConnectionRaw()->commit();
+			if ($ownsTransaction)
+			{
+				$connection->commit();
+			}
 		}
 	}
 
