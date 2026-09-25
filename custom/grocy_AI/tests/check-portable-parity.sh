@@ -78,6 +78,7 @@ Documented stable adapters (not byte-portable):
 - custom/grocy_AI/src/GrocyAiApiController.php — stable controller namespace/base class
 - custom/grocy_AI/routes.php — stable middleware/bootstrap syntax
 - views/productform.blade.php — stable product-form integration hook
+- controllers/BaseApiController.php — PSR-compatible stable JSON error response
 - controllers/GenericEntityApiController.php — stable native conversion write guard
 - services/StockService.php — caller-owned purchase transaction support
 - public/viewjs/quantityunitconversionform.js — conversion validation UI
