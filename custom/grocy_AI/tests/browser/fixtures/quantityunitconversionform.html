@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>Quantity unit conversion fixture</title>
+	<style>
+		:root { --primary: #007bff; }
+		* { box-sizing: border-box; }
+		body { margin: 0; padding: 16px; font: 16px/1.5 Roboto, sans-serif; color: #212529; }
+		form { max-width: 560px; }
+		.form-group { margin-bottom: 16px; }
+		label { display: block; margin-bottom: 4px; }
+		input, select { display: block; width: 100%; min-height: 44px; padding: 8px; }
+		.btn { min-height: 44px; padding: 8px 12px; border: 1px solid transparent; border-radius: 4px; }
+		.btn-primary { color: #fff; background: #007bff; }
+		.btn-success { color: #fff; background: #28a745; }
+		.btn:disabled { opacity: .65; }
+		.border { border: 1px solid #dee2e6; }
+		.rounded { border-radius: 4px; }
+		.alert { padding: 16px; border: 1px solid transparent; border-radius: 4px; }
+		.alert-secondary { color: #383d41; background: #e2e3e5; }
+		.alert-info { color: #0c5460; background: #d1ecf1; }
+		.alert-success { color: #155724; background: #d4edda; }
+		.alert-warning { color: #856404; background: #fff3cd; }
+		.alert-danger { color: #721c24; background: #f8d7da; }
+		.d-none { display: none; }
+		#qu-conversion-validation { margin: 16px 0; padding: 16px; }
+		#qu-conversion-validation-heading { margin-top: 0; font-size: 20px; font-weight: 500; }
+		#qu-conversion-validation-metadata { font-size: 14px; overflow-wrap: anywhere; }
+		#validate-quconversion-impact-button { margin-top: 16px; }
+		#validate-quconversion-impact-button:focus,
+		#qu-conversion-validation-heading:focus { outline: 2px solid var(--primary); outline-offset: 2px; }
+		@media (max-width: 575.98px) { #validate-quconversion-impact-button { width: 100%; } }
+	</style>
+</head>
+<body>
+	<form id="quconversion-form" novalidate>
+		<input type="hidden" name="product_id" value="">
+		<div class="form-group">
+			<label for="from_qu_id">Quantity unit from</label>
+			<select class="input-group-qu" id="from_qu_id" name="from_qu_id">
+				<option value=""></option>
+				<option value="1" data-plural-form="pounds">pound</option>
+				<option value="3" data-plural-form="kilograms">kilogram</option>
+				<option value="4" data-plural-form="cups">cup</option>
+				<option value="5" data-plural-form="packages">package</option>
+			</select>
+			<div class="invalid-feedback"></div>
+		</div>
+		<div class="form-group">
+			<label for="to_qu_id">Quantity unit to</label>
+			<select class="input-group-qu" id="to_qu_id" name="to_qu_id">
+				<option value=""></option>
+				<option value="2" data-plural-form="grams">gram</option>
+				<option value="4" data-plural-form="cups">cup</option>
+				<option value="7" data-plural-form="pieces">piece</option>
+			</select>
+			<div class="invalid-feedback"></div>
+		</div>
+		<div class="form-group">
+			<label for="factor">Factor</label>
+			<input class="input-group-qu" id="factor" name="factor" type="number" min="0.000001" step="any" value="1">
+			<p id="qu-conversion-info" class="d-none"></p>
+			<p id="qu-conversion-inverse-info" class="d-none"></p>
+		</div>
+		<section id="qu-conversion-validation"
+			class="border rounded"
+			aria-labelledby="qu-conversion-validation-heading"
+			data-incomplete="Choose both quantity units and a positive factor to validate this conversion."
+			data-initial="Validate this conversion before saving."
+			data-stale="This validation is out of date. Validate the current conversion before saving."
+			data-pending="Validating conversion impact…"
+			data-impact-clear="No blocking paths, cycles, reciprocal conflicts, or tolerance failures were found."
+			data-request-failure="This conversion could not be validated. Correct any visible fields or try again. Nothing was changed."
+			data-cross-dimension="Mass and volume cannot be used in one universal conversion. Use an explicitly assigned food-type profile or a measured product conversion instead."
+			data-ineligible-pair="This quantity-unit pair is not eligible for a reusable default. Keep package and count conversions on the product."
+			data-generic-blocker="This conversion is blocked by its current factor or conversion graph. Correct the values and validate again."
+			data-product-helper="This conversion takes precedence over any food-type profile and universal default."
+			data-inactive-gate="Reusable conversion profiles are inactive until both branch checks pass."
+			data-save-label="Save conversion"
+			data-validation-required-label="Validation required"
+			data-out-of-date-label="Out of date"
+			data-validating-label="Validating"
+			data-product-override-label="Product override"
+			data-inactive-label="Inactive — not saved or active"
+			data-blocked-label="Blocked"
+			data-unavailable-label="Validation unavailable"
+			data-dimension-label="Dimension: %s"
+			data-source-label="Source: NIST SP 811 · %s">
+			<h3 id="qu-conversion-validation-heading" tabindex="-1">Reusable conversion validation</h3>
+			<div id="qu-conversion-validation-status" class="alert alert-secondary"
+				role="status" aria-live="polite" aria-atomic="true" aria-busy="false">
+				<div id="qu-conversion-validation-label"></div>
+				<div id="qu-conversion-validation-message"></div>
+				<div id="qu-conversion-validation-metadata">
+					<div id="qu-conversion-validation-dimension"></div>
+					<div id="qu-conversion-validation-pair"></div>
+					<div id="qu-conversion-validation-source"></div>
+					<div id="qu-conversion-validation-impact"></div>
+				</div>
+			</div>
+			<button id="validate-quconversion-impact-button" class="btn btn-primary" type="button">Validate conversion impact</button>
+		</section>
+		<div id="userfields-form"></div>
+		<button id="save-quconversion-button" class="btn btn-success" disabled>Save conversion</button>
+	</form>
+
+	<script>
+	(function ()
+	{
+		'use strict';
+
+		function FixtureQuery(target)
+		{
+			if (!(this instanceof FixtureQuery)) return new FixtureQuery(target);
+			if (typeof target === 'string')
+			{
+				this.elements = Array.from(document.querySelectorAll(target.replace(/:selected/g, ':checked')));
+			}
+			else if (target === window || target === document || target instanceof Element)
+			{
+				this.elements = [target];
+			}
+			else if (Array.isArray(target))
+			{
+				this.elements = target;
+			}
+			else
+			{
+				this.elements = [];
+			}
+			this.length = this.elements.length;
+			this.elements.forEach(function (element, index) { this[index] = element; }, this);
+		}
+
+		FixtureQuery.prototype.on = function (eventNames, handler)
+		{
+			this.elements.forEach(function (element)
+			{
+				String(eventNames).split(/\s+/).forEach(function (eventName)
+				{
+					element.addEventListener(eventName, function (event) { handler.call(element, event); });
+				});
+			});
+			return this;
+		};
+		FixtureQuery.prototype.keyup = function (handler) { return this.on('keyup', handler); };
+		FixtureQuery.prototype.keydown = function (handler) { return this.on('keydown', handler); };
+		FixtureQuery.prototype.trigger = function (eventName)
+		{
+			this.elements.forEach(function (element)
+			{
+				if (eventName === 'focus') element.focus();
+				else element.dispatchEvent(new Event(eventName, { bubbles: true, cancelable: true }));
+			});
+			return this;
+		};
+		FixtureQuery.prototype.click = function ()
+		{
+			this.elements.forEach(function (element) { element.click(); });
+			return this;
+		};
+		FixtureQuery.prototype.focus = function ()
+		{
+			this.elements.forEach(function (element) { element.focus(); });
+			return this;
+		};
+		FixtureQuery.prototype.val = function (value)
+		{
+			if (arguments.length === 0) return this.elements[0] ? this.elements[0].value : undefined;
+			this.elements.forEach(function (element) { element.value = value; });
+			return this;
+		};
+		FixtureQuery.prototype.text = function (value)
+		{
+			if (arguments.length === 0) return this.elements[0] ? this.elements[0].textContent : '';
+			this.elements.forEach(function (element) { element.textContent = value; });
+			return this;
+		};
+		FixtureQuery.prototype.data = function (key)
+		{
+			if (!this.elements[0]) return undefined;
+			var camelKey = String(key).replace(/-([a-z])/g, function (match, letter) { return letter.toUpperCase(); });
+			return this.elements[0].dataset[camelKey];
+		};
+		FixtureQuery.prototype.prop = function (name, value)
+		{
+			if (arguments.length === 1) return this.elements[0] ? this.elements[0][name] : undefined;
+			this.elements.forEach(function (element) { element[name] = value; });
+			return this;
+		};
+		FixtureQuery.prototype.attr = function (name, value)
+		{
+			if (arguments.length === 1) return this.elements[0] ? this.elements[0].getAttribute(name) : undefined;
+			this.elements.forEach(function (element) { element.setAttribute(name, value); });
+			return this;
+		};
+		FixtureQuery.prototype.addClass = function (classNames)
+		{
+			var classes = String(classNames).split(/\s+/);
+			this.elements.forEach(function (element) { element.classList.add.apply(element.classList, classes); });
+			return this;
+		};
+		FixtureQuery.prototype.removeClass = function (classNames)
+		{
+			var classes = String(classNames).split(/\s+/);
+			this.elements.forEach(function (element) { element.classList.remove.apply(element.classList, classes); });
+			return this;
+		};
+		FixtureQuery.prototype.parent = function ()
+		{
+			return new FixtureQuery(this.elements.map(function (element) { return element.parentElement; }).filter(Boolean));
+		};
+		FixtureQuery.prototype.find = function (selector)
+		{
+			var found = [];
+			this.elements.forEach(function (element) { found.push.apply(found, element.querySelectorAll(selector)); });
+			return new FixtureQuery(found);
+		};
+		FixtureQuery.prototype.serializeJSON = function ()
+		{
+			var values = {};
+			if (!this.elements[0]) return values;
+			new FormData(this.elements[0]).forEach(function (value, key) { values[key] = value; });
+			return values;
+		};
+		window.$ = window.jQuery = FixtureQuery;
+		window.jQuery.fn = FixtureQuery.prototype;
+
+		window.__fixtureApiCalls = [];
+		window.__fixtureNativeWrites = [];
+		window.__fixtureGenericErrors = [];
+		window.__fixtureNativeOutcome = 'success';
+		window.U = function (path) { return path; };
+		window.GetUriParam = function () { return undefined; };
+		window.WindowMessageBag = function (message) { return message; };
+		window.__t = function (template)
+		{
+			var values = Array.prototype.slice.call(arguments, 1);
+			return String(template).replace(/%(?:(\d+)\$)?s/g, function (match, index)
+			{
+				return String(values[index ? Number(index) - 1 : 0]);
+			});
+		};
+		window.__n = function (amount, singular, plural)
+		{
+			return Number(amount) === 1 ? singular : plural;
+		};
+		window.Grocy = {
+			EditMode: 'create',
+			EditObjectId: null,
+			BaseUrl: '/',
+			FormFocusDelay: 0,
+			UserSettings: { stock_decimal_places_amounts: 6 },
+			Api: {},
+			FrontendHelpers: {
+				ValidateForm: function () { return true; },
+				BeginUiBusy: function () {},
+				EndUiBusy: function () {},
+				ShowGenericError: function (message, response)
+				{
+					window.__fixtureGenericErrors.push({ message: message, response: response });
+				}
+			},
+			Components: {
+				UserfieldsForm: {
+					Load: function () {},
+					Save: function (callback) { callback(); }
+				}
+			}
+		};
+
+		window.Grocy.Api.Get = function (apiFunction, success, error)
+		{
+			var xhr = new XMLHttpRequest();
+			var url = '/api/' + apiFunction;
+			window.__fixtureApiCalls.push({ method: 'GET', url: url });
+			xhr.onreadystatechange = function ()
+			{
+				if (xhr.readyState !== XMLHttpRequest.DONE) return;
+				if (xhr.status >= 200 && xhr.status < 300)
+				{
+					success(JSON.parse(xhr.responseText));
+				}
+				else
+				{
+					error(xhr);
+				}
+			};
+			xhr.open('GET', url, true);
+			xhr.send();
+			return xhr;
+		};
+		function recordNativeWrite(method, apiFunction, data, success, error)
+		{
+			window.__fixtureNativeWrites.push({
+				method: method,
+				url: apiFunction,
+				data: JSON.parse(JSON.stringify(data || {}))
+			});
+			if (window.__fixtureNativeOutcome === 'reject')
+			{
+				if (error) error({ response: 'fixture native rejection' });
+				return;
+			}
+			if (success) success(method === 'POST' ? { created_object_id: 501 } : {});
+		}
+		window.Grocy.Api.Post = function (apiFunction, data, success, error)
+		{
+			recordNativeWrite('POST', apiFunction, data, success, error);
+		};
+		window.Grocy.Api.Put = function (apiFunction, data, success, error)
+		{
+			recordNativeWrite('PUT', apiFunction, data, success, error);
+		};
+
+	})();
+	</script>
+	<script src="/assets/quantityunitconversionform.js"></script>
+</body>
+</html>

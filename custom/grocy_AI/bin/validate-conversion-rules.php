@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-use GrocyAI\Services\GrocyAiTaxonomyService;
+use GrocyAI\Services\GrocyAiConversionService;
 
 $dataPath = getenv('GROCY_DATAPATH');
 if (!is_string($dataPath) || $dataPath === '' || $dataPath[0] !== '/')
@@ -19,19 +19,20 @@ if (!is_file($databasePath) || !is_readable($databasePath))
 }
 
 require_once __DIR__ . '/../src/GrocyAiTaxonomyMigration.php';
-require_once __DIR__ . '/../src/GrocyAiInventoryScope.php';
-require_once __DIR__ . '/../src/GrocyAiTaxonomyService.php';
+require_once __DIR__ . '/../src/GrocyAiConversionMigration.php';
+require_once __DIR__ . '/../src/GrocyAiConversionService.php';
 
 try
 {
 	$pdo = new PDO('sqlite:' . $databasePath, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
-	// Bootstrap is deliberately disabled: this maintainer command is a read-only
-	// validation over an already configured Grocy database.
-	$report = (new GrocyAiTaxonomyService($pdo, false))->ValidateInventoryTaxonomy();
+	// Read-only by construction: bootstrap is disabled and the connection is put into
+	// query_only mode, so this maintainer command cannot migrate, project, or activate.
+	$pdo->exec('PRAGMA query_only = ON');
+	$report = (new GrocyAiConversionService($pdo, false))->ValidateConversionCoverage();
 	fwrite(STDOUT, json_encode($report, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES) . PHP_EOL);
 }
 catch (Throwable)
 {
-	fwrite(STDERR, "Taxonomy validation could not read the configured Grocy database\n");
+	fwrite(STDERR, "Conversion validation could not read the configured Grocy database\n");
 	exit(1);
 }

@@ -38,6 +38,12 @@ if (is_file($taxonomyMigrationFile))
 	require_once $taxonomyMigrationFile;
 }
 
+$inventoryScopeFile = __DIR__ . '/../src/GrocyAiInventoryScope.php';
+if (is_file($inventoryScopeFile))
+{
+	require_once $inventoryScopeFile;
+}
+
 $taxonomyServiceFile = __DIR__ . '/../src/GrocyAiTaxonomyService.php';
 if (is_file($taxonomyServiceFile))
 {
@@ -48,6 +54,31 @@ $taxonomyTestFile = __DIR__ . '/taxonomy.php';
 if (is_file($taxonomyTestFile))
 {
 	require_once $taxonomyTestFile;
+}
+
+$conversionMigrationFile = __DIR__ . '/../src/GrocyAiConversionMigration.php';
+if (is_file($conversionMigrationFile))
+{
+	require_once $conversionMigrationFile;
+}
+
+$conversionServiceFile = __DIR__ . '/../src/GrocyAiConversionService.php';
+if (is_file($conversionServiceFile))
+{
+	require_once $conversionServiceFile;
+}
+
+$conversionRulesTestFile = __DIR__ . '/conversions.php';
+if (is_file($conversionRulesTestFile))
+{
+	require_once $conversionRulesTestFile;
+}
+
+if (($argv[1] ?? '') === 'conversion-characterization')
+{
+	require_once __DIR__ . '/conversion-characterization.php';
+	runConversionCharacterizationContract();
+	exit(0);
 }
 
 use GrocyAI\Services\GrocyAiDiagnostic;
@@ -217,7 +248,7 @@ function runBladeGroup(): never
 	$assetMatch = [];
 	if (preg_match('/\$grocyAiAssetVersion = \'([^\']+)\'/', $template, $assetMatch) !== 1
 		|| ($assetMatch[1] ?? '') !== $moduleVersion
-		|| substr_count($template, '{{ $grocyAiAssetVersion }}') !== 3)
+		|| substr_count($template, '{{ $grocyAiAssetVersion }}') !== 4)
 	{
 		expectedRed('EXPECTED_RED: blade.integrated_acceptance', 'The CSS and JavaScript asset token is not synchronized with module-version.json');
 	}
@@ -622,6 +653,135 @@ if (($argv[1] ?? null) === 'taxonomy-production-paths')
 	runTaxonomyProductionPaths();
 }
 
+if (($argv[1] ?? null) === 'conversion-rules')
+{
+	runConversionRules();
+}
+
+if (($argv[1] ?? null) === 'conversion-resolution')
+{
+	runConversionResolution();
+}
+
+if (($argv[1] ?? null) === 'conversion-product-status')
+{
+	runConversionProductStatus();
+}
+
+if (($argv[1] ?? null) === 'conversion-coverage')
+{
+	runConversionCoverage();
+}
+
+if (($argv[1] ?? null) === 'conversion-readonly-cli')
+{
+	runConversionReadOnlyCli();
+}
+
+if (($argv[1] ?? null) === 'conversion-native-save-hook')
+{
+	runConversionNativeSaveHook();
+}
+
+if (($argv[1] ?? null) === 'conversion-release-gate')
+{
+	runConversionReleaseGate();
+}
+
+if (($argv[1] ?? null) === 'conversion-post-activation-bypass')
+{
+	runConversionPostActivationBypass();
+}
+
+if (($argv[1] ?? null) === 'conversion-activation-command')
+{
+	runConversionActivationCommand();
+}
+
+if (($argv[1] ?? null) === 'bulk-contract')
+{
+	require_once __DIR__ . '/bulk.php';
+	runBulkContract();
+}
+
+if (($argv[1] ?? null) === 'bulk-invariants')
+{
+	require_once __DIR__ . '/bulk.php';
+	runBulkInvariants();
+}
+
+if (($argv[1] ?? null) === 'bulk-schema')
+{
+	require_once __DIR__ . '/bulk.php';
+	runBulkSchema();
+}
+
+if (($argv[1] ?? null) === 'bulk-generate')
+{
+	require_once __DIR__ . '/bulk.php';
+	runBulkGenerate();
+}
+
+if (($argv[1] ?? null) === 'bulk-generate-endpoint')
+{
+	require_once __DIR__ . '/bulk.php';
+	runBulkGenerateEndpoint();
+}
+
+if (($argv[1] ?? null) === 'bulk-registry')
+{
+	require_once __DIR__ . '/bulk.php';
+	runBulkRegistry();
+}
+
+if (($argv[1] ?? null) === 'bulk-selection')
+{
+	require_once __DIR__ . '/bulk.php';
+	runBulkSelection();
+}
+
+if (($argv[1] ?? null) === 'bulk-conflict')
+{
+	require_once __DIR__ . '/bulk.php';
+	runBulkConflict();
+}
+
+if (($argv[1] ?? null) === 'bulk-apply')
+{
+	require_once __DIR__ . '/bulk.php';
+	runBulkApply();
+}
+
+if (($argv[1] ?? null) === 'bulk-audit')
+{
+	require_once __DIR__ . '/bulk.php';
+	runBulkAudit();
+}
+
+if (($argv[1] ?? null) === 'bulk-rollback')
+{
+	require_once __DIR__ . '/bulk.php';
+	runBulkRollback();
+}
+
+if (($argv[1] ?? null) === 'bulk-export')
+{
+	require_once __DIR__ . '/bulk.php';
+	runBulkExport();
+}
+
+if (($argv[1] ?? null) === 'capture-contract')
+{
+	require_once __DIR__ . '/capture.php';
+	runCaptureContract();
+}
+
+if (($argv[1] ?? null) === 'capture-invariants')
+{
+	require_once __DIR__ . '/capture.php';
+	runCaptureInvariants();
+}
+
 if (($argv[1] ?? null) === '--list')
 {
 	foreach ([
@@ -741,7 +901,31 @@ function expectException(callable $callback, string $exceptionClass, string $mes
 check($moduleVersion !== '', 'The portable module version is defined');
 check($hasAssetVersion, 'The product form defines one grocy_AI asset version token');
 check(($assetVersionMatch[1] ?? null) === $moduleVersion, 'The grocy_AI asset token matches the portable module version');
-check(substr_count($productFormTemplate, '{{ $grocyAiAssetVersion }}') === 3, 'All custom product-form assets use the grocy_AI token');
+check(substr_count($productFormTemplate, '{{ $grocyAiAssetVersion }}') === 4, 'All custom product-form assets use the grocy_AI token');
+$resolvedTemplate = file_get_contents($repoRoot . '/views/quantityunitconversionsresolved.blade.php');
+$resolvedAssetMatch = [];
+$hasResolvedAssetVersion = preg_match('/\$grocyAiAssetVersion = \'([^\']+)\'/', $resolvedTemplate, $resolvedAssetMatch) === 1;
+check($hasResolvedAssetVersion, 'The resolved-conversions view defines one grocy_AI asset version token');
+check(($resolvedAssetMatch[1] ?? null) === $moduleVersion, 'The resolved-conversions asset token matches the portable module version');
+check(substr_count($resolvedTemplate, '{{ $grocyAiAssetVersion }}') === 2, 'All custom resolved-conversions assets use the grocy_AI token');
+check(!str_contains($resolvedTemplate, 'conversion-explanations.js?v=\', true) }}{{ $version }}'), 'Resolved-conversions custom JavaScript is independent from the Grocy core version');
+$coverageTemplate = file_get_contents($repoRoot . '/views/grocyai_conversioncoverage.blade.php');
+$coverageAssetMatch = [];
+$hasCoverageAssetVersion = preg_match('/\$grocyAiAssetVersion = \'([^\']+)\'/', $coverageTemplate, $coverageAssetMatch) === 1;
+check($hasCoverageAssetVersion, 'The conversion coverage view defines one grocy_AI asset version token');
+check(($coverageAssetMatch[1] ?? null) === $moduleVersion, 'The conversion coverage asset token matches the portable module version');
+check(substr_count($coverageTemplate, '{{ $grocyAiAssetVersion }}') === 2, 'All custom conversion coverage assets use the grocy_AI token');
+check(str_contains($coverageTemplate, 'permission-MASTER_DATA_EDIT'), 'The conversion coverage report is scoped to MASTER_DATA_EDIT');
+check(!preg_match('/\b(POST|PUT|DELETE)\b/', $coverageTemplate), 'The conversion coverage view declares no write action');
+$bulkReviewTemplate = file_get_contents($repoRoot . '/views/grocyai_bulkreview.blade.php');
+$bulkReviewAssetMatch = [];
+$hasBulkReviewAssetVersion = preg_match('/\$grocyAiAssetVersion = \'([^\']+)\'/', $bulkReviewTemplate, $bulkReviewAssetMatch) === 1;
+check($hasBulkReviewAssetVersion, 'The bulk review view defines one grocy_AI asset version token');
+check(($bulkReviewAssetMatch[1] ?? null) === $moduleVersion, 'The bulk review asset token matches the portable module version');
+check(substr_count($bulkReviewTemplate, '{{ $grocyAiAssetVersion }}') === 2, 'All custom bulk review assets use the grocy_AI token');
+check(str_contains($bulkReviewTemplate, 'permission-MASTER_DATA_EDIT'), 'The bulk review surface is scoped to MASTER_DATA_EDIT');
+$bulkReviewMarkup = preg_replace('/\{\{--.*?--\}\}/s', '', $bulkReviewTemplate);
+check(!preg_match('/<form\b/', $bulkReviewMarkup), 'The bulk review view declares no write form action of its own');
 check(!str_contains($productFormTemplate, 'grocy-ai.css?v=\', true) }}{{ $version }}'), 'Custom CSS is independent from the Grocy core version');
 check(!str_contains($productFormTemplate, 'product-enrichment.js?v=\', true) }}{{ $version }}'), 'Custom JavaScript is independent from the Grocy core version');
 
@@ -1110,6 +1294,46 @@ if (class_exists(GrocyAiDiagnostic::class))
 	check(($failure['outcome'] ?? null) === 'timeout', 'Timeout failures use a finite safe outcome');
 	check(!str_contains($failureJson, 'exception-canary'), 'Failure envelopes never include raw exception text');
 	check(!str_contains($failureJson, '012345678905'), 'Failure envelopes never include GTIN values');
+}
+
+$inventoryDiffTestFile = __DIR__ . '/inventory_diff.php';
+if (is_file($inventoryDiffTestFile))
+{
+	require_once $inventoryDiffTestFile;
+	runInventoryDiffSuite();
+}
+
+$inventoryScopeTestFile = __DIR__ . '/inventory_scope.php';
+if (is_file($inventoryScopeTestFile))
+{
+	require_once $inventoryScopeTestFile;
+	runInventoryScopeSuite();
+}
+
+$groupSuggestionTestFile = __DIR__ . '/group_suggestion.php';
+if (is_file($groupSuggestionTestFile))
+{
+	require_once $groupSuggestionTestFile;
+	runGroupSuggestionSuite();
+}
+
+$conversionAuditTestFile = __DIR__ . '/conversion_audit.php';
+if (is_file($conversionAuditTestFile))
+{
+	require_once $conversionAuditTestFile;
+	runConversionAuditSuite();
+}
+
+$categorizationTestFile = __DIR__ . '/categorization.php';
+if (is_file($categorizationTestFile))
+{
+	require_once $categorizationTestFile;
+	runCategorizationSuite();
+}
+
+if (function_exists('runTaxonomyClassificationReview'))
+{
+	runTaxonomyClassificationReview();
 }
 
 if ($failures > 0)
