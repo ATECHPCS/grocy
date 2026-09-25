@@ -183,8 +183,8 @@
 				data-inactive-label="{{ $__t('Inactive — not saved or active') }}"
 				data-blocked-label="{{ $__t('Blocked') }}"
 				data-unavailable-label="{{ $__t('Validation unavailable') }}"
-				data-dimension-label="{{ $__t('Dimension: %s') }}"
-				data-source-label="{{ $__t('Source: NIST SP 811 · %s') }}">
+				data-dimension-label="{{ $__t('Dimension: %s', '%s') }}"
+				data-source-label="{{ $__t('Source: NIST SP 811 · %s', '%s') }}">
 				<h3 id="qu-conversion-validation-heading" tabindex="-1">{{ $__t('Reusable conversion validation') }}</h3>
 				<div id="qu-conversion-validation-status"
 					class="alert alert-secondary mb-0"

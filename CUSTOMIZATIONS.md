@@ -29,7 +29,7 @@ The small upstream integration surface is:
 
 Phase 4 adds one feature-gated native conversion safety boundary in `controllers/Api/GenericEntityApiController.php`: line 9 imports the module validator; line 54 validates filtered AddObject input before `createRow()->save()`; line 175 validates filtered EditObject input with the actual object ID before `row->update()`; and lines 329-367 contain the `quantity_unit_conversions`-only fail-closed helper. Product-scoped package/count and measured-density requests continue through Grocy's normal native save and cache triggers. Reusable or invalid requests return only bounded errors before native row/cache mutation; this hook never projects or activates reusable rules.
 
-The native quantity-conversion form shows module validation only while the feature flag is on; with the flag off it leaves Grocy's Save control available.
+The native quantity-conversion form shows module validation only while the feature flag is on; with the flag off it leaves Grocy's Save control available. Its client-side dimension and source templates pass literal `%s` arguments to Grocy's formatter so the page renders on stable Grocy 4.6.
 
 Reusable conversion rules are owned entirely inside the module and stay inactive by default. One
 transaction, `GrocyAiConversionService::ActivateVerifiedRuleset()`, is the only authority allowed to
