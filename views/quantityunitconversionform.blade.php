@@ -6,6 +6,7 @@
 @section('title', $__t('Create QU conversion'))
 @endif
 
+@if(GROCY_FEATURE_FLAG_GROCY_AI)
 @push('pageStyles')
 <style>
 	#qu-conversion-validation {
@@ -43,6 +44,7 @@
 	}
 </style>
 @endpush
+@endif
 
 @section('content')
 <div class="row">
@@ -156,6 +158,7 @@
 			'additionalCssClasses' => 'input-group-qu locale-number-input locale-number-quantity-amount'
 			))
 
+			@if(GROCY_FEATURE_FLAG_GROCY_AI)
 			<section id="qu-conversion-validation"
 				class="border rounded"
 				aria-labelledby="qu-conversion-validation-heading"
@@ -202,6 +205,7 @@
 					class="btn btn-primary mt-3"
 					type="button">{{ $__t('Validate conversion impact') }}</button>
 			</section>
+			@endif
 
 			@include('components.userfieldsform', array(
 			'userfields' => $userfields,
@@ -210,7 +214,7 @@
 
 			<button id="save-quconversion-button"
 				class="btn btn-success"
-				disabled>{{ $__t('Save conversion') }}</button>
+				@if(GROCY_FEATURE_FLAG_GROCY_AI) disabled @endif>{{ $__t('Save conversion') }}</button>
 
 		</form>
 	</div>

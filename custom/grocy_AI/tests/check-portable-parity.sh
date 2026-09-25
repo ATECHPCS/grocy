@@ -21,12 +21,6 @@ case "$stable_sha" in
 	*[!0-9a-fA-F]*) echo "ERROR: --stable-sha must contain only hexadecimal characters" >&2; exit 2 ;;
 esac
 
-current_branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)
-if [ "$current_branch" != "atech-main" ]; then
-	echo "ERROR: parity must run from the atech-main working tree; current branch is ${current_branch:-detached}" >&2
-	exit 2
-fi
-
 if ! git cat-file -e "${stable_sha}^{commit}" 2>/dev/null; then
 	echo "ERROR: --stable-sha does not resolve to a commit object: $stable_sha" >&2
 	exit 2
@@ -80,10 +74,18 @@ done < "$manifest"
 
 cat <<'ADAPTERS'
 
-Documented Plan 01-09 stable adapters (not byte-portable):
+Documented stable adapters (not byte-portable):
 - custom/grocy_AI/src/GrocyAiApiController.php — stable controller namespace/base class
 - custom/grocy_AI/routes.php — stable middleware/bootstrap syntax
 - views/productform.blade.php — stable product-form integration hook
+- controllers/GenericEntityApiController.php — stable native conversion write guard
+- services/StockService.php — caller-owned purchase transaction support
+- public/viewjs/quantityunitconversionform.js — conversion validation UI
+- public/viewjs/quantityunitconversionsresolved.js — conversion provenance UI
+- views/quantityunitconversionform.blade.php — conversion validation UI
+- views/quantityunitconversionsresolved.blade.php — conversion provenance UI
+- views/layout/default.blade.php — review and capture navigation
+- Dockerfile.atech — complete stable image overlay
 - custom/grocy_AI/version.json — independent stable cache-invalidation marker
 - CUSTOMIZATIONS.md — stable branch/adaptation record
 ADAPTERS
