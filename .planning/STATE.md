@@ -3,42 +3,36 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Phase 6 EXECUTION COMPLETE (06-01..06-07 merged; 272/272 native + 206 browser); pending human-verify
-last_updated: "2026-09-12T00:00:00.000Z"
-last_activity: 2026-09-12 -- Phase 6 fully executed: 06-06 re-planned+merged, 06-07 (UI + browser + acceptance) merged to codex/phase5-bulk-engine. HEAD dc6db9d5. Suites green.
+stopped_at: Phases 1-8 deployed on stable Grocy 4.6; physical-phone and maintainer verification pending
+last_updated: "2026-09-25T03:21:55Z"
+last_activity: 2026-09-24 -- Stable commit 87677993 deployed; 272 PHP and 206 mobile-browser checks passed; authenticated production routes passed; protected data verified against backup.
 progress:
-  total_phases: 7
+  total_phases: 8
   completed_phases: 3
-  total_plans: 51
-  completed_plans: 46
-  percent: 43
+  total_plans: 57
+  completed_plans: 52
+  percent: 91
 ---
 
 # Project State
 
-## Project Reference
-
-See: .planning/PROJECT.md (updated 2026-08-20)
-
-**Core value:** Adding and maintaining real household food inventory must be fast, accurate, and dependable from a phone without surrendering control of the data to automatic guesses.
-**Current focus:** Phase 5 COMPLETE 2026-08-30 (11 plans shipped + generation surface; each wave adversarially verified); pending only the maintainer human-verify checkpoint. Phase 6 (Inventory Categorization) RE-SCOPED 2026-09-08 via grilling after a live-prod fact-find — ready to plan, not yet executing.
-
 ## Current Position
 
-Phase: 6 (Inventory Categorization) — EXECUTION COMPLETE (all 7 plans merged; pending human-verify). Orchestrated via parallel git worktrees (06-03 ∥ 06-06) + serial 06-04→05, 06-06-replan, 06-07.
-Plan: 06-01..06-07 COMPLETE + merged to codex/phase5-bulk-engine (HEAD dc6db9d5, native 272/272, browser 206). 06-03 (987fd82d) = exclusion-override userfield + Supplements mapping-rule seed + GrocyAiInventoryScope (single in-scope predicate owner). 06-04 (562d6447) = suggest_product_group op (first native write: products.product_group_id, audited apply/rollback, taxonomy dispatch generalized byte-identical) + GrocyAiGroupSuggestionService. 06-05 (0cd3f110) = conflict-first classification ordering + confidence banding + GenerateClassificationPlan; snapshot re-run confident 57→63 after grouping. 06-06 BUILT-BUT-PAUSED on branch codex/phase6-06-audit (NOT merged). 06-07 BLOCKED (depends on paused 06-06). Phases 1-5 as before (Phase 5 awaiting 05-11 Task 3 human-verify).
-06-06 (re-planned, merged 9f28f72b) = classifying read-only conversion audit: product-specific rows are legitimate package definitions unless they fail 4 integrity rules; snapshot = 62 global + 18 expected/9 products, 0 suspicious, exit 0. 06-07 (merged dc6db9d5) = bulk-review UI surfaces all 3 passes (group + classification writable, conversion audit report-only) via explicit generators + GET /bulk/conversion-audit; browser spec categorization.spec.js (6) + smoke (12) + full matrix (206) green; 06-ACCEPTANCE.md records the end-to-end run.
+The production target includes Phase 8 purchase capture. Quick tasks `260924-p8s` and `260924-p8n` hardened the native purchase transaction and proved it against a scrubbed production-shaped snapshot. `260924-r1` mirrored 92 portable files and stable-specific adapters onto pinned Grocy 4.6. `260924-r2` deployed stable commit `87677993f514edbabcd1579752268769ece567a1`; GitHub `atech-release` was fast-forwarded to that commit so future Komodo builds use the same source. The running image is `sha256:d22abaeff119680fcbb62f3b5a72b70fc3302b5bdf3ebfc9941fb10f4abb207c` with `/etc/komodo/grocy:/config` preserved.
 
-CAVEATS for whoever resumes / verifies:
-(1) Group/classification ops are dispatched via GenerateGroupPlan/GenerateClassificationPlan + a closed operation_type selector, NOT RegisteredOperations() (tests pin that registry to the 2 taxonomy ops). The UI must not enumerate the registry for these.
-(2) RAW-snapshot yield: the group-suggestion op yields 0 suggestions on real data (0 enrichment-evidence rows; no product names contain group names). Machinery is correct+tested but real-world yield is ~0 until enrichment evidence is captured or the evidence model is broadened. Seeded-evidence demos (labeled) in 06-05/06-07: ungrouped 224→221, confident 57→60.
-(3) **DATA-06 real-data correction (06-07):** writing products.product_group_id fires Grocy's native `products_default_qu_conversions_UPD` trigger, which REBUILDS `cache__quantity_unit_conversions_resolved` (~224,602 rows, new surrogate ids, byte-identical LOGICAL content). So a group-apply on real data changes products.product_group_id + bulk ledger + this derived cache — NOT "products + bulk only" as 06-04's trigger-less unit fixture implied. Benign (derived cache, logically identical, restored on rollback) but any zero-diff/DATA-06 check MUST whitelist this cache table (compare content excluding surrogate id).
-(4) Classification DATA-07: products byte-identical after rollback, but grocy_ai_taxonomy_classifications is not (rollback records reversal tombstones by design); logical restoration proven by zero-diff RERUN checksum equality.
-Status: 06-03/04/05 verified 222/222 in main. **Conversion premise invalidated 2026-09-12:** the 09-12 snapshot has 80 conversions = 62 global + 18 product-specific across 9 products (piece↔weight package sizes + auto-inverses, added via product-intake since the 09-08 fact-find; look intentional). 06-06's "product_id NOT NULL = regression" tripwire fires on legitimate data → owner decision: PAUSE & RE-PLAN conversions; DATA-03/04/05 REOPENED. 06-06 code preserved on its branch for reference. Base-hygiene commits this session: a4e3b664 (Phase 6 01/02 foundation) + 0867d00e (Phase 8 capture WIP split out). Live-prod counts: 444 products / 224 ungrouped / 21 groups / 80 conversions. Acquisition = direct SSH root@10.10.0.156 via 1Password key `ssh:Personal Docker (102)` + PDO VACUUM INTO + scp (NOT the Komodo terminal — 16 MiB frame cap wedges periphery).
-Orchestration: 06-03 ∥ 06-06 ran as parallel subagents in git worktrees under .worktrees/ (packages/ + .snapshots symlinked in, read-only). Remaining reachable chain is serial: 06-04 → 06-05. 06-07 waits on the conversion re-plan.
-Last activity: 2026-09-12 -- 06-03 merged; 06-06 paused pending conversion re-plan.
+Automated gates pass: 272/272 PHP checks on development and stable, 206/206 Chromium/WebKit mobile-browser checks, 92/92 stable portable parity, taxonomy/conversion/bulk release gates, disposable snapshot migration and native purchase rehearsals, and authenticated production GETs for capture, review, bulk, conversion, and product pages. A predeploy SQLite backup and prior image are retained. Live protected native tables match the backup except one expected taxonomy scope userfield and API key `last_used` timestamps from smoke checks. No live bulk apply or purchase commit was used as a test.
 
-Progress: [████░░░░░░] 43%
+## Open acceptance
+
+- Phase 1 Plan 01-10: physical-phone camera, degraded-network timing, normal-Save restoration, and redacted timing evidence remain unaccepted.
+- Phase 5 Plan 05-11 Task 3: maintainer review of the bulk preview/apply/rollback workflow remains unaccepted.
+- Phase 6: automated categorization acceptance is complete; maintainer review of real inventory proposals remains open. The raw snapshot yields zero group suggestions without enrichment evidence; the UI must show this as an empty review, not invent classifications.
+- Phase 8: automated acceptance and deployment are complete; a physical-phone trip and one deliberate real purchase, including stock-log and idempotency observation, remain open. See `08-ACCEPTANCE.md`.
+- Phase 4 reusable conversion projection remains inactive because characterization selected no adapter. The existing native product conversion path and read-only coverage are deployed; no reusable rule was activated.
+
+## Release notes
+
+The standard Dockerfile remains pinned to `lscr.io/linuxserver/grocy:v4.6.0-ls334`. The registry returned HTTP 429 during deployment, so the running candidate was built from the previous local image of that same pinned release with an exact archive of stable commit `87677993`; all adapters were overlaid. A future standard Komodo rebuild can use the updated `atech-release` branch when the registry is available. The development candidate is on `codex/production-phases1-8`; `atech-main` diverges, so it was not force-updated.
 
 ## Performance Metrics
 

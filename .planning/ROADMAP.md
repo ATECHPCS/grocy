@@ -5,7 +5,7 @@
 This milestone turns the deployed product-enrichment baseline into a dependable, review-controlled mobile inventory workflow, then adds a stable household food taxonomy, deterministic reusable conversions, and a shared preview/apply/recovery engine before changing existing inventory. The work finishes by proving that the complete system can be promoted and recovered across both maintained Grocy branches without risking persistent household data. Previously deployed name/image enrichment is treated as brownfield context; roadmap Phase 1 begins with the new milestone's safety baseline and mobile diagnostics.
 
 **Planning mode:** Vertical MVP
-**Granularity:** Fine — all seven research-supported natural delivery boundaries remain distinct; none are compressed into a broader phase.
+**Granularity:** Fine — the original seven delivery boundaries remain distinct, with Phase 8 added for purchase capture.
 
 ## Phases
 
@@ -361,7 +361,7 @@ Plans:
   4. Maintainer can build and deploy an immutable-digest stable image with exact source/version metadata and fresh route/view assets while preserving `/etc/komodo/grocy` data, images, routes, flags, and module state across restart.
   5. User can complete the end-to-end mobile product workflow on the promoted image, and the maintainer can execute the rehearsed prior-image and database recovery procedure if acceptance or migration fails.
 
-**Plans**: TBD
+**Plans**: Formal Phase 7 plan remains TBD. Quick tasks `260924-r1` and `260924-r2` established the 92-file stable mirror, pinned image, backup, deployment, and live HTTP evidence. Physical-device, maintainer bulk-review, and normal-Save acceptance remain open.
 **UI hint:** no
 
 ### Phase 8: Purchase Capture & Deferred Stock Intake
@@ -387,27 +387,27 @@ Plans:
 Plans:
 **Wave 1**
 
-- [ ] 08-01-PLAN.md — RED contract tests + inactive namespaced `grocy_ai_capture_*` schema/migration (trips/lines/audit/migrations ledger).
+- [x] 08-01-PLAN.md — RED contract tests + inactive namespaced `grocy_ai_capture_*` schema/migration (trips/lines/audit/migrations ledger).
 
 **Wave 2** *(blocked on Wave 1)*
 
-- [ ] 08-02-PLAN.md — Start/close trip + live scan-into-trip with immediate ownership resolution and same-barcode coalescing.
+- [x] 08-02-PLAN.md — Start/close trip + live scan-into-trip with immediate ownership resolution and same-barcode coalescing.
 
 **Wave 3** *(blocked on Wave 2)*
 
-- [ ] 08-03-PLAN.md — Mobile capture page (scan loop reusing the enrichment scanner) + sidebar menu tile.
+- [x] 08-03-PLAN.md — Mobile capture page (scan loop reusing the enrichment scanner) + sidebar menu tile.
 
 **Wave 4** *(blocked on Wave 3)*
 
-- [ ] 08-04-PLAN.md — Review page: lean per-line edits, trip-level defaults, unknown handoff link, and auto re-resolve on open.
+- [x] 08-04-PLAN.md — Review page: lean per-line edits, trip-level defaults, unknown handoff link, and auto re-resolve on open.
 
 **Wave 5** *(blocked on Wave 4)*
 
-- [ ] 08-05-PLAN.md — Commit: single `BEGIN IMMEDIATE` native purchase batch, purchase→stock factor, partial commit, checksum + idempotency ledger + in-lock conflict re-check, audit + read-only archive.
+- [x] 08-05-PLAN.md — Commit: single `BEGIN IMMEDIATE` native purchase batch, purchase→stock factor, partial commit, checksum + idempotency ledger + in-lock conflict re-check, audit + read-only archive.
 
 **Wave 6** *(blocked on Wave 5)*
 
-- [ ] 08-06-PLAN.md — Acceptance: native + mobile-browser tests (stock-write safety, idempotency, partial commit, unknown lifecycle) and deploy.
+- [x] 08-06-PLAN.md — Automated acceptance and stable deployment completed; physical-phone and real purchase observation remain pending in `08-ACCEPTANCE.md`.
 
 **Cross-cutting constraints:**
 
@@ -428,6 +428,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7. Dual-bra
 | 3. Food Taxonomy & Categorization Pilot | 3/3 plans + gap closure | Complete | 2026-08-20 |
 | 4. Reusable Conversion Model | 8/10 | In Progress | - |
 | 5. Bulk Maintenance & Recovery Engine | 11/11 | Complete (pending human-verify) | 2026-08-30 |
-| 6. Inventory Categorization & Conversion Cleanup | 0/TBD | Not started | - |
-| 7. Upstream & Stable Release Sustainment | 0/TBD | Not started | - |
-| 8. Purchase Capture & Deferred Stock Intake | 0/6 | Not started | - |
+| 6. Inventory Categorization & Conversion Cleanup | 7/7 | Code complete; human verify pending | - |
+| 7. Upstream & Stable Release Sustainment | Quick tasks r1/r2 | Stable mirror and deployment complete; remaining acceptance open | - |
+| 8. Purchase Capture & Deferred Stock Intake | 6/6 | Deployed; physical-phone and real purchase acceptance pending | - |
