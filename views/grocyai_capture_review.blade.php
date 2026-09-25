@@ -38,7 +38,7 @@ $grocyAiAssetVersion = '2.5.0';
 	data-trip-id="{{ $tripId !== null ? $tripId : '' }}"
 	data-label-known="{{ $__t('Known') }}"
 	data-label-unknown="{{ $__t('Unknown — needs product') }}"
-	data-label-product-fallback="{{ $__t('Product #%s') }}"
+	data-label-product-fallback="{{ $__t('Product #%s', '%s') }}"
 	data-label-create-product="{{ $__t('Create product') }}"
 	data-label-no-trips="{{ $__t('No trips yet. Capture one first.') }}"
 	data-label-no-trip-selected="{{ $__t('Select a trip to review its items.') }}"
@@ -55,8 +55,8 @@ $grocyAiAssetVersion = '2.5.0';
 	data-label-mark-reviewing="{{ $__t('Mark as reviewing') }}"
 	data-label-status="{{ $__t('Status') }}"
 	data-label-commit="{{ $__t('Commit purchase') }}"
-	data-label-committed="{{ $__t('Committed — transaction %s') }}"
-	data-label-commit-partial="{{ $__t('Committed %s item(s); unresolved items remain in the trip.') }}"
+	data-label-committed="{{ $__t('Committed — transaction %s', '%s') }}"
+	data-label-commit-partial="{{ $__t('Committed %s item(s); unresolved items remain in the trip.', '%s') }}"
 	data-label-commit-mismatch="{{ $__t('The trip changed since it was loaded. Reload and commit again.') }}"
 	data-label-commit-confirm="{{ $__t('Commit the selected known items to stock as one purchase?') }}">
 

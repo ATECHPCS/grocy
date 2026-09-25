@@ -60,7 +60,8 @@ The production container is built with `Dockerfile.atech`. It pins the matching 
 - `controllers/GenericEntityApiController.php` validates native quantity-conversion writes through the module before persistence. `services/StockService.php` lets stock compaction join the purchase-capture transaction without committing or rolling it back on behalf of the caller.
 - The product, conversion, resolved-conversion, bulk-review, coverage, and purchase-capture views expose the new workflows. `public/viewjs/quantityunitconversionform.js` and `public/viewjs/quantityunitconversionsresolved.js` supply the native page behavior. The conversion form leaves native Save available when the module feature flag is off.
 - `Dockerfile.atech` overlays every edited Grocy core path and the new views while retaining the pinned LinuxServer Grocy 4.6 base. `.dockerignore` excludes local database snapshots and dependency caches from the build context; `.gitignore` excludes those snapshots from commits.
-- The stable cache marker advances to `ATECHPCS-grocy_AI-11` to invalidate persisted route and view caches on image replacement. Production data remains on the existing persistent data mount.
+- The stable cache marker advances to `ATECHPCS-grocy_AI-12` to invalidate persisted route and view caches on image replacement. Production data remains on the existing persistent data mount.
+- The capture and review Blade views pass a literal `%s` to Grocy's translation formatter for client-side message templates, avoiding a server-side format error before the page renders.
 
 ## Unused Grocy features
 
