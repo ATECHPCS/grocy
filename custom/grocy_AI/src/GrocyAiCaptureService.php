@@ -414,8 +414,8 @@ class GrocyAiCaptureService
 
 	/**
 	 * The per-scan stock multiplier (Q7): the scanned barcode's own `product_barcodes.amount` override when
-	 * present, otherwise the product's `qu_factor_purchase_to_stock`. Defaults to 1 when neither is a
-	 * positive number, so a missing factor never zeroes or reverses a purchase.
+	 * present, otherwise Grocy's resolved purchase-to-stock factor from `uihelper_product_details`.
+	 * Defaults to 1 when neither is a positive number, so a missing factor never zeroes a purchase.
 	 */
 	private function StockMultiplier(int $productId, string $barcode): float
 	{
@@ -432,7 +432,7 @@ class GrocyAiCaptureService
 			}
 		}
 
-		$factorStatement = $this->Db->prepare('SELECT qu_factor_purchase_to_stock FROM products WHERE id = ?');
+		$factorStatement = $this->Db->prepare('SELECT qu_factor_purchase_to_stock FROM uihelper_product_details WHERE id = ?');
 		$factorStatement->execute([$productId]);
 		$factor = $factorStatement->fetchColumn();
 		return $factor !== false && (float)$factor > 0 ? (float)$factor : 1.0;

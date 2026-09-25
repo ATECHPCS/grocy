@@ -122,8 +122,11 @@ function captureFixturePdo(?PDO $pdo = null): PDO
 {
 	$pdo ??= new PDO('sqlite::memory:');
 	$pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-	$pdo->exec('CREATE TABLE products (id INTEGER NOT NULL PRIMARY KEY, name TEXT NOT NULL, qu_factor_purchase_to_stock REAL NOT NULL DEFAULT 1)');
-	$pdo->exec("INSERT INTO products (id, name, qu_factor_purchase_to_stock) VALUES (101, 'Fixture product A', 1), (102, 'Fixture product B', 6), (103, 'Fixture product C', 1)");
+	$pdo->exec('CREATE TABLE products (id INTEGER NOT NULL PRIMARY KEY, name TEXT NOT NULL, qu_id_purchase INTEGER NOT NULL, qu_id_stock INTEGER NOT NULL)');
+	$pdo->exec("INSERT INTO products (id, name, qu_id_purchase, qu_id_stock) VALUES (101, 'Fixture product A', 1, 1), (102, 'Fixture product B', 2, 1), (103, 'Fixture product C', 1, 1)");
+	$pdo->exec('CREATE TABLE cache__quantity_unit_conversions_resolved (product_id INTEGER, from_qu_id INTEGER, to_qu_id INTEGER, factor REAL)');
+	$pdo->exec('INSERT INTO cache__quantity_unit_conversions_resolved VALUES (102, 2, 1, 6)');
+	$pdo->exec('CREATE VIEW uihelper_product_details AS SELECT p.id, CAST(IFNULL(c.factor, 1.0) AS REAL) AS qu_factor_purchase_to_stock FROM products p LEFT JOIN cache__quantity_unit_conversions_resolved c ON p.id = c.product_id AND p.qu_id_purchase = c.from_qu_id AND p.qu_id_stock = c.to_qu_id');
 	$pdo->exec('CREATE TABLE product_barcodes (id INTEGER NOT NULL PRIMARY KEY, product_id INTEGER NOT NULL, barcode TEXT NOT NULL, amount REAL NULL)');
 	$pdo->exec("INSERT INTO product_barcodes (id, product_id, barcode) VALUES (1, 101, '012345678905')");
 	$pdo->exec('CREATE TABLE stock (id INTEGER NOT NULL PRIMARY KEY, product_id INTEGER NOT NULL, amount REAL NOT NULL, transaction_id TEXT NULL)');

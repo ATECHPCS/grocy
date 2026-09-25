@@ -65,6 +65,13 @@ new Phase 5 module file is in `custom/grocy_AI/portable-files.txt`; the Blade vi
 branch adapter / changed-paths mechanism like the conversion coverage view. The actual
 existing-inventory sweep and conversion cleanup remain Phase 6 work.
 
+Phase 8 purchase capture is the sole module exception to the earlier zero-stock-write boundary.
+`GrocyAiCaptureService::CommitTrip()` posts reviewed selected lines through native
+`StockService::AddProduct()` inside one audited transaction; scan and review remain stock-read-only.
+Its purchase-to-stock factor comes from Grocy's `uihelper_product_details` resolved view, since
+`products.qu_factor_purchase_to_stock` was removed in migration 0207. The native compaction hook above
+keeps its work inside the caller's transaction when capture posts a matching stock row.
+
 The stable release mirrors the portable module bytes first, then carries one separately reviewable eight-path framework adapter commit. Stable retains its `Grocy\Controllers\BaseApiController` namespace and class-based `JsonMiddleware::class`; the other adapter paths are the feature-gated product-form hook, narrow normal-Save continuation, exact migration, cache marker, customization record, and the Docker overlay that installs both new core adapter files at their runtime paths.
 
 The module implementation and contract are documented in [`custom/grocy_AI/README.md`](custom/grocy_AI/README.md).
