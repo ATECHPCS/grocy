@@ -32,7 +32,9 @@ class BaseApiController extends BaseController
 
 	protected function GenericErrorResponse(Response $response, $errorMessage, $status = 400)
 	{
-		return $response->withStatus($status)->withJson([
+		$response = $response->withStatus($status);
+
+		return $this->ApiResponse($response, [
 			'error_message' => $errorMessage
 		]);
 	}

@@ -6,6 +6,7 @@ FROM lscr.io/linuxserver/grocy:v4.6.0-ls334
 COPY config-dist.php routes.php /app/www/
 COPY custom/grocy_AI/version.json /app/www/version.json
 COPY migrations/0256.php /app/www/migrations/0256.php
+COPY controllers/BaseApiController.php /app/www/controllers/BaseApiController.php
 COPY controllers/GenericEntityApiController.php /app/www/controllers/GenericEntityApiController.php
 COPY services/StockService.php /app/www/services/StockService.php
 COPY public/viewjs/productform.js /app/www/public/viewjs/productform.js

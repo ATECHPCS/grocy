@@ -58,9 +58,10 @@ The production container is built with `Dockerfile.atech`. It pins the matching 
 
 - The Phase 4–8 module and public assets are mirrored from the development candidate using `custom/grocy_AI/portable-files.txt`; the stable API controller and route bootstrap retain the Grocy 4.6 controller namespace and class-based JSON middleware.
 - `controllers/GenericEntityApiController.php` validates native quantity-conversion writes through the module before persistence. `services/StockService.php` lets stock compaction join the purchase-capture transaction without committing or rolling it back on behalf of the caller.
+- `controllers/BaseApiController.php` sends JSON errors through its existing PSR response writer, so module error paths work with the stable response type as well as native Grocy requests.
 - The product, conversion, resolved-conversion, bulk-review, coverage, and purchase-capture views expose the new workflows. `public/viewjs/quantityunitconversionform.js` and `public/viewjs/quantityunitconversionsresolved.js` supply the native page behavior. The conversion form leaves native Save available when the module feature flag is off.
 - `Dockerfile.atech` overlays every edited Grocy core path and the new views while retaining the pinned LinuxServer Grocy 4.6 base. `.dockerignore` excludes local database snapshots and dependency caches from the build context; `.gitignore` excludes those snapshots from commits.
-- The stable cache marker advances to `ATECHPCS-grocy_AI-13` to invalidate persisted route and view caches on image replacement. Production data remains on the existing persistent data mount.
+- The stable cache marker advances to `ATECHPCS-grocy_AI-14` to invalidate persisted route and view caches on image replacement. Production data remains on the existing persistent data mount.
 - The capture and review Blade views pass a literal `%s` to Grocy's translation formatter for client-side message templates, avoiding a server-side format error before the page renders.
 - The native conversion form does the same for its dimension and source message templates.
 
