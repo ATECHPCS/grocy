@@ -68,6 +68,7 @@ branch adapter / changed-paths mechanism like the conversion coverage view. The 
 existing-inventory sweep and conversion cleanup remain Phase 6 work.
 
 Phase 8 purchase capture is the sole module exception to the earlier zero-stock-write boundary.
+The capture and review Blade views pass literal `%s` arguments to Grocy's formatter for message templates consumed by browser code; this keeps both pages renderable under the stable Grocy 4.6 translation helper.
 `GrocyAiCaptureService::CommitTrip()` posts reviewed selected lines through native
 `StockService::AddProduct()` inside one audited transaction; scan and review remain stock-read-only.
 Its purchase-to-stock factor comes from Grocy's `uihelper_product_details` resolved view, since
