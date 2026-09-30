@@ -30,6 +30,10 @@
 		tripStarted: 'Trip started. Scan or enter a GTIN to add items.',
 		tripError: 'Could not start a capture trip. Reload the page to try again.',
 		scanError: 'That scan could not be added. Try again.',
+		finishFirst: 'Finish scanning this trip and open review? This will not change stock.',
+		finishSecond: 'Confirm again: Are you finished scanning this trip?',
+		finishError: 'Could not finish this trip. Your scans are saved; try again.',
+		finishPending: 'Wait for the current scan to finish, then try again.',
 		empty: 'No items yet. Scan or enter a GTIN above.',
 		quantity: 'Quantity'
 	};
@@ -118,6 +122,10 @@
 			tripStarted: d.labelTripStarted || DEFAULT_COPY.tripStarted,
 			tripError: d.labelTripError || DEFAULT_COPY.tripError,
 			scanError: d.labelScanError || DEFAULT_COPY.scanError,
+			finishFirst: d.labelFinishFirst || DEFAULT_COPY.finishFirst,
+			finishSecond: d.labelFinishSecond || DEFAULT_COPY.finishSecond,
+			finishError: d.labelFinishError || DEFAULT_COPY.finishError,
+			finishPending: d.labelFinishPending || DEFAULT_COPY.finishPending,
 			empty: d.labelEmpty || DEFAULT_COPY.empty,
 			quantity: d.labelQuantity || DEFAULT_COPY.quantity
 		};
@@ -140,6 +148,7 @@
 		var input = document.getElementById('grocyai-capture-barcode');
 		var addButton = document.getElementById('grocyai-capture-add-button');
 		var newTripButton = document.getElementById('grocyai-capture-new-trip-button');
+		var finishButton = document.getElementById('grocyai-capture-finish-button');
 		var reviewLink = document.getElementById('grocyai-capture-review-link');
 		var reviewUrl = reviewLink ? reviewLink.getAttribute('href') : '';
 		var statusEl = document.getElementById('grocyai-capture-status');
@@ -148,6 +157,8 @@
 		var currentTripId = null;
 		var lines = [];
 		var productNames = {};
+		var pendingScans = 0;
+		var finishing = false;
 
 		function setStatus(message)
 		{
@@ -236,6 +247,10 @@
 
 		function startTrip()
 		{
+			if (finishing)
+			{
+				return Promise.resolve(null);
+			}
 			return fetchJson(tripsEndpoint, { method: 'POST', body: '{}' }).then(function (trip)
 			{
 				currentTripId = trip && trip.id !== undefined ? trip.id : null;
@@ -262,10 +277,11 @@
 		function submitBarcode(rawBarcode)
 		{
 			var barcode = String(rawBarcode === undefined || rawBarcode === null ? '' : rawBarcode).trim();
-			if (barcode === '' || currentTripId === null)
+			if (barcode === '' || currentTripId === null || finishing)
 			{
 				return Promise.resolve(null);
 			}
+			pendingScans++;
 			var url = tripsEndpoint + '/' + encodeURIComponent(String(currentTripId)) + '/scan';
 			return fetchJson(url, { method: 'POST', body: JSON.stringify({ barcode: barcode }) }).then(function (line)
 			{
@@ -286,6 +302,52 @@
 			{
 				setStatus(copy.scanError);
 				return null;
+			}).finally(function ()
+			{
+				pendingScans--;
+			});
+		}
+
+		function finishScanning()
+		{
+			if (currentTripId === null || finishing)
+			{
+				return Promise.resolve(null);
+			}
+			if (pendingScans > 0)
+			{
+				setStatus(copy.finishPending);
+				return Promise.resolve(null);
+			}
+			if (typeof window === 'undefined' || typeof window.confirm !== 'function'
+				|| !window.confirm(copy.finishFirst) || !window.confirm(copy.finishSecond))
+			{
+				return Promise.resolve(null);
+			}
+			finishing = true;
+			if (finishButton)
+			{
+				finishButton.disabled = true;
+			}
+			var tripId = currentTripId;
+			return fetchJson(tripsEndpoint + '/' + encodeURIComponent(String(tripId)), {
+				method: 'PUT',
+				body: JSON.stringify({ status: 'reviewing' })
+			}).then(function (trip)
+			{
+				if (!trip || String(trip.id) !== String(tripId) || trip.status !== 'reviewing')
+				{
+					throw new Error('invalid_trip_status');
+				}
+				window.location.assign(reviewUrl + '?trip=' + encodeURIComponent(String(tripId)));
+			}).catch(function ()
+			{
+				finishing = false;
+				if (finishButton)
+				{
+					finishButton.disabled = false;
+				}
+				setStatus(copy.finishError);
 			});
 		}
 
@@ -313,6 +375,10 @@
 		if (newTripButton)
 		{
 			newTripButton.addEventListener('click', function () { startTrip(); });
+		}
+		if (finishButton)
+		{
+			finishButton.addEventListener('click', function () { finishScanning(); });
 		}
 		if (input)
 		{
@@ -344,7 +410,8 @@
 
 		return {
 			startTrip: startTrip,
-			submitBarcode: submitBarcode
+			submitBarcode: submitBarcode,
+			finishScanning: finishScanning
 		};
 	}
 

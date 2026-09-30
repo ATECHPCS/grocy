@@ -90,7 +90,7 @@ async function installReferenceApi(page)
 async function installScanApi(page, options)
 {
 	const settings = options || {};
-	const state = { seq: 0, byBarcode: {}, scans: 0, tripId: 6 };
+	const state = { seq: 0, byBarcode: {}, scans: 0, tripId: 6, finishUpdates: 0 };
 	await page.route('**/api/grocy-ai/capture/**', function (route)
 	{
 		const request = route.request();
@@ -132,6 +132,16 @@ async function installScanApi(page, options)
 				quantity: entry.quantity,
 				selected: known ? 1 : 0
 			}));
+		}
+
+		if (method === 'PUT' && /\/capture\/trips\/\d+$/.test(pathname))
+		{
+			if (JSON.stringify(JSON.parse(request.postData() || '{}')) !== JSON.stringify({ status: 'reviewing' }))
+			{
+				return json(route, { message: 'unexpected trip update' }, 400);
+			}
+			state.finishUpdates++;
+			return json(route, makeTrip({ id: state.tripId, status: 'reviewing' }));
 		}
 
 		return json(route, { message: 'unexpected capture call' }, 404);
@@ -229,6 +239,44 @@ async function expectNoForbiddenWrites(page)
 
 test.describe('purchase capture — scan loop', function ()
 {
+	test('@cap @mob Finish scanning requires two confirmations, writes no stock, then opens review', async function ({ page })
+	{
+		const state = await installScanApi(page);
+		await page.route('**/grocyai/capture/review?trip=*', function (route)
+		{
+			return route.fulfill({ status: 200, contentType: 'text/html', body: '<title>Review trip</title>' });
+		});
+		await page.goto('/fixtures/capture.html');
+		await expect(page.locator('#grocyai-capture-status')).toHaveText('Trip started. Scan or enter a GTIN to add items.');
+		const finish = page.locator('#grocyai-capture-finish-button');
+		let decisions = [false];
+		let dialogs = 0;
+		const prompts = [];
+		page.on('dialog', function (dialog)
+		{
+			dialogs++;
+			prompts.push(dialog.message());
+			return decisions.shift() ? dialog.accept() : dialog.dismiss();
+		});
+		await finish.click();
+		expect(dialogs).toBe(1);
+		expect(state.finishUpdates).toBe(0);
+
+		decisions = [true, false];
+		await finish.click();
+		expect(dialogs).toBe(3);
+		expect(state.finishUpdates).toBe(0);
+		await expectNoForbiddenWrites(page);
+
+		decisions = [true, true];
+		await finish.click();
+		await page.waitForURL('**/grocyai/capture/review?trip=7');
+		expect(dialogs).toBe(5);
+		expect(prompts[3]).toContain('will not change stock');
+		expect(prompts[4]).toContain('Confirm again');
+		expect(state.finishUpdates).toBe(1);
+	});
+
 	test('@cap @mob Review trip opens the current trip and follows Start new trip', async function ({ page })
 	{
 		await installScanApi(page);
