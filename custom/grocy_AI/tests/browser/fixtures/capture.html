@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-core-version="4.6.0" data-grocy-ai-module-version="2.5.0">
+<html lang="en" data-core-version="4.6.0" data-grocy-ai-module-version="2.5.1">
 <head>
 	<meta charset="utf-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1">
@@ -14,6 +14,7 @@
 		.btn { min-height: 44px; padding: 8px 12px; border: 1px solid transparent; border-radius: 4px; background: #f8f9fa; }
 		.btn-lg { min-height: 48px; }
 		.btn-primary { color: #fff; background: #007bff; }
+		#camerabarcodescanner-start-button { position: absolute; right: 0; margin-top: 4px; margin-right: 5px; }
 		.btn-outline-secondary { color: #6c757d; border-color: #6c757d; }
 		.list-group { display: block; padding: 0; margin: 0; list-style: none; }
 		.list-group-item { display: block; padding: 12px; border: 1px solid #dee2e6; }
@@ -29,7 +30,7 @@
 		.mb-2 { margin-bottom: 8px; }
 		.status-unknown, .status-conflict { color: #856404; }
 	</style>
-	<link rel="stylesheet" href="/assets/grocy-ai.css?v=2.5.0">
+	<link rel="stylesheet" href="/assets/grocy-ai.css?v=2.5.1">
 </head>
 <body>
 	<main>
@@ -52,14 +53,17 @@
 					<h3 id="grocyai-capture-scan-heading">Scan</h3>
 					<div class="form-group mb-2">
 						<label for="grocyai-capture-barcode">GTIN</label>
-						<input type="text"
-							class="form-control form-control-lg barcodescanner-input"
-							id="grocyai-capture-barcode"
-							inputmode="numeric"
-							autocomplete="off"
-							enterkeyhint="done"
-							placeholder="8, 12, 13, or 14 digits"
-							data-target="grocyai-capture-barcode">
+						<div class="grocy-ai-capture-input-row">
+							<input type="text"
+								class="form-control form-control-lg barcodescanner-input"
+								id="grocyai-capture-barcode"
+								inputmode="numeric"
+								autocomplete="off"
+								enterkeyhint="done"
+								placeholder="8, 12, 13, or 14 digits"
+								data-target="grocyai-capture-barcode">
+							<a id="camerabarcodescanner-start-button" class="btn btn-sm btn-primary text-white" data-target="grocyai-capture-barcode" aria-label="Scan barcode"><i class="fa-solid fa-camera"></i></a>
+						</div>
 					</div>
 					<div class="grocy-ai-actions">
 						<button type="button" class="btn btn-primary btn-lg" id="grocyai-capture-add-button">Add</button>
@@ -84,6 +88,6 @@
 	</main>
 
 	<script src="/fixtures/capture-harness.js"></script>
-	<script src="/assets/capture.js?v=2.5.0"></script>
+	<script src="/assets/capture.js?v=2.5.1"></script>
 </body>
 </html>
