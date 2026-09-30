@@ -1,7 +1,7 @@
 @extends('layout.default')
 
 @php
-$grocyAiAssetVersion = '2.5.3';
+$grocyAiAssetVersion = '2.5.4';
 @endphp
 @push('pageStyles')
 <link rel="stylesheet"
@@ -52,7 +52,9 @@ $grocyAiAssetVersion = '2.5.3';
 	data-label-location="{{ $__t('Default location') }}"
 	data-label-store="{{ $__t('Default store') }}"
 	data-label-none="{{ $__t('(none)') }}"
-	data-label-mark-reviewing="{{ $__t('Mark as reviewing') }}"
+	data-label-mark-reviewing="{{ $__t('Finish scanning') }}"
+	data-label-finish-first="{{ $__t('Finish scanning this trip and open review? This will not change stock.') }}"
+	data-label-finish-second="{{ $__t('Confirm again: Are you finished scanning this trip?') }}"
 	data-label-status="{{ $__t('Status') }}"
 	data-label-commit="{{ $__t('Commit purchase') }}"
 	data-label-committed="{{ $__t('Committed — transaction %s', '%s') }}"

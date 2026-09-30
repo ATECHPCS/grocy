@@ -125,6 +125,10 @@ details.grocy-ai-diagnostics:not([open]) > .grocy-ai-diagnostic-body {
 	font-size: 20px;
 }
 
+.grocy-ai-capture-review-status .btn {
+	min-height: 44px;
+}
+
 #grocy-ai-upc {
 	min-height: 44px;
 }

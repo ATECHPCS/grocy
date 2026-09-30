@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-core-version="4.6.0" data-grocy-ai-module-version="2.5.0">
+<html lang="en" data-core-version="4.6.0" data-grocy-ai-module-version="2.5.4">
 <head>
 	<meta charset="utf-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1">
@@ -46,7 +46,7 @@
 		.small { font-size: 80%; }
 		.status-unknown, .status-conflict { color: #856404; }
 	</style>
-	<link rel="stylesheet" href="/assets/grocy-ai.css?v=2.5.0">
+	<link rel="stylesheet" href="/assets/grocy-ai.css?v=2.5.4">
 </head>
 <body>
 	<main>
@@ -72,7 +72,9 @@
 			data-label-location="Default location"
 			data-label-store="Default store"
 			data-label-none="(none)"
-			data-label-mark-reviewing="Mark as reviewing"
+			data-label-mark-reviewing="Finish scanning"
+			data-label-finish-first="Finish scanning this trip and open review? This will not change stock."
+			data-label-finish-second="Confirm again: Are you finished scanning this trip?"
 			data-label-status="Status"
 			data-label-commit="Commit purchase"
 			data-label-committed="Committed — transaction %s"
@@ -95,6 +97,6 @@
 	</main>
 
 	<script src="/fixtures/capture-harness.js"></script>
-	<script src="/assets/capture-review.js?v=2.5.0"></script>
+	<script src="/assets/capture-review.js?v=2.5.4"></script>
 </body>
 </html>

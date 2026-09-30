@@ -159,7 +159,7 @@ async function installReviewApi(page, options)
 		id: 101, seq: 1, scanned_barcode: KNOWN_GTIN, canonical_gtin: '00012345678905',
 		resolved_product_id: 101, status: 'known', quantity: 2, selected: 1
 	})];
-	const state = { committed: false, commits: 0, lastCommitStatus: null, lines: lines };
+	const state = { committed: false, reviewing: !settings.open, finishUpdates: 0, commits: 0, lastCommitStatus: null, lines: lines };
 
 	await page.route('**/api/grocy-ai/capture/**', function (route)
 	{
@@ -169,13 +169,13 @@ async function installReviewApi(page, options)
 
 		if (method === 'GET' && /\/capture\/trips$/.test(pathname))
 		{
-			return json(route, { trips: [makeTrip({ status: state.committed ? 'committed' : 'reviewing' })] });
+			return json(route, { trips: [makeTrip({ status: state.committed ? 'committed' : (state.reviewing ? 'reviewing' : 'open') })] });
 		}
 
 		if (method === 'GET' && /\/capture\/trips\/\d+$/.test(pathname))
 		{
 			const trip = makeTrip({
-				status: state.committed ? 'committed' : 'reviewing',
+				status: state.committed ? 'committed' : (state.reviewing ? 'reviewing' : 'open'),
 				transaction_id: state.committed ? 'txn-1001' : null,
 				committed_at: state.committed ? '2026-09-02T10:05:00+00:00' : null,
 				checksum: CHECKSUM
@@ -222,6 +222,12 @@ async function installReviewApi(page, options)
 
 		if (method === 'PUT' && /\/capture\/trips\/\d+$/.test(pathname))
 		{
+			const body = JSON.parse(request.postData() || '{}');
+			if (body.status === 'reviewing' && !state.reviewing)
+			{
+				state.finishUpdates++;
+				state.reviewing = true;
+			}
 			return json(route, makeTrip({ status: 'reviewing', checksum: CHECKSUM }));
 		}
 
@@ -373,6 +379,33 @@ test.describe('purchase capture — scan loop', function ()
 
 test.describe('purchase capture — review and commit', function ()
 {
+	test('@cap @mob an existing open trip also requires two confirms to finish scanning', async function ({ page })
+	{
+		const state = await installReviewApi(page, { open: true });
+		await page.goto('/fixtures/capture-review.html?trip=7');
+		await page.locator('#grocyai-capture-review-trips button').first().click();
+		const finish = page.getByRole('button', { name: 'Finish scanning' });
+		await expect(finish).toBeVisible();
+		let decisions = [false];
+		let dialogs = 0;
+		page.on('dialog', function (dialog)
+		{
+			dialogs++;
+			return decisions.shift() ? dialog.accept() : dialog.dismiss();
+		});
+		await finish.click();
+		expect(state.finishUpdates).toBe(0);
+		decisions = [true, false];
+		await finish.click();
+		expect(state.finishUpdates).toBe(0);
+		decisions = [true, true];
+		await finish.click();
+		await expect(page.locator('.grocy-ai-capture-review-status')).toContainText('reviewing');
+		expect(dialogs).toBe(5);
+		expect(state.finishUpdates).toBe(1);
+		await expectNoForbiddenWrites(page);
+	});
+
 	test('@cap @smoke reviewing a trip and committing books one purchase and archives the trip', async function ({ page })
 	{
 		const state = await installReviewApi(page);
