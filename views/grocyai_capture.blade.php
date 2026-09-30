@@ -1,7 +1,7 @@
 @extends('layout.default')
 
 @php
-$grocyAiAssetVersion = '2.5.2';
+$grocyAiAssetVersion = '2.5.3';
 @endphp
 @push('pageStyles')
 <link rel="stylesheet"
@@ -42,6 +42,10 @@ $grocyAiAssetVersion = '2.5.2';
 	data-label-trip-started="{{ $__t('Trip started. Scan or enter a GTIN to add items.') }}"
 	data-label-trip-error="{{ $__t('Could not start a capture trip. Reload the page to try again.') }}"
 	data-label-scan-error="{{ $__t('That scan could not be added. Try again.') }}"
+	data-label-finish-first="{{ $__t('Finish scanning this trip and open review? This will not change stock.') }}"
+	data-label-finish-second="{{ $__t('Confirm again: Are you finished scanning this trip?') }}"
+	data-label-finish-error="{{ $__t('Could not finish this trip. Your scans are saved; try again.') }}"
+	data-label-finish-pending="{{ $__t('Wait for the current scan to finish, then try again.') }}"
 	data-label-empty="{{ $__t('No items yet. Scan or enter a GTIN above.') }}"
 	data-label-quantity="{{ $__t('Quantity') }}">
 	<div class="col">
@@ -71,6 +75,11 @@ $grocyAiAssetVersion = '2.5.2';
 					class="btn btn-outline-secondary btn-lg"
 					id="grocyai-capture-new-trip-button">
 					<i class="fa-solid fa-rotate" aria-hidden="true"></i> {{ $__t('Start new trip') }}
+				</button>
+				<button type="button"
+					class="btn btn-outline-primary btn-lg"
+					id="grocyai-capture-finish-button">
+					<i class="fa-solid fa-check-double" aria-hidden="true"></i> {{ $__t('Finish scanning') }}
 				</button>
 				<a class="btn btn-outline-primary btn-lg"
 					id="grocyai-capture-review-link"
