@@ -1,7 +1,7 @@
 @extends('layout.default')
 
 @php
-$grocyAiAssetVersion = '2.5.1';
+$grocyAiAssetVersion = '2.5.2';
 @endphp
 @push('pageStyles')
 <link rel="stylesheet"
@@ -72,6 +72,11 @@ $grocyAiAssetVersion = '2.5.1';
 					id="grocyai-capture-new-trip-button">
 					<i class="fa-solid fa-rotate" aria-hidden="true"></i> {{ $__t('Start new trip') }}
 				</button>
+				<a class="btn btn-outline-primary btn-lg"
+					id="grocyai-capture-review-link"
+					href="{{ $U('/grocyai/capture/review') }}">
+					<i class="fa-solid fa-clipboard-check" aria-hidden="true"></i> {{ $__t('Review trip') }}
+				</a>
 			</div>
 			<div class="grocy-ai-capture-status alert alert-secondary mt-3 mb-0"
 				id="grocyai-capture-status"
