@@ -90,7 +90,7 @@ async function installReferenceApi(page)
 async function installScanApi(page, options)
 {
 	const settings = options || {};
-	const state = { seq: 0, byBarcode: {}, scans: 0 };
+	const state = { seq: 0, byBarcode: {}, scans: 0, tripId: 6 };
 	await page.route('**/api/grocy-ai/capture/**', function (route)
 	{
 		const request = route.request();
@@ -99,7 +99,8 @@ async function installScanApi(page, options)
 
 		if (method === 'POST' && /\/capture\/trips$/.test(pathname))
 		{
-			return json(route, makeTrip({ status: 'open' }));
+			state.tripId++;
+			return json(route, makeTrip({ id: state.tripId, status: 'open' }));
 		}
 
 		if (method === 'POST' && /\/capture\/trips\/\d+\/scan$/.test(pathname))
@@ -228,6 +229,17 @@ async function expectNoForbiddenWrites(page)
 
 test.describe('purchase capture — scan loop', function ()
 {
+	test('@cap @mob Review trip opens the current trip and follows Start new trip', async function ({ page })
+	{
+		await installScanApi(page);
+		await page.goto('/fixtures/capture.html');
+		const review = page.locator('#grocyai-capture-review-link');
+		await expect(review).toHaveAttribute('href', '/grocyai/capture/review?trip=7');
+		await page.locator('#grocyai-capture-new-trip-button').click();
+		await expect(review).toHaveAttribute('href', '/grocyai/capture/review?trip=8');
+		await expectNoForbiddenWrites(page);
+	});
+
 	test('@cap @mob @smoke phone scan loop appends known and unknown items and writes no stock', async function ({ page })
 	{
 		await installScanApi(page);

@@ -140,6 +140,8 @@
 		var input = document.getElementById('grocyai-capture-barcode');
 		var addButton = document.getElementById('grocyai-capture-add-button');
 		var newTripButton = document.getElementById('grocyai-capture-new-trip-button');
+		var reviewLink = document.getElementById('grocyai-capture-review-link');
+		var reviewUrl = reviewLink ? reviewLink.getAttribute('href') : '';
 		var statusEl = document.getElementById('grocyai-capture-status');
 		var linesEl = document.getElementById('grocyai-capture-lines');
 
@@ -237,6 +239,10 @@
 			return fetchJson(tripsEndpoint, { method: 'POST', body: '{}' }).then(function (trip)
 			{
 				currentTripId = trip && trip.id !== undefined ? trip.id : null;
+				if (reviewLink)
+				{
+					reviewLink.setAttribute('href', currentTripId === null ? reviewUrl : reviewUrl + '?trip=' + encodeURIComponent(String(currentTripId)));
+				}
 				lines = [];
 				productNames = {};
 				render();
@@ -245,6 +251,10 @@
 			}).catch(function ()
 			{
 				currentTripId = null;
+				if (reviewLink)
+				{
+					reviewLink.setAttribute('href', reviewUrl);
+				}
 				setStatus(copy.tripError);
 			});
 		}
