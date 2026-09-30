@@ -1,7 +1,7 @@
 @extends('layout.default')
 
 @php
-$grocyAiAssetVersion = '2.5.0';
+$grocyAiAssetVersion = '2.5.1';
 @endphp
 @push('pageStyles')
 <link rel="stylesheet"
@@ -50,14 +50,16 @@ $grocyAiAssetVersion = '2.5.0';
 			<h3 id="grocyai-capture-scan-heading">{{ $__t('Scan') }}</h3>
 			<div class="form-group mb-2">
 				<label for="grocyai-capture-barcode">{{ $__t('GTIN') }}</label>
-				<input type="text"
-					class="form-control form-control-lg barcodescanner-input"
-					id="grocyai-capture-barcode"
-					inputmode="numeric"
-					autocomplete="off"
-					enterkeyhint="done"
-					placeholder="{{ $__t('8, 12, 13, or 14 digits') }}"
-					data-target="grocyai-capture-barcode">
+				<div class="grocy-ai-capture-input-row">
+					<input type="text"
+						class="form-control form-control-lg barcodescanner-input"
+						id="grocyai-capture-barcode"
+						inputmode="numeric"
+						autocomplete="off"
+						enterkeyhint="done"
+						placeholder="{{ $__t('8, 12, 13, or 14 digits') }}"
+						data-target="grocyai-capture-barcode">
+				</div>
 			</div>
 			<div class="grocy-ai-actions">
 				<button type="button"

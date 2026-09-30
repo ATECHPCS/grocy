@@ -273,7 +273,7 @@ test.describe('purchase capture — scan loop', function ()
 		await expectNoForbiddenWrites(page);
 	});
 
-	test('@cap @mob the GTIN input and primary action keep a 44px touch target on phone widths', async function ({ page })
+	test('@cap @mob the GTIN input and camera button have separate touch targets on phone widths', async function ({ page })
 	{
 		await installScanApi(page);
 		for (const width of [320, 375, 390])
@@ -283,8 +283,14 @@ test.describe('purchase capture — scan loop', function ()
 			const inputBox = await page.locator('#grocyai-capture-barcode').boundingBox();
 			expect(inputBox, width + 'px GTIN input must render').not.toBeNull();
 			expect(inputBox.height, width + 'px GTIN input height').toBeGreaterThanOrEqual(44);
+			const cameraBox = await page.locator('#camerabarcodescanner-start-button').boundingBox();
+			expect(cameraBox.width, width + 'px camera button width').toBeGreaterThanOrEqual(44);
+			expect(cameraBox.height, width + 'px camera button height').toBeGreaterThanOrEqual(44);
+			expect(cameraBox.x, width + 'px camera button must follow the input').toBeGreaterThanOrEqual(inputBox.x + inputBox.width);
+			expect(cameraBox.x + cameraBox.width, width + 'px camera button must stay inside viewport').toBeLessThanOrEqual(width);
 			const addBox = await page.locator('#grocyai-capture-add-button').boundingBox();
 			expect(addBox.height, width + 'px Add button height').toBeGreaterThanOrEqual(44);
+			expect(addBox.y, width + 'px Add button must be below camera').toBeGreaterThanOrEqual(cameraBox.y + cameraBox.height);
 		}
 	});
 

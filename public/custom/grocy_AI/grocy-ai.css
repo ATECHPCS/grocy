@@ -101,6 +101,30 @@ details.grocy-ai-diagnostics:not([open]) > .grocy-ai-diagnostic-body {
 	display: none;
 }
 
+.grocy-ai-capture-input-row {
+	display: flex;
+	align-items: stretch;
+	gap: 8px;
+	min-width: 0;
+}
+
+.grocy-ai-capture-input-row #grocyai-capture-barcode {
+	flex: 1 1 auto;
+	width: 0;
+	min-width: 0;
+}
+
+.grocy-ai-capture-input-row #camerabarcodescanner-start-button {
+	position: static;
+	flex: 0 0 52px;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-height: 48px;
+	margin: 0;
+	font-size: 20px;
+}
+
 #grocy-ai-upc {
 	min-height: 44px;
 }
