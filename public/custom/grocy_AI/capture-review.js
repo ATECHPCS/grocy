@@ -40,7 +40,9 @@
 		location: 'Default location',
 		store: 'Default store',
 		none: '(none)',
-		markReviewing: 'Mark as reviewing',
+		markReviewing: 'Finish scanning',
+		finishFirst: 'Finish scanning this trip and open review? This will not change stock.',
+		finishSecond: 'Confirm again: Are you finished scanning this trip?',
 		status: 'Status',
 		commit: 'Commit purchase',
 		committed: 'Committed — transaction %s',
@@ -126,6 +128,8 @@
 			store: d.labelStore || DEFAULT_COPY.store,
 			none: d.labelNone || DEFAULT_COPY.none,
 			markReviewing: d.labelMarkReviewing || DEFAULT_COPY.markReviewing,
+			finishFirst: d.labelFinishFirst || DEFAULT_COPY.finishFirst,
+			finishSecond: d.labelFinishSecond || DEFAULT_COPY.finishSecond,
 			status: d.labelStatus || DEFAULT_COPY.status,
 			commit: d.labelCommit || DEFAULT_COPY.commit,
 			committed: d.labelCommitted || DEFAULT_COPY.committed,
@@ -396,14 +400,23 @@
 			error.setAttribute('role', 'alert');
 
 			// Status + advance to reviewing.
-			var statusRow = element('div', 'grocy-ai-capture-review-status d-flex align-items-center mb-2');
+			var statusRow = element('div', 'grocy-ai-capture-review-status d-flex flex-wrap align-items-center mb-2');
 			statusRow.appendChild(element('span', 'mr-2', copy.status + ': '));
 			statusRow.appendChild(element('span', 'badge badge-secondary', currentTrip.status));
 			if (currentTrip.status === 'open')
 			{
-				var reviewingButton = element('button', 'btn btn-sm btn-outline-primary ml-3', copy.markReviewing);
+				var reviewingButton = element('button', 'btn btn-outline-primary ml-3', copy.markReviewing);
 				reviewingButton.type = 'button';
-				reviewingButton.addEventListener('click', function () { putTrip({ status: 'reviewing' }); });
+				reviewingButton.addEventListener('click', function ()
+				{
+					if (typeof window === 'undefined' || typeof window.confirm !== 'function'
+						|| !window.confirm(copy.finishFirst) || !window.confirm(copy.finishSecond))
+					{
+						return;
+					}
+					reviewingButton.disabled = true;
+					putTrip({ status: 'reviewing' }).finally(function () { reviewingButton.disabled = false; });
+				});
 				statusRow.appendChild(reviewingButton);
 			}
 			detailEl.appendChild(statusRow);
