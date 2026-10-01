@@ -16,6 +16,7 @@ function extractionFixture(): array
 	$pdo = new PDO('sqlite::memory:');
 	$pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 	$pdo->exec('CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT)');
+	$pdo->exec('CREATE TABLE shopping_locations (id INTEGER PRIMARY KEY, name TEXT)');
 	GrocyAiCaptureMigration::Bootstrap($pdo);
 	GrocyAiReceiptMigration::Bootstrap($pdo);
 	$pdo->exec("INSERT INTO grocy_ai_capture_trips (id, status, module_version) VALUES (1, 'reviewing', 'test')");

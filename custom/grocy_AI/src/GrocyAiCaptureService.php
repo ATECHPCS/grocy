@@ -67,6 +67,7 @@ class GrocyAiCaptureService
 	public function ScanIntoTrip(int $tripId, string $barcode, ?string $actor = null): array
 	{
 		$trip = $this->FetchTrip($tripId);
+		$this->AssertMutable($trip);
 		if ($trip['status'] === 'committed')
 		{
 			throw new \InvalidArgumentException('A committed trip cannot accept scans');
@@ -107,6 +108,7 @@ class GrocyAiCaptureService
 	public function LoadTrip(int $tripId, ?string $actor = null): array
 	{
 		$trip = $this->FetchTrip($tripId);
+		if ($this->IsCanceled($tripId)) return ['trip' => $trip, 'lines' => $this->FetchLines($tripId)];
 
 		// Q10: re-resolve every still-unresolved line (unknown OR a prior conflict) by barcode, so a line
 		// flips to known the moment its product + barcode exist in Grocy.
@@ -134,7 +136,35 @@ class GrocyAiCaptureService
 	 */
 	public function ListTrips(): array
 	{
-		return $this->Db->query('SELECT * FROM grocy_ai_capture_trips ORDER BY id DESC')->fetchAll(PDO::FETCH_ASSOC);
+		return $this->Db->query('SELECT t.* FROM grocy_ai_capture_trips t WHERE NOT EXISTS (SELECT 1 FROM grocy_ai_capture_trip_cancellations c WHERE c.trip_id = t.id) ORDER BY t.id DESC')->fetchAll(PDO::FETCH_ASSOC);
+	}
+
+	public function CancelTrip(int $tripId, ?string $actor = null): array
+	{
+		if ($this->Db->inTransaction()) throw new \RuntimeException('Cancellation requires its own transaction');
+		$this->Db->exec('BEGIN IMMEDIATE');
+		try
+		{
+			$trip = $this->FetchTrip($tripId);
+			if ($this->IsCanceled($tripId))
+			{
+				$this->Db->commit();
+				return ['trip_id' => $tripId, 'canceled' => true];
+			}
+			if ($trip['status'] === 'committed' || $this->Db->query('SELECT 1 FROM grocy_ai_capture_lines WHERE trip_id = ' . $tripId . ' AND applied_at IS NOT NULL LIMIT 1')->fetchColumn() !== false)
+			{
+				throw new \InvalidArgumentException('Committed or applied trip cannot be canceled');
+			}
+			$this->Db->prepare('INSERT INTO grocy_ai_capture_trip_cancellations (trip_id, actor) VALUES (?, ?)')->execute([$tripId, $actor ?? 'unknown']);
+			$this->WriteAudit($tripId, null, $actor, 'cancel_trip', $trip, ['canceled' => true]);
+			$this->Db->commit();
+			return ['trip_id' => $tripId, 'canceled' => true];
+		}
+		catch (\Throwable $error)
+		{
+			if ($this->Db->inTransaction()) $this->Db->rollBack();
+			throw $error;
+		}
 	}
 
 	/**
@@ -146,6 +176,7 @@ class GrocyAiCaptureService
 	public function SetStatus(int $tripId, string $status, ?string $actor = null): array
 	{
 		$trip = $this->FetchTrip($tripId);
+		$this->AssertMutable($trip);
 		if (!($trip['status'] === 'open' && $status === 'reviewing'))
 		{
 			throw new \InvalidArgumentException('Unsupported trip status transition');
@@ -291,6 +322,7 @@ class GrocyAiCaptureService
 	public function CommitTrip(int $tripId, ?string $actor, string $confirmedChecksum): array
 	{
 		$trip = $this->FetchTrip($tripId);
+		if ($this->IsCanceled($tripId)) throw new \InvalidArgumentException('Canceled trip is read-only');
 		$status = (string)$trip['status'];
 		$recomputed = $this->ChecksumForTrip($tripId);
 
@@ -314,6 +346,7 @@ class GrocyAiCaptureService
 		try
 		{
 			$lockedTrip = $this->FetchTrip($tripId);
+			if ($this->IsCanceled($tripId)) throw new \InvalidArgumentException('Canceled trip is read-only');
 			$lockedStatus = (string)$lockedTrip['status'];
 			$lockedChecksum = $this->ChecksumForTrip($tripId);
 			if ($lockedStatus === 'committed' || !hash_equals($lockedChecksum, $confirmedChecksum))
@@ -489,10 +522,18 @@ class GrocyAiCaptureService
 	 */
 	private function AssertMutable(array $trip): void
 	{
+		if ($this->IsCanceled((int)$trip['id'])) throw new \InvalidArgumentException('Canceled trip is read-only');
 		if ((string)$trip['status'] === 'committed')
 		{
 			throw new \InvalidArgumentException('A committed trip is read-only');
 		}
+	}
+
+	private function IsCanceled(int $tripId): bool
+	{
+		$statement = $this->Db->prepare('SELECT 1 FROM grocy_ai_capture_trip_cancellations WHERE trip_id = ?');
+		$statement->execute([$tripId]);
+		return $statement->fetchColumn() !== false;
 	}
 
 	/**

@@ -919,6 +919,29 @@ class GrocyAiApiController extends BaseApiController
 		}
 	}
 
+	public function CancelCaptureTrip(Request $request, Response $response, array $args): Response
+	{
+		User::CheckPermission($request, User::PERMISSION_STOCK_PURCHASE);
+		$tripId = $args['tripId'] ?? null;
+		if (!is_string($tripId) || preg_match('/^[1-9][0-9]{0,9}$/D', $tripId) !== 1 || ($request->getParsedBody() ?? []) !== [])
+		{
+			return $this->GenericErrorResponse($response, 'Invalid capture cancellation', 400);
+		}
+		try
+		{
+			$service = new GrocyAiCaptureService(DatabaseService::GetInstance()->GetDbConnectionRaw());
+			return $this->ApiResponse($response, $service->CancelTrip((int)$tripId, (string)GROCY_USER_ID));
+		}
+		catch (\InvalidArgumentException $error)
+		{
+			return $this->GenericErrorResponse($response, $error->getMessage(), 409);
+		}
+		catch (\RuntimeException)
+		{
+			return $this->GenericErrorResponse($response, 'Capture unavailable', 503);
+		}
+	}
+
 	/**
 	 * Scan a barcode into a trip (CAP-01/CAP-02): resolve ownership immediately and coalesce duplicates. The
 	 * body is the closed `{ "barcode": "..." }` shape only. STOCK_PURCHASE-gated; writes no stock.
@@ -1179,7 +1202,7 @@ class GrocyAiApiController extends BaseApiController
 		}
 		catch (\InvalidArgumentException $ex)
 		{
-			$status = str_contains(strtolower($ex->getMessage()), 'committed') || str_contains(strtolower($ex->getMessage()), 'read only') || str_contains(strtolower($ex->getMessage()), 'unavailable for receipt upload') ? 409 : 400;
+			$status = str_contains(strtolower($ex->getMessage()), 'committed') || str_contains(strtolower($ex->getMessage()), 'read only') || str_contains(strtolower($ex->getMessage()), 'read-only') || str_contains(strtolower($ex->getMessage()), 'unavailable for receipt upload') ? 409 : 400;
 			return $this->GenericErrorResponse($response, $ex->getMessage(), $status);
 		}
 		catch (\RuntimeException)

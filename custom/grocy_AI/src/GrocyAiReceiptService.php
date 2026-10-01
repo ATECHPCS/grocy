@@ -65,6 +65,11 @@ class GrocyAiReceiptService
 			}
 			$before = $receipt;
 			$header = $this->HeaderChange($suggestions);
+			if ($receipt['shopping_location_id'] === null && !array_key_exists('shopping_location_id', $header) && is_string($header['merchant'] ?? null))
+			{
+				$store = $this->UniqueMerchantStore($header['merchant']);
+				if ($store !== null) $header['shopping_location_id'] = $store;
+			}
 			$this->Apply('grocy_ai_receipts', (int)$receipt['id'], $header + ['extraction_json' => json_encode($suggestions, JSON_THROW_ON_ERROR), 'status' => 'needs_review']);
 			$seq = 0;
 			foreach (array_merge($suggestions['lines'], $suggestions['adjustments'] ?? []) as $candidate)
@@ -333,6 +338,18 @@ class GrocyAiReceiptService
 		return $fields;
 	}
 
+	private function UniqueMerchantStore(string $merchant): ?int
+	{
+		$name = mb_strtolower(trim($merchant), 'UTF-8');
+		if ($name === '') return null;
+		$matches = [];
+		foreach ($this->Rows('SELECT id, name FROM shopping_locations', []) as $store)
+		{
+			if (mb_strtolower(trim((string)$store['name']), 'UTF-8') === $name) $matches[] = (int)$store['id'];
+		}
+		return count($matches) === 1 ? $matches[0] : null;
+	}
+
 	private function LineChange(array $input): array
 	{
 		$fields = array_intersect_key($input, array_flip(['raw_text', 'description', 'quantity', 'line_total', 'kind', 'decision', 'product_id', 'confidence']));
@@ -361,7 +378,7 @@ class GrocyAiReceiptService
 		try
 		{
 			$receipt = $this->Receipt($receiptId);
-			if ($this->Trip((int)$receipt['trip_id'])['status'] === 'committed') throw new InvalidArgumentException('Committed trip is read-only');
+			if ($this->Trip((int)$receipt['trip_id'])['status'] === 'committed' || $this->Scalar('SELECT 1 FROM grocy_ai_capture_trip_cancellations WHERE trip_id = ?', [(int)$receipt['trip_id']]) !== false) throw new InvalidArgumentException('Closed trip is read-only');
 			$action($receipt);
 			$view = $this->View($receiptId);
 			$this->Db->commit();
