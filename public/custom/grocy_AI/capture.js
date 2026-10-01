@@ -28,6 +28,8 @@
 		unknown: 'Unknown — needs product',
 		productFallback: 'Product #%s',
 		tripStarted: 'Trip started. Scan or enter a GTIN to add items.',
+		tripResumed: 'Trip #%s resumed. Scan or enter a GTIN to add items.',
+		resumeError: 'This trip cannot be resumed. Open Review trip or start a new trip.',
 		tripError: 'Could not start a capture trip. Reload the page to try again.',
 		scanError: 'That scan could not be added. Try again.',
 		finishFirst: 'Finish scanning this trip and open review? This will not change stock.',
@@ -120,6 +122,8 @@
 			unknown: d.labelUnknown || DEFAULT_COPY.unknown,
 			productFallback: d.labelProductFallback || DEFAULT_COPY.productFallback,
 			tripStarted: d.labelTripStarted || DEFAULT_COPY.tripStarted,
+			tripResumed: d.labelTripResumed || DEFAULT_COPY.tripResumed,
+			resumeError: d.labelResumeError || DEFAULT_COPY.resumeError,
 			tripError: d.labelTripError || DEFAULT_COPY.tripError,
 			scanError: d.labelScanError || DEFAULT_COPY.scanError,
 			finishFirst: d.labelFinishFirst || DEFAULT_COPY.finishFirst,
@@ -132,7 +136,7 @@
 	}
 
 	/**
-	 * Wire the scan-loop page: start a trip on load, then append/increment lines live as each scan (camera
+	 * Wire the scan-loop page: resume a requested open trip or start one, then append/increment lines as each scan (camera
 	 * or manual) POSTs to the STOCK_PURCHASE-gated capture endpoints. No stock is ever written from here.
 	 */
 	function attachCapture(document)
@@ -262,6 +266,12 @@
 				productNames = {};
 				render();
 				setStatus(copy.tripStarted);
+				if (typeof window !== 'undefined' && window.history && window.location)
+				{
+				var nextUrl = new URL(window.location.href);
+				nextUrl.searchParams.delete('trip');
+				window.history.replaceState(null, '', nextUrl.pathname + nextUrl.search + nextUrl.hash);
+				}
 				focusInput();
 			}).catch(function ()
 			{
@@ -271,6 +281,36 @@
 					reviewLink.setAttribute('href', reviewUrl);
 				}
 				setStatus(copy.tripError);
+			});
+		}
+
+		function resumeTrip(tripId)
+		{
+			return fetchJson(tripsEndpoint + '/' + encodeURIComponent(tripId), { method: 'GET' }).then(function (payload)
+			{
+				if (!payload || !payload.trip || String(payload.trip.id) !== tripId || payload.trip.status !== 'open'
+					|| !Array.isArray(payload.lines) || payload.lines.some(function (line)
+					{
+						return !isLinePayload(line) || String(line.trip_id) !== tripId;
+					}))
+				{
+					throw new Error('invalid_resume_trip');
+				}
+				currentTripId = tripId;
+				lines = payload.lines;
+				productNames = {};
+				if (reviewLink) reviewLink.setAttribute('href', reviewUrl + '?trip=' + encodeURIComponent(tripId));
+				lines.forEach(function (line) { if (line.status === 'known') resolveProductName(line.resolved_product_id); });
+				render();
+				setStatus(copy.tripResumed.replace('%s', tripId));
+				focusInput();
+			}).catch(function ()
+			{
+				currentTripId = null;
+				lines = [];
+				render();
+				if (reviewLink) reviewLink.setAttribute('href', reviewUrl);
+				setStatus(copy.resumeError);
 			});
 		}
 
@@ -406,10 +446,15 @@
 			});
 		}
 
-		startTrip();
+		var requestedTrip = typeof window !== 'undefined' && window.location
+			? new URLSearchParams(window.location.search).get('trip') : null;
+		if (requestedTrip === null) startTrip();
+		else if (/^[1-9][0-9]{0,9}$/.test(requestedTrip)) resumeTrip(requestedTrip);
+		else setStatus(copy.resumeError);
 
 		return {
 			startTrip: startTrip,
+			resumeTrip: resumeTrip,
 			submitBarcode: submitBarcode,
 			finishScanning: finishScanning
 		};

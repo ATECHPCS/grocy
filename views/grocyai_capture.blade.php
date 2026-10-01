@@ -1,7 +1,7 @@
 @extends('layout.default')
 
 @php
-$grocyAiAssetVersion = '2.5.4';
+$grocyAiAssetVersion = '2.6.1';
 @endphp
 @push('pageStyles')
 <link rel="stylesheet"
@@ -40,6 +40,8 @@ $grocyAiAssetVersion = '2.5.4';
 	data-label-unknown="{{ $__t('Unknown — needs product') }}"
 	data-label-product-fallback="{{ $__t('Product #%s', '%s') }}"
 	data-label-trip-started="{{ $__t('Trip started. Scan or enter a GTIN to add items.') }}"
+	data-label-trip-resumed="{{ $__t('Trip #%s resumed. Scan or enter a GTIN to add items.', '%s') }}"
+	data-label-resume-error="{{ $__t('This trip cannot be resumed. Open Review trip or start a new trip.') }}"
 	data-label-trip-error="{{ $__t('Could not start a capture trip. Reload the page to try again.') }}"
 	data-label-scan-error="{{ $__t('That scan could not be added. Try again.') }}"
 	data-label-finish-first="{{ $__t('Finish scanning this trip and open review? This will not change stock.') }}"

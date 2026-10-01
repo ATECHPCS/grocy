@@ -124,6 +124,7 @@
 			location: d.labelLocation || DEFAULT_COPY.location,
 			none: d.labelNone || DEFAULT_COPY.none,
 			markReviewing: d.labelMarkReviewing || DEFAULT_COPY.markReviewing,
+			continueScanning: d.labelContinueScanning || 'Continue scanning',
 			finishFirst: d.labelFinishFirst || DEFAULT_COPY.finishFirst,
 			finishSecond: d.labelFinishSecond || DEFAULT_COPY.finishSecond,
 			status: d.labelStatus || DEFAULT_COPY.status,
@@ -145,6 +146,7 @@
 
 		var tripsEndpoint = root.getAttribute('data-trips-endpoint') || '';
 		var productNewBase = root.getAttribute('data-product-new-url') || '';
+		var captureUrl = root.getAttribute('data-capture-url') || '';
 		var tripIdRaw = root.getAttribute('data-trip-id') || '';
 		var copy = readCopy(root);
 		var tripsListEl = document.getElementById('grocyai-capture-review-trips');
@@ -415,6 +417,9 @@
 			statusRow.appendChild(element('span', 'badge badge-secondary', currentTrip.status));
 			if (currentTrip.status === 'open')
 			{
+				var continueLink = element('a', 'btn btn-outline-primary ml-3', copy.continueScanning);
+				continueLink.setAttribute('href', captureUrl + '?trip=' + encodeURIComponent(String(currentTripId)));
+				statusRow.appendChild(continueLink);
 				var reviewingButton = element('button', 'btn btn-outline-primary ml-3', copy.markReviewing);
 				reviewingButton.type = 'button';
 				reviewingButton.addEventListener('click', function ()
