@@ -529,10 +529,12 @@ GROCY_DATAPATH=/etc/komodo/grocy php8.5 custom/grocy_AI/bin/capture-research-bac
 
 The JSON lists at most 100 trip lines, candidate IDs and count, excluded line IDs with safe blocker reasons and counts, and a SHA-256 checksum. Only selected, unapplied, checksum-valid unknown lines with no resolved product are candidates. Review the IDs against trip #12 before applying. A missing, canceled, or committed trip cannot be applied; a trip over 100 lines is refused. The preview connection is read-only.
 
-To queue exactly the reviewed candidate set, copy the checksum from that preview:
+To queue exactly the reviewed candidate set, paste the 64-character checksum from that preview when prompted, then run the command with the quoted shell variable:
 
 ```sh
-GROCY_DATAPATH=/etc/komodo/grocy php8.5 custom/grocy_AI/bin/capture-research-backfill.php --trip=12 --apply --checksum=<preview-sha256>
+printf 'Paste reviewed preview checksum: '
+IFS= read -r CHECKSUM
+GROCY_DATAPATH=/etc/komodo/grocy php8.5 custom/grocy_AI/bin/capture-research-backfill.php --trip=12 --apply --checksum="$CHECKSUM"
 ```
 
 Apply locks SQLite for the duration, recalculates the trip/line checksum, and aborts if status, cancellation, selection, barcode, quantity, or another included line value changed. Run a fresh preview after any refusal. Repeating an accepted apply is safe: existing research drafts are reused, and `created_count` reports newly queued drafts. This command writes only namespaced research job, draft, and audit rows. It does not create products, attach barcodes, change receipt/capture rows, or book stock. The companion may start researching queued GTINs; product approval and purchase commit remain explicit separate actions. `--db=PATH` is for isolated fixture verification; omit it on the household deployment.
