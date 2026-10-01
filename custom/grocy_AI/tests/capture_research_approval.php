@@ -5,6 +5,7 @@ declare(strict_types=1);
 if (!defined('GROCY_USER_ID')) define('GROCY_USER_ID', 1);
 if (!defined('GROCY_MODE')) define('GROCY_MODE', 'production');
 require_once __DIR__ . '/../../../packages/autoload.php';
+require_once __DIR__ . '/../../../services/StockService.php';
 foreach (['GrocyAiGtin', 'GrocyAiBarcodeService', 'GrocyAiCaptureMigration', 'GrocyAiReceiptMigration', 'GrocyAiReceiptService', 'GrocyAiCaptureResearchMigration', 'GrocyAiCaptureResearchService', 'GrocyAiCaptureService', 'GrocyAiTaxonomyMigration', 'GrocyAiTaxonomyService', 'GrocyAiCaptureProductService'] as $file) require_once __DIR__ . '/../src/' . $file . '.php';
 
 function approvalCheck(bool $condition, string $message): void { if (!$condition) throw new RuntimeException($message); }
@@ -67,13 +68,17 @@ $db->exec("INSERT INTO grocy_ai_capture_lines (id, trip_id, seq, scanned_barcode
 foreach ([5 => '036000291452', 6 => '012345678905', 7 => '042100005264', 8 => '7501031311309'] as $lineId => $barcode) $research->EnqueueUnknown(1, $lineId, $barcode);
 $db->prepare('INSERT INTO product_barcodes (product_id, barcode) VALUES (?, ?)')->execute([$id, '00036000291452']);
 $approval->LinkDraft(1, 5, 1, $id, 'test');
-approvalCheck((int)$db->query("SELECT COUNT(*) FROM product_barcodes WHERE product_id = $id AND barcode = '036000291452'")->fetchColumn() === 1, 'link attaches original scan despite existing canonical equivalent');
+approvalCheck((int)$db->query("SELECT COUNT(*) FROM product_barcodes WHERE product_id = $id AND barcode = '00036000291452'")->fetchColumn() === 1, 'link preserves existing exact barcode');
+approvalCheck((int)$db->query("SELECT COUNT(*) FROM product_barcodes WHERE product_id = $id AND barcode IN ('00036000291452', '036000291452')")->fetchColumn() === 1, 'canonical equivalent uses one stored barcode');
 $countBeforeTaxonomy = (int)$db->query('SELECT COUNT(*) FROM products')->fetchColumn();
 approvalReject(fn() => $approval->ApproveDraft(1, 6, 1, [...$fields, 'name' => 'Taxonomy item', 'taxonomy_leaf_slug' => 'stale-leaf'], 'test'));
 approvalCheck((int)$db->query('SELECT COUNT(*) FROM products')->fetchColumn() === $countBeforeTaxonomy && (int)$db->query("SELECT COUNT(*) FROM sqlite_master WHERE name = 'grocy_ai_taxonomy_classifications'")->fetchColumn() === 0, 'invalid taxonomy rolls back product and bootstrap');
 $taxResult = $approval->ApproveDraft(1, 6, 1, [...$fields, 'name' => 'Taxonomy item', 'taxonomy_leaf_slug' => 'meat-seafood'], 'test');
 approvalCheck((int)$db->query('SELECT COUNT(*) FROM grocy_ai_taxonomy_classifications WHERE product_id = ' . (int)$taxResult['product_id'])->fetchColumn() === 1, 'valid taxonomy assignment commits with product');
+$db->prepare('INSERT INTO quantity_unit_conversions (from_qu_id, to_qu_id, factor, product_id) VALUES (1, 2, 2, ?)')->execute([$id]);
+$countBeforeParent = (int)$db->query('SELECT COUNT(*) FROM products')->fetchColumn();
 approvalReject(fn() => $approval->ApproveDraft(1, 7, 1, [...$fields, 'name' => 'Child item', 'qu_id_purchase' => 2, 'qu_id_stock' => 2, 'parent_product_id' => $id], 'test'));
+approvalCheck((int)$db->query('SELECT COUNT(*) FROM products')->fetchColumn() === $countBeforeParent, 'parent-only conversion rejection rolls back child');
 $db->exec('INSERT INTO quantity_unit_conversions (from_qu_id, to_qu_id, factor) VALUES (1, 2, 2)');
 $child = $approval->ApproveDraft(1, 7, 1, [...$fields, 'name' => 'Child item', 'qu_id_purchase' => 2, 'qu_id_stock' => 2, 'parent_product_id' => $id], 'test');
 approvalCheck((int)$db->query('SELECT parent_product_id FROM products WHERE id = ' . (int)$child['product_id'])->fetchColumn() === $id, 'compatible parent accepted');
@@ -86,6 +91,8 @@ approvalCheck((int)$db->query('SELECT COUNT(*) FROM stock_log')->fetchColumn() =
 $db->exec('CREATE TABLE user_permissions_resolved (id INTEGER PRIMARY KEY, user_id INTEGER, permission_name TEXT)');
 $connection = new ReflectionClass(Grocy\Services\DatabaseService::class);
 foreach (['DbConnectionRaw' => $db, 'DbConnection' => new LessQL\Database($db), 'instance' => $connection->newInstance()] as $key => $value) $connection->getProperty($key)->setValue(null, $value);
+approvalCheck((int)Grocy\Services\StockService::GetInstance()->GetProductIdFromBarcode('00036000291452') === $id, 'native lookup preserves old barcode spelling');
+approvalCheck((int)Grocy\Services\StockService::GetInstance()->GetProductIdFromBarcode('036000291452') === $id, 'native lookup resolves linked raw scan');
 require_once __DIR__ . '/../src/GrocyAiCaptureResearchController.php';
 $controller = (new ReflectionClass(GrocyAI\Controllers\Api\GrocyAiCaptureResearchController::class))->newInstanceWithoutConstructor();
 $request = (new Slim\Psr7\Factory\ServerRequestFactory())->createServerRequest('POST', '/test')->withParsedBody(['revision' => 1, 'fields' => $fields]);

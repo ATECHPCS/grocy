@@ -27,6 +27,7 @@ The small upstream integration surface is:
 - `views/productform.blade.php`: conditional product-enrichment panel and assets.
 - `public/viewjs/productform.js`: one post-Save continuation invokes transient barcode attachment only after Grocy establishes a trusted product ID and before redirect.
 - `migrations/0256.php`: transactional checksum-valid canonical GTIN uniqueness; collisions block without deleting or reassigning household data.
+- `services/StockService.php`: after Grocy's exact barcode lookup misses, resolve checksum-valid GTIN variants through the module's canonical owner lookup. This preserves existing stored barcode spellings while capture approval can link an equivalent scan under the canonical unique index. Non-GTIN barcodes retain the native exact-only behavior.
 - `version.json` at image build time: customization marker that invalidates Grocy's persisted route/view cache.
 
 The module implementation and contract are documented in [`custom/grocy_AI/README.md`](custom/grocy_AI/README.md).

@@ -33,6 +33,7 @@ class GrocyAiCaptureProductService
 			$this->RequireActive('quantity_units', $fields['qu_id_purchase']);
 			$this->RequireActive('quantity_units', $fields['qu_id_stock']);
 			if (isset($fields['product_group_id'])) $this->RequireActive('product_groups', $fields['product_group_id']);
+			$parentStockUnit = null;
 			if (isset($fields['parent_product_id']))
 			{
 				$parent = $this->Db->prepare('SELECT 1 FROM products WHERE id = ? AND active = 1 AND parent_product_id IS NULL');
@@ -40,7 +41,7 @@ class GrocyAiCaptureProductService
 				if ($parent->fetchColumn() === false) throw new \InvalidArgumentException('Invalid parent product');
 				$parentUnit = $this->Db->prepare('SELECT qu_id_stock FROM products WHERE id = ?');
 				$parentUnit->execute([$fields['parent_product_id']]);
-				if (!$this->UnitsCompatible($fields['parent_product_id'], (int)$parentUnit->fetchColumn(), $fields['qu_id_stock'])) throw new \InvalidArgumentException('Incompatible parent unit');
+				$parentStockUnit = (int)$parentUnit->fetchColumn();
 			}
 			$nameQuery = $this->Db->prepare('SELECT id FROM products WHERE name = ? COLLATE NOCASE LIMIT 1');
 			$nameQuery->execute([$name]);
@@ -60,6 +61,7 @@ class GrocyAiCaptureProductService
 			{
 				(new Database($this->Db))->quantity_unit_conversions()->createRow(['product_id' => $productId, 'from_qu_id' => $fields['qu_id_purchase'], 'to_qu_id' => $fields['qu_id_stock'], 'factor' => $factor])->save();
 			}
+			if ($parentStockUnit !== null && !$this->UnitsCompatible($productId, $parentStockUnit, $fields['qu_id_stock'])) throw new \InvalidArgumentException('Incompatible parent unit');
 			$this->AttachBarcode($productId, (string)$line['scanned_barcode']);
 			if ($leaf !== null)
 			{
@@ -143,11 +145,12 @@ class GrocyAiCaptureProductService
 		return (float)$factor;
 	}
 
-	private function UnitsCompatible(int $parentId, int $parentStock, int $childStock): bool
+	private function UnitsCompatible(int $childId, int $parentStock, int $childStock): bool
 	{
 		if ($parentStock === $childStock) return true;
+		// Stock substitution resolves conversions against the child product.
 		$query = $this->Db->prepare('SELECT 1 FROM quantity_unit_conversions_resolved WHERE product_id = ? AND from_qu_id = ? AND to_qu_id = ? AND factor > 0 LIMIT 1');
-		$query->execute([$parentId, $parentStock, $childStock]);
+		$query->execute([$childId, $parentStock, $childStock]);
 		return $query->fetchColumn() !== false;
 	}
 
@@ -170,11 +173,7 @@ class GrocyAiCaptureProductService
 		if (count($owners) > 1 || ($owners !== [] && (int)$owners[0]['product_id'] !== $productId)) throw new \RuntimeException('Barcode already owned');
 		if ($owners !== [])
 		{
-			if ($owners[0]['barcode'] !== $barcode)
-			{
-				// Canonical uniqueness permits one stored spelling; prefer the capture's original scan.
-				$this->Db->prepare('UPDATE product_barcodes SET barcode = ? WHERE id = ?')->execute([$barcode, $owners[0]['id']]);
-			}
+			// Canonical uniqueness keeps one stored spelling; native lookup resolves equivalent GTIN scans.
 			return;
 		}
 		(new Database($this->Db))->product_barcodes()->createRow(['product_id' => $productId, 'barcode' => $barcode])->save();

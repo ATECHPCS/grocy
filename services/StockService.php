@@ -834,6 +834,14 @@ class StockService extends BaseService
 		$potentialProduct = $this->getDatabase()->product_barcodes()->where('barcode = :1 COLLATE NOCASE', $barcode)->fetch();
 		if ($potentialProduct === null)
 		{
+			// The Grocy AI canonical index keeps one stored GTIN spelling; resolve equivalent scans after exact lookup.
+			require_once __DIR__ . '/../custom/grocy_AI/src/GrocyAiGtin.php';
+			require_once __DIR__ . '/../custom/grocy_AI/src/GrocyAiBarcodeService.php';
+			if (\GrocyAI\Services\GrocyAiGtin::CanonicalOrNull($barcode) !== null)
+			{
+				$owner = (new \GrocyAI\Services\GrocyAiBarcodeService())->ResolveOwner($barcode);
+				if ($owner['owner_product_id'] !== null) return $owner['owner_product_id'];
+			}
 			throw new \Exception("No product with barcode $barcode found");
 		}
 
