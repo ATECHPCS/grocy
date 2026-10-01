@@ -309,9 +309,9 @@ class GrocyAiCaptureService
 	/**
 	 * The deterministic trip checksum: a lowercase 64-hex SHA-256 over the commit-relevant content of the
 	 * selected known lines — resolved product, canonical/scanned barcode, quantity, price, and best-before
-	 * override — via the canonical-JSON idiom (mirrors `GrocyAiBulkService::ChecksumForPlan`). Lines are
-	 * normalized and sorted by identity, so reordering never changes it and mutating any covered value
-	 * always does. The reviewed trip and the committed trip are provably the same artifact.
+	 * override — via the canonical-JSON idiom (mirrors `GrocyAiBulkService::ChecksumForPlan`). It also
+	 * binds selected barcode owners and finalized research draft identity/revision to the reviewed receipt
+	 * and allocation state. The reviewed trip and the committed trip are provably the same artifact.
 	 */
 	public function ChecksumForTrip(int $tripId): string
 	{
@@ -335,8 +335,15 @@ class GrocyAiCaptureService
 		$receiptLines = $this->Db->query('SELECT l.* FROM grocy_ai_receipt_lines l JOIN grocy_ai_receipts r ON r.id = l.receipt_id WHERE r.trip_id = ' . $tripId . ' ORDER BY l.id')->fetchAll(PDO::FETCH_ASSOC);
 		$allocations = $this->Db->query('SELECT * FROM grocy_ai_receipt_allocations WHERE trip_id = ' . $tripId . ' ORDER BY id')->fetchAll(PDO::FETCH_ASSOC);
 		$captures = $this->Db->query('SELECT id, resolved_product_id, scanned_barcode, canonical_gtin, selected, quantity, best_before_override FROM grocy_ai_capture_lines WHERE trip_id = ' . $tripId . ' ORDER BY id')->fetchAll(PDO::FETCH_ASSOC);
+		$approvedDrafts = $this->Db->query("SELECT d.line_id, d.id, d.revision, d.outcome, d.final_product_id FROM grocy_ai_capture_research_drafts d JOIN grocy_ai_capture_lines c ON c.id = d.line_id AND c.trip_id = d.trip_id WHERE d.trip_id = " . $tripId . " AND c.selected = 1 AND d.outcome IN ('approved', 'linked') ORDER BY d.line_id")->fetchAll(PDO::FETCH_ASSOC);
+		$owners = [];
+		foreach ($captures as $capture)
+		{
+			if ((int)$capture['selected'] !== 1) continue;
+			$owners[(int)$capture['id']] = $this->Resolve((string)$capture['scanned_barcode'])['resolved_product_id'];
+		}
 		$trip = $this->FetchTrip($tripId);
-		return hash('sha256', $this->CanonicalJson(['version' => GrocyAiReceiptMigration::VERSION, 'lines' => $normalized, 'captures' => $captures, 'receipts' => $receipts, 'receipt_lines' => $receiptLines, 'allocations' => $allocations, 'location' => $trip['default_location_id']]));
+		return hash('sha256', $this->CanonicalJson(['version' => GrocyAiReceiptMigration::VERSION, 'lines' => $normalized, 'captures' => $captures, 'selected_owners' => $owners, 'approved_drafts' => $approvedDrafts, 'receipts' => $receipts, 'receipt_lines' => $receiptLines, 'allocations' => $allocations, 'location' => $trip['default_location_id']]));
 	}
 
 	/**

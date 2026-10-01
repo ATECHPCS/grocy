@@ -277,8 +277,17 @@ class GrocyAiReceiptService
 			foreach ($this->ReceiptIssues($view['receipt']) as $issue) $issues[] = 'receipt_' . $id . '_' . $issue;
 		}
 		$captures = $this->Rows('SELECT * FROM grocy_ai_capture_lines WHERE trip_id = ? ORDER BY seq', [$tripId]);
+		$hasResearchDrafts = $this->Scalar("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'grocy_ai_capture_research_drafts'", []) !== false;
 		foreach ($captures as $capture)
 		{
+			if ((int)$capture['selected'] === 1)
+			{
+				$draft = $hasResearchDrafts ? $this->One('SELECT outcome, final_product_id FROM grocy_ai_capture_research_drafts WHERE trip_id = ? AND line_id = ?', [$tripId, (int)$capture['id']]) : null;
+				if ($capture['status'] === 'unknown' || $capture['resolved_product_id'] === null || ($draft !== null && (!in_array($draft['outcome'], ['approved', 'linked'], true) || (int)$draft['final_product_id'] !== (int)$capture['resolved_product_id'])))
+				{
+					$issues[] = 'capture_line_' . $capture['id'] . '_product_review_required';
+				}
+			}
 			$total = (float)$this->Scalar('SELECT COALESCE(SUM(quantity), 0) FROM grocy_ai_receipt_allocations WHERE active = 1 AND capture_line_id = ?', [(int)$capture['id']]);
 			if ((int)$capture['selected'] === 1 && abs($total - (float)$capture['quantity']) > 0.000001) $issues[] = 'capture_line_' . $capture['id'] . '_quantity_unmatched';
 			if ((int)$capture['selected'] === 0 && $total > 0) $issues[] = 'capture_line_' . $capture['id'] . '_unselected_allocated';
