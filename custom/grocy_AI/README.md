@@ -499,7 +499,7 @@ Attach the reviewed transient barcode through Grocy's normal Save boundary and e
 
 ### Receipt review on a phone
 
-To continue scanning an open trip, use **Continue scanning** from its review page or open `/grocyai/capture?trip=<id>`. The capture page loads the saved lines and adds subsequent scans to that trip. Without a trip ID, it starts a fresh trip. **Start new trip** remains an explicit choice.
+To continue scanning an open trip, use **Continue scanning** from its review page or open `/grocyai/capture?trip=<id>`. The capture page loads the saved lines and adds subsequent scans to that trip. Without a trip ID, it resumes the signed-in user's most recent open trip that has saved scans; if none exists, it starts a fresh trip. **Start new trip** remains an explicit choice.
 
 Open Purchase capture review, attach receipt photos (JPEG, PNG or WebP), and choose Read receipt or enter lines manually. Save each section before moving on. Each line needs an Include or Ignore decision; included lines require explicit product/scanned-item allocations with confirmed quantity and unit price. Add multiple allocations to split a line. Remove allocations before ignoring an included line. Ignored purchases and adjustments remain in receipt totals without entering stock.
 

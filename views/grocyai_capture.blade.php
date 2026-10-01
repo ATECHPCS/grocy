@@ -1,7 +1,7 @@
 @extends('layout.default')
 
 @php
-$grocyAiAssetVersion = '2.6.1';
+$grocyAiAssetVersion = '2.6.2';
 @endphp
 @push('pageStyles')
 <link rel="stylesheet"
@@ -35,6 +35,7 @@ $grocyAiAssetVersion = '2.6.1';
 <div class="row permission-STOCK_PURCHASE"
 	id="grocyai-capture"
 	data-trips-endpoint="{{ $U('/api/grocy-ai/capture/trips', true) }}"
+	data-default-trip-id="{{ $defaultTripId !== null ? $defaultTripId : '' }}"
 	data-products-endpoint="{{ $U('/api/objects/products', true) }}"
 	data-label-known="{{ $__t('Known') }}"
 	data-label-unknown="{{ $__t('Unknown — needs product') }}"
