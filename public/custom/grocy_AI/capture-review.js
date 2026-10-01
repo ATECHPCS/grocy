@@ -456,9 +456,9 @@
 			}
 			currentLines.forEach(function (line) { linesList.appendChild(renderLine(line)); });
 			detailEl.appendChild(linesList);
-			var researchHost = element('div', 'grocy-ai-product-research-list');
-			detailEl.appendChild(researchHost);
-			if (window.GrocyAIProductResearch) researchComponent = window.GrocyAIProductResearch(researchHost, { tripId: currentTripId, lines: currentLines, receipts: receiptReadiness ? receiptReadiness.receipts : [], locationId: currentTrip.default_location_id, readOnly: currentTrip.status === 'committed', reload: function () { return loadTrip(currentTripId); } });
+			var researchError = element('div', 'invalid-feedback d-block');
+			detailEl.appendChild(researchError);
+			if (window.GrocyAIProductResearch) researchComponent = window.GrocyAIProductResearch(linesList, { errorHost: researchError, tripId: currentTripId, lines: currentLines, receipts: receiptReadiness ? receiptReadiness.receipts : [], locationId: currentTrip.default_location_id, readOnly: currentTrip.status === 'committed', reload: function () { return loadTrip(currentTripId); } });
 
 			var receiptsHost = element('div', 'grocy-ai-receipts');
 			detailEl.appendChild(receiptsHost);
