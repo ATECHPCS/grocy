@@ -52,6 +52,7 @@ class GrocyAiReceiptService
 		return $this->Mutate($receiptId, function (array $receipt) use ($suggestions, $actor, $expectedRevision): void
 		{
 			if ($expectedRevision !== null && (int)$receipt['revision'] !== $expectedRevision) throw new InvalidArgumentException('Receipt changed during OCR');
+			if ($this->Scalar("SELECT 1 FROM grocy_ai_receipt_audit WHERE receipt_id = ? AND action = 'update_receipt' LIMIT 1", [(int)$receipt['id']]) !== false) throw new InvalidArgumentException('Receipt has manual header edits');
 			if (!isset($suggestions['lines']) || !is_array($suggestions['lines']) || !is_array($suggestions['adjustments'] ?? []) || count($suggestions['lines']) + count($suggestions['adjustments'] ?? []) > 200)
 			{
 				throw new InvalidArgumentException('Invalid receipt extraction lines');
@@ -325,7 +326,7 @@ class GrocyAiReceiptService
 			{
 				if ($value !== null && (!is_numeric($value) || !is_finite((float)$value) || (float)$value < 0)) throw new InvalidArgumentException('Invalid receipt amount or location');
 			}
-			elseif ($value !== null && (!is_string($value) || strlen($value) > 255)) throw new InvalidArgumentException('Invalid receipt text');
+			elseif ($value !== null && (!is_string($value) || mb_strlen($value, 'UTF-8') > 255)) throw new InvalidArgumentException('Invalid receipt text');
 		}
 		return $fields;
 	}

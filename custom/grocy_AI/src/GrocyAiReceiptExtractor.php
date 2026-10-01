@@ -35,6 +35,7 @@ class GrocyAiReceiptExtractor
 		$view = $this->View($tripId, $receiptId);
 		if ($receipt['extraction_json'] !== null) return ['status' => $view['receipt']['status'], 'receipt' => $view];
 		if ($view['lines'] !== []) return ['status' => 'manual_entry', 'message' => 'Receipt already has manual entries', 'receipt' => $view];
+		if ($this->HasManualHeaderEdits($receiptId)) return ['status' => 'manual_entry', 'message' => 'Receipt has manual edits', 'receipt' => $view];
 		try
 		{
 			if ($this->ServiceUrl === '' || $this->ApiKey === '' || filter_var($this->ServiceUrl, FILTER_VALIDATE_URL) === false || !in_array(parse_url($this->ServiceUrl, PHP_URL_SCHEME), ['http', 'https'], true)) throw new RuntimeException('Provider unavailable');
@@ -81,6 +82,13 @@ class GrocyAiReceiptExtractor
 		throw new \InvalidArgumentException('Receipt not found');
 	}
 
+	private function HasManualHeaderEdits(int $receiptId): bool
+	{
+		$statement = $this->Db->prepare("SELECT 1 FROM grocy_ai_receipt_audit WHERE receipt_id = ? AND action = 'update_receipt' LIMIT 1");
+		$statement->execute([$receiptId]);
+		return $statement->fetchColumn() !== false;
+	}
+
 	private function ValidateResponse(string $body): array
 	{
 		try { $value = json_decode($body, true, 32, JSON_THROW_ON_ERROR); } catch (\JsonException $error) { throw new RuntimeException('Invalid OCR response'); }
@@ -105,7 +113,7 @@ class GrocyAiReceiptExtractor
 
 	private function Text(mixed $value, int $limit, bool $nullable): bool
 	{
-		return ($nullable && $value === null) || (is_string($value) && trim($value) !== '' && strlen($value) <= $limit);
+		return ($nullable && $value === null) || (is_string($value) && trim($value) !== '' && mb_strlen($value, 'UTF-8') <= $limit);
 	}
 
 	private function Keys(array $value, array $expected): bool

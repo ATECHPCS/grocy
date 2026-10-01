@@ -32,6 +32,7 @@ function extractionCleanup(string $path): void
 {
 	unlink($path . '/grocy_ai/receipts/1/' . str_repeat('a', 48));
 	if (is_file($path . '/grocy_ai/receipts/1/' . str_repeat('b', 48))) unlink($path . '/grocy_ai/receipts/1/' . str_repeat('b', 48));
+	if (is_file($path . '/grocy_ai/receipts/1/' . str_repeat('c', 48))) unlink($path . '/grocy_ai/receipts/1/' . str_repeat('c', 48));
 	rmdir($path . '/grocy_ai/receipts/1'); rmdir($path . '/grocy_ai/receipts'); rmdir($path . '/grocy_ai'); rmdir($path);
 }
 function extractionResponse(): string
@@ -63,6 +64,16 @@ try
 	catch (InvalidArgumentException $expected) { extractionCheck($expected->getMessage() === 'Receipt changed during OCR', 'stale revision rejected inside import transaction'); }
 	file_put_contents($path . '/grocy_ai/receipts/1/' . str_repeat('b', 48), $png);
 	$pdo->exec("INSERT INTO grocy_ai_receipts (id, trip_id, image_id, mime_type, image_bytes) VALUES (22, 1, '" . str_repeat('b', 48) . "', 'image/png', " . strlen($png) . ")");
+	file_put_contents($path . '/grocy_ai/receipts/1/' . str_repeat('c', 48), $png);
+	$pdo->exec("INSERT INTO grocy_ai_receipts (id, trip_id, image_id, mime_type, image_bytes) VALUES (23, 1, '" . str_repeat('c', 48) . "', 'image/png', " . strlen($png) . ")");
+	$manualService = new GrocyAiReceiptService($pdo);
+	$manualService->UpdateReceipt(23, ['merchant' => 'Corrected store', 'purchase_date' => '2026-10-01', 'printed_total' => 7.25], 'test');
+	$manualCalls = 0;
+	$manualExtractor = new GrocyAiReceiptExtractor($pdo, $path, 'http://companion.local', 'private-test-key', function () use (&$manualCalls): array { $manualCalls++; return ['status' => 200, 'body' => extractionResponse()]; });
+	$manualRetry = $manualExtractor->Retry(1, 23);
+	extractionCheck($manualRetry['status'] === 'manual_entry' && $manualCalls === 0 && $manualRetry['receipt']['receipt']['merchant'] === 'Corrected store' && $manualRetry['receipt']['receipt']['purchase_date'] === '2026-10-01' && $manualRetry['receipt']['receipt']['printed_total'] == 7.25 && $manualRetry['receipt']['lines'] === [], 'retry cannot overwrite manual receipt header edits');
+	try { $manualService->ImportExtraction(23, json_decode(extractionResponse(), true, 32, JSON_THROW_ON_ERROR), 'test', (int)$manualRetry['receipt']['receipt']['revision']); throw new RuntimeException('manual header overwritten'); }
+	catch (InvalidArgumentException $expected) { extractionCheck($expected->getMessage() === 'Receipt has manual header edits', 'import transaction protects manual header edits'); }
 	foreach ([['status' => 504, 'body' => 'private receipt text'], ['status' => 503, 'body' => 'private receipt text'], ['status' => 200, 'body' => '{broken'], ['status' => 200, 'body' => json_encode(['lines' => [['description' => 'private receipt text']]])]] as $response)
 	{
 		$failed = (new GrocyAiReceiptExtractor($pdo, $path, 'http://companion.local', 'private-test-key', fn() => $response))->Extract(1, 22);
@@ -81,8 +92,10 @@ try
 	$ordered = json_decode(extractionResponse(), true, 32, JSON_THROW_ON_ERROR);
 	$ordered['lines'][0] = array_reverse($ordered['lines'][0], true);
 	$ordered['diagnostics'] = array_reverse($ordered['diagnostics'], true);
+	$ordered['merchant'] = str_repeat('é', 160);
+	$ordered['lines'][0]['description'] = str_repeat('ñ', 240);
 	$reordered = (new GrocyAiReceiptExtractor($pdo, $path, 'http://companion.local', 'private-test-key', fn() => ['status' => 200, 'body' => json_encode($ordered, JSON_THROW_ON_ERROR)]))->Extract(1, 22);
-	extractionCheck($reordered['status'] === 'needs_review', 'valid JSON object key order is irrelevant');
+	extractionCheck($reordered['status'] === 'needs_review' && $reordered['receipt']['receipt']['merchant'] === str_repeat('é', 160) && $reordered['receipt']['lines'][0]['description'] === str_repeat('ñ', 240), 'valid Unicode character lengths and JSON key order are accepted');
 	print "Receipt extractor tests passed\n";
 }
 finally { extractionCleanup($path); }
