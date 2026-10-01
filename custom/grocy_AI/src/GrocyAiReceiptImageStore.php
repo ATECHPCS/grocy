@@ -10,7 +10,7 @@ use RuntimeException;
 class GrocyAiReceiptImageStore
 {
 	private const MAX_BYTES = 10 * 1024 * 1024;
-	private const MAX_PIXELS = 40000000;
+	private const MAX_PIXELS = 16000000;
 	private PDO $Db;
 	private string $DataPath;
 
@@ -63,23 +63,27 @@ class GrocyAiReceiptImageStore
 		$temp = tempnam($directory, '.upload-');
 		if ($temp === false) throw new RuntimeException('Cannot create receipt image file');
 		$renamed = false;
+		$writeLocked = false;
 		try
 		{
 			if (file_put_contents($temp, $bytes) !== strlen($bytes)) throw new RuntimeException('Cannot write receipt image');
 			chmod($temp, 0600);
 			if (!rename($temp, $path)) throw new RuntimeException('Cannot store receipt image');
 			$renamed = true;
-			$this->Db->beginTransaction();
+			$this->Db->exec('BEGIN IMMEDIATE');
+			$writeLocked = true;
+			$this->AssertTrip($tripId);
 			$statement = $this->Db->prepare('INSERT INTO grocy_ai_receipts (trip_id, request_id, image_id, mime_type, image_bytes) VALUES (?, ?, ?, ?, ?)');
 			$statement->execute([$tripId, $requestId, $imageId, $mime, strlen($bytes)]);
 			$id = (int)$this->Db->lastInsertId();
 			$this->Db->prepare('INSERT INTO grocy_ai_receipt_audit (trip_id, receipt_id, actor, action) VALUES (?, ?, ?, ?)')->execute([$tripId, $id, $actor ?? 'unknown', 'upload']);
-			$this->Db->commit();
+			$this->Db->exec('COMMIT');
+			$writeLocked = false;
 			return ['receipt_id' => $id, 'image_id' => $imageId, 'mime_type' => $mime, 'image_bytes' => strlen($bytes)];
 		}
 		catch (\Throwable $ex)
 		{
-			if ($this->Db->inTransaction()) $this->Db->rollBack();
+			if ($writeLocked) $this->Db->exec('ROLLBACK');
 			if ($renamed) unlink($path); else @unlink($temp);
 			if ($requestId !== null && ($existing = $this->FindRequest($tripId, $requestId)) !== null) return $existing;
 			throw $ex;

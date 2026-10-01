@@ -60,15 +60,29 @@ namespace {
 		try { $call(); } catch (\InvalidArgumentException|\RuntimeException $ex) { return; }
 		throw new \RuntimeException($message);
 	}
+	final class ReceiptRacePdo extends \PDO
+	{
+		public ?\Closure $beforeWriteLock = null;
+		public function exec(string $statement): int|false
+		{
+			if ($statement === 'BEGIN IMMEDIATE' && $this->beforeWriteLock !== null)
+			{
+				$callback = $this->beforeWriteLock;
+				$this->beforeWriteLock = null;
+				$callback($this);
+			}
+			return parent::exec($statement);
+		}
+	}
 	function receiptPng(): string
 	{
 		$image = imagecreatetruecolor(2, 2);
 		ob_start(); imagepng($image); $bytes = (string)ob_get_clean(); imagedestroy($image);
 		return $bytes;
 	}
-	function receiptFixture(): array
+	function receiptFixture(?\PDO $pdo = null): array
 	{
-		$pdo = new \PDO('sqlite::memory:');
+		$pdo ??= new \PDO('sqlite::memory:');
 		$pdo->setAttribute(\PDO::ATTR_ERRMODE, \PDO::ERRMODE_EXCEPTION);
 		GrocyAiCaptureMigration::Bootstrap($pdo);
 		$pdo->exec("INSERT INTO grocy_ai_capture_trips (id, status, module_version) VALUES (1, 'open', 'test'), (2, 'open', 'test')");
@@ -105,6 +119,9 @@ namespace {
 			receiptThrows(fn() => $store->Save(1, new ReceiptTestUpload('bad'), 'bad-image'), 'invalid image bytes must fail');
 			receiptThrows(fn() => $store->Save(1, new ReceiptTestUpload($png, 'image/jpeg'), 'bad-type'), 'mismatched declared type must fail');
 			receiptThrows(fn() => $store->Save(1, new ReceiptTestUpload(str_repeat('X', 12 * 1024 * 1024)), 'too-large'), 'oversized image must fail');
+			$largeImage = imagecreatetruecolor(4100, 4000);
+			ob_start(); imagepng($largeImage); $largeBytes = (string)ob_get_clean(); imagedestroy($largeImage);
+			receiptThrows(fn() => $store->Save(1, new ReceiptTestUpload($largeBytes), 'too-many-pixels'), 'compressed image exceeding safe decode pixels must fail');
 			$pdo->beginTransaction();
 			receiptThrows(fn() => $store->Save(1, new ReceiptTestUpload($png), 'outer-transaction'), 'upload in an outer transaction must fail safely');
 			receiptCheck($pdo->inTransaction(), 'a rejected upload must preserve the caller transaction');
@@ -117,10 +134,24 @@ namespace {
 			$pdo->exec("INSERT INTO grocy_ai_capture_lines (trip_id, seq, scanned_barcode, status) VALUES (2, 1, 'other', 'known')");
 			$otherLine = (int)$pdo->lastInsertId();
 			receiptThrows(fn() => $pdo->exec("INSERT INTO grocy_ai_receipt_allocations (trip_id, receipt_id, receipt_line_id, capture_line_id, quantity, unit_price) VALUES (1, {$a['receipt_id']}, $lineId, $otherLine, 1, 2)"), 'cross-trip allocation must fail');
+			$pdo->exec("INSERT INTO grocy_ai_receipt_lines (receipt_id, seq, description, decision) VALUES ({$b['receipt_id']}, 1, 'Bread', 'needs_review')");
+			$otherReceiptLine = (int)$pdo->lastInsertId();
+			$pdo->exec("INSERT INTO grocy_ai_receipt_allocations (trip_id, receipt_id, receipt_line_id, quantity, unit_price) VALUES (1, {$b['receipt_id']}, $otherReceiptLine, 1, 2)");
+			$otherAllocation = (int)$pdo->lastInsertId();
+			receiptThrows(fn() => $pdo->exec("INSERT INTO grocy_ai_receipt_audit (trip_id, receipt_id, allocation_id, actor, action) VALUES (1, {$a['receipt_id']}, $otherAllocation, 'test', 'allocate')"), 'audit must reject an allocation from another receipt');
 			$pdo->exec("INSERT INTO grocy_ai_receipt_audit (trip_id, receipt_id, actor, action) VALUES (1, {$a['receipt_id']}, 'test', 'uploaded')");
 			receiptThrows(fn() => $pdo->exec('UPDATE grocy_ai_receipt_audit SET action = \'changed\''), 'receipt audit must reject update');
 		}
 		finally { receiptCleanup($directory); }
+		[$racePdo, $raceDirectory] = receiptFixture(new ReceiptRacePdo('sqlite::memory:'));
+		try
+		{
+			$raceStore = new GrocyAiReceiptImageStore($racePdo, $raceDirectory);
+			$racePdo->beforeWriteLock = static fn(\PDO $db) => $db->exec("UPDATE grocy_ai_capture_trips SET status = 'committed' WHERE id = 1");
+			receiptThrows(fn() => $raceStore->Save(1, new ReceiptTestUpload(receiptPng()), 'race'), 'trip committed during upload must reject receipt');
+			receiptCheck((int)$racePdo->query('SELECT COUNT(*) FROM grocy_ai_receipts')->fetchColumn() === 0, 'race rejection must leave no header');
+		}
+		finally { receiptCleanup($raceDirectory); }
 	}
 	receiptStorageTests();
 	fwrite(STDOUT, "Receipt storage tests passed\n");
