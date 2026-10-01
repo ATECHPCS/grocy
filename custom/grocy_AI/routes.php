@@ -4,6 +4,7 @@ use Grocy\Middleware\JsonMiddleware;
 use GrocyAI\Controllers\Api\GrocyAiApiController;
 use GrocyAI\Controllers\GrocyAiBulkController;
 use GrocyAI\Controllers\GrocyAiCaptureController;
+use GrocyAI\Controllers\Api\GrocyAiCaptureResearchController;
 use GrocyAI\Controllers\GrocyAiConversionController;
 use Slim\Routing\RouteCollectorProxy;
 
@@ -32,6 +33,7 @@ require_once __DIR__ . '/src/GrocyAiApiController.php';
 require_once __DIR__ . '/src/GrocyAiConversionController.php';
 require_once __DIR__ . '/src/GrocyAiBulkController.php';
 require_once __DIR__ . '/src/GrocyAiCaptureController.php';
+require_once __DIR__ . '/src/GrocyAiCaptureResearchController.php';
 
 $app->group('/api/grocy-ai', function (RouteCollectorProxy $group)
 {
@@ -57,6 +59,9 @@ $app->group('/api/grocy-ai', function (RouteCollectorProxy $group)
 	$group->get('/capture/trips', [GrocyAiApiController::class, 'ListCaptureTrips']);
 	$group->post('/capture/trips', [GrocyAiApiController::class, 'StartCaptureTrip']);
 	$group->post('/capture/trips/{tripId}/scan', [GrocyAiApiController::class, 'ScanCaptureTrip']);
+	$group->post('/capture/research/jobs/claim', [GrocyAiCaptureResearchController::class, 'Claim']);
+	$group->post('/capture/research/jobs/{jobId}/complete', [GrocyAiCaptureResearchController::class, 'Complete']);
+	$group->post('/capture/research/jobs/{jobId}/fail', [GrocyAiCaptureResearchController::class, 'Fail']);
 	$group->get('/capture/trips/{tripId}', [GrocyAiApiController::class, 'CaptureTrip']);
 	$group->put('/capture/trips/{tripId}', [GrocyAiApiController::class, 'UpdateCaptureTrip']);
 	$group->put('/capture/trips/{tripId}/lines/{seq}', [GrocyAiApiController::class, 'UpdateCaptureLine']);

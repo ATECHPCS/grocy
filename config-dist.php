@@ -161,6 +161,7 @@ Setting('FEATURE_FLAG_AUTO_TORCH_ON_WITH_CAMERA', true); // Enables the torch au
 // Keep the API key outside of source control and provide it through GROCY_AI_SERVICE_API_KEY.
 Setting('AI_SERVICE_URL', '');
 Setting('AI_SERVICE_API_KEY', '');
+Setting('AI_RESEARCH_WORKER_KEY', ''); // Shared server-side key for capture research claims/results
 Setting('AI_REQUEST_TIMEOUT_SECONDS', 20);
 
 
