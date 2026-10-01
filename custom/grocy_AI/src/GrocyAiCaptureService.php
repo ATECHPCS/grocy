@@ -37,7 +37,7 @@ class GrocyAiCaptureService
 		$this->StockService = $stockService;
 		if ($bootstrap)
 		{
-			GrocyAiCaptureMigration::Bootstrap($this->Db);
+			GrocyAiCaptureResearchMigration::Bootstrap($this->Db);
 		}
 	}
 
@@ -96,6 +96,10 @@ class GrocyAiCaptureService
 		$insert->execute([$tripId, $seq, $barcode, $resolution['canonical_gtin'], $resolution['resolved_product_id'], $resolution['status']]);
 		$line = $this->FetchLineById((int)$this->Db->lastInsertId());
 		$this->WriteAudit($tripId, (int)$line['id'], $actor, 'scan_new_line', null, $line);
+		if ($resolution['status'] === 'unknown' && $resolution['canonical_gtin'] !== null)
+		{
+			(new GrocyAiCaptureResearchService($this->Db, false))->EnqueueUnknown($tripId, (int)$line['id'], $barcode);
+		}
 		return $line;
 	}
 

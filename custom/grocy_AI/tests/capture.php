@@ -8,7 +8,7 @@ use GrocyAI\Services\GrocyAiBarcodeService;
 
 // A new tests/<mode>.php must require_once its own src/* dependencies (guarded by is_file), mirroring the
 // run.php top block, or class_exists() stays false and later plans mis-report "not implemented".
-foreach (['GrocyAiCaptureMigration', 'GrocyAiReceiptMigration', 'GrocyAiReceiptService', 'GrocyAiCaptureService'] as $captureClassFile)
+foreach (['GrocyAiCaptureMigration', 'GrocyAiReceiptMigration', 'GrocyAiReceiptService', 'GrocyAiCaptureResearchMigration', 'GrocyAiCaptureResearchService', 'GrocyAiCaptureService'] as $captureClassFile)
 {
 	$captureClassPath = __DIR__ . '/../src/' . $captureClassFile . '.php';
 	if (is_file($captureClassPath))
