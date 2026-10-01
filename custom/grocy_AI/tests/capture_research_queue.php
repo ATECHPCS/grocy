@@ -18,6 +18,12 @@ function checkResearch(bool $condition, string $message): void
 	if (!$condition) throw new RuntimeException($message);
 }
 
+function rejectsResearch(callable $operation, string $message): void
+{
+	try { $operation(); } catch (PDOException $expected) { return; }
+	throw new RuntimeException($message);
+}
+
 $db = new PDO('sqlite::memory:');
 $db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 $db->exec('PRAGMA foreign_keys = ON');
@@ -66,9 +72,20 @@ $secondTrip = $capture->StartTrip();
 $capture->ScanIntoTrip((int)$secondTrip['id'], '4006381333931');
 checkResearch((int)$db->query('SELECT COUNT(*) FROM grocy_ai_capture_research_jobs')->fetchColumn() === 1, 'jobs are shared across trips');
 checkResearch((int)$db->query('SELECT COUNT(*) FROM grocy_ai_capture_research_drafts')->fetchColumn() === 2, 'each capture line gets its own review draft');
+$otherLineId = (int)$db->query('SELECT id FROM grocy_ai_capture_lines WHERE trip_id = ' . (int)$secondTrip['id'])->fetchColumn();
+rejectsResearch(fn() => $db->exec("UPDATE grocy_ai_capture_research_drafts SET trip_id = 9 WHERE line_id = $otherLineId"), 'draft cannot reference a line from another trip');
+$db->exec("INSERT INTO grocy_ai_receipt_lines (id, receipt_id, seq, description) VALUES (92, 91, 1, 'item')");
+rejectsResearch(fn() => $db->exec("UPDATE grocy_ai_capture_research_drafts SET trip_id = " . (int)$secondTrip['id'] . ", receipt_line_id = 92 WHERE line_id = $otherLineId"), 'draft cannot reference receipt evidence from another trip');
+$firstDraftId = (int)$db->query('SELECT id FROM grocy_ai_capture_research_drafts WHERE line_id = ' . (int)$first['id'])->fetchColumn();
+$db->exec("UPDATE grocy_ai_capture_research_drafts SET receipt_line_id = 92 WHERE id = $firstDraftId");
+rejectsResearch(fn() => $db->exec('UPDATE grocy_ai_receipts SET trip_id = ' . (int)$secondTrip['id'] . ' WHERE id = 91'), 'moving receipt cannot strand linked draft in another trip');
+$otherDraftId = (int)$db->query('SELECT id FROM grocy_ai_capture_research_drafts WHERE line_id = ' . $otherLineId)->fetchColumn();
+rejectsResearch(fn() => $db->exec("INSERT INTO grocy_ai_capture_research_audit (trip_id, draft_id, actor, action) VALUES (9, $otherDraftId, 'test', 'bad')"), 'audit cannot reference a draft from another trip');
 $db->exec('DELETE FROM grocy_ai_capture_lines WHERE id = ' . (int)$first['id']);
 checkResearch((int)$db->query('SELECT COUNT(*) FROM grocy_ai_capture_research_audit')->fetchColumn() === 2, 'audit survives capture-line deletion');
 checkResearch((int)$db->query('SELECT COUNT(*) FROM grocy_ai_capture_research_drafts WHERE line_id IS NULL')->fetchColumn() === 1, 'deleted line clears only the live association');
+$db->exec("UPDATE grocy_ai_capture_research_drafts SET receipt_line_id = NULL WHERE id = $firstDraftId");
+rejectsResearch(fn() => $db->exec('UPDATE grocy_ai_capture_research_drafts SET trip_id = ' . (int)$secondTrip['id'] . " WHERE id = $firstDraftId"), 'draft cannot move away from its audit trip');
 
 try
 {
@@ -76,5 +93,21 @@ try
 	throw new RuntimeException('audit delete was allowed');
 }
 catch (PDOException $expected) {}
+
+$db->exec("CREATE TRIGGER reject_research_queue BEFORE INSERT ON grocy_ai_capture_research_jobs BEGIN SELECT RAISE(ABORT, 'forced queue failure'); END");
+$failedTrip = $capture->StartTrip();
+$failedTripId = (int)$failedTrip['id'];
+rejectsResearch(fn() => $capture->ScanIntoTrip($failedTripId, '96385074'), 'queue failure propagates');
+checkResearch((int)$db->query("SELECT COUNT(*) FROM grocy_ai_capture_lines WHERE trip_id = $failedTripId")->fetchColumn() === 0, 'queue failure rolls back new line');
+checkResearch((int)$db->query("SELECT COUNT(*) FROM grocy_ai_capture_audit WHERE trip_id = $failedTripId AND action = 'scan_new_line'")->fetchColumn() === 0, 'queue failure rolls back scan audit');
+$db->exec('DROP TRIGGER reject_research_queue');
+$retried = $capture->ScanIntoTrip($failedTripId, '96385074');
+checkResearch((int)$retried['quantity'] === 1 && count((new GrocyAiCaptureResearchService($db))->DraftsForTrip($failedTripId)) === 1, 'retry creates one line and one draft');
+
+$repairTrip = $capture->StartTrip();
+$repairTripId = (int)$repairTrip['id'];
+$db->prepare("INSERT INTO grocy_ai_capture_lines (trip_id, seq, scanned_barcode, canonical_gtin, status) VALUES (?, 1, '96385074', '00000096385074', 'unknown')")->execute([$repairTripId]);
+$repaired = $capture->ScanIntoTrip($repairTripId, '96385074');
+checkResearch((int)$repaired['quantity'] === 2 && count((new GrocyAiCaptureResearchService($db))->DraftsForTrip($repairTripId)) === 1, 'coalesced legacy unknown line repairs missing draft');
 
 echo "capture research queue: PASS\n";

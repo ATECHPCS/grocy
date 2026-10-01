@@ -66,41 +66,51 @@ class GrocyAiCaptureService
 	 */
 	public function ScanIntoTrip(int $tripId, string $barcode, ?string $actor = null): array
 	{
-		$trip = $this->FetchTrip($tripId);
-		$this->AssertMutable($trip);
-		if ($trip['status'] === 'committed')
+		$started = !$this->Db->inTransaction();
+		if ($started) $this->Db->exec('BEGIN IMMEDIATE');
+		try
 		{
-			throw new \InvalidArgumentException('A committed trip cannot accept scans');
-		}
+			$trip = $this->FetchTrip($tripId);
+			$this->AssertMutable($trip);
+			$resolution = $this->Resolve($barcode);
 
-		$resolution = $this->Resolve($barcode);
+			// The coalescing bucket is the canonical GTIN when the scan has a checksum-valid form, otherwise
+			// the raw scanned barcode — exactly the migration's UNIQUE index key.
+			$coalesceKey = $resolution['canonical_gtin'] ?? $barcode;
+			$existing = $this->Db->prepare('SELECT * FROM grocy_ai_capture_lines WHERE trip_id = ? AND COALESCE(canonical_gtin, scanned_barcode) = ?');
+			$existing->execute([$tripId, $coalesceKey]);
+			$existingRow = $existing->fetch(PDO::FETCH_ASSOC);
 
-		// The coalescing bucket is the canonical GTIN when the scan has a checksum-valid form, otherwise the
-		// raw scanned barcode — exactly the migration's UNIQUE index key.
-		$coalesceKey = $resolution['canonical_gtin'] ?? $barcode;
-		$existing = $this->Db->prepare('SELECT * FROM grocy_ai_capture_lines WHERE trip_id = ? AND COALESCE(canonical_gtin, scanned_barcode) = ?');
-		$existing->execute([$tripId, $coalesceKey]);
-		$existingRow = $existing->fetch(PDO::FETCH_ASSOC);
-
-		if ($existingRow !== false)
-		{
-			$update = $this->Db->prepare('UPDATE grocy_ai_capture_lines SET quantity = quantity + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?');
-			$update->execute([(int)$existingRow['id']]);
-			$line = $this->FetchLineById((int)$existingRow['id']);
-			$this->WriteAudit($tripId, (int)$line['id'], $actor, 'scan_coalesce', $existingRow, $line);
+			if ($existingRow !== false)
+			{
+				$this->Db->prepare('UPDATE grocy_ai_capture_lines SET quantity = quantity + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?')->execute([(int)$existingRow['id']]);
+				$line = $this->FetchLineById((int)$existingRow['id']);
+				$this->WriteAudit($tripId, (int)$line['id'], $actor, 'scan_coalesce', $existingRow, $line);
+				if ($resolution['status'] === 'unknown' && $existingRow['status'] === 'unknown' && $resolution['canonical_gtin'] !== null)
+				{
+					(new GrocyAiCaptureResearchService($this->Db, false))->EnqueueUnknown($tripId, (int)$line['id'], (string)$line['scanned_barcode']);
+				}
+			}
+			else
+			{
+				$seq = (int)$this->Db->query('SELECT COALESCE(MAX(seq), 0) + 1 FROM grocy_ai_capture_lines WHERE trip_id = ' . $tripId)->fetchColumn();
+				$insert = $this->Db->prepare('INSERT INTO grocy_ai_capture_lines (trip_id, seq, scanned_barcode, canonical_gtin, resolved_product_id, status, quantity, selected) VALUES (?, ?, ?, ?, ?, ?, 1, 1)');
+				$insert->execute([$tripId, $seq, $barcode, $resolution['canonical_gtin'], $resolution['resolved_product_id'], $resolution['status']]);
+				$line = $this->FetchLineById((int)$this->Db->lastInsertId());
+				$this->WriteAudit($tripId, (int)$line['id'], $actor, 'scan_new_line', null, $line);
+				if ($resolution['status'] === 'unknown' && $resolution['canonical_gtin'] !== null)
+				{
+					(new GrocyAiCaptureResearchService($this->Db, false))->EnqueueUnknown($tripId, (int)$line['id'], $barcode);
+				}
+			}
+			if ($started) $this->Db->commit();
 			return $line;
 		}
-
-		$seq = (int)$this->Db->query('SELECT COALESCE(MAX(seq), 0) + 1 FROM grocy_ai_capture_lines WHERE trip_id = ' . $tripId)->fetchColumn();
-		$insert = $this->Db->prepare('INSERT INTO grocy_ai_capture_lines (trip_id, seq, scanned_barcode, canonical_gtin, resolved_product_id, status, quantity, selected) VALUES (?, ?, ?, ?, ?, ?, 1, 1)');
-		$insert->execute([$tripId, $seq, $barcode, $resolution['canonical_gtin'], $resolution['resolved_product_id'], $resolution['status']]);
-		$line = $this->FetchLineById((int)$this->Db->lastInsertId());
-		$this->WriteAudit($tripId, (int)$line['id'], $actor, 'scan_new_line', null, $line);
-		if ($resolution['status'] === 'unknown' && $resolution['canonical_gtin'] !== null)
+		catch (\Throwable $ex)
 		{
-			(new GrocyAiCaptureResearchService($this->Db, false))->EnqueueUnknown($tripId, (int)$line['id'], $barcode);
+			if ($started && $this->Db->inTransaction()) $this->Db->rollBack();
+			throw $ex;
 		}
-		return $line;
 	}
 
 	/**
