@@ -49,12 +49,14 @@ rejectWorker(fn() => $service->ClaimJobs(6, 'worker-a'), 'oversized claim accept
 
 $jobId = (int)$claimed[0]['id'];
 $token = $claimed[0]['lease_token'];
-$hit = ['contract_version' => 1, 'canonical_gtin' => '04006381333931', 'outcome' => 'found', 'name_candidates' => ['Sample food'], 'brand' => null, 'package' => null, 'categories' => [], 'sources' => ['bb-federation']];
+$hit = ['contract_version' => 1, 'canonical_gtin' => '04006381333931', 'outcome' => 'found', 'name_candidates' => ['Sample food'], 'name_candidate_sources' => ['bb-federation'], 'brand' => null, 'package' => null, 'categories' => [], 'sources' => ['bb-federation']];
 rejectWorker(fn() => $service->CompleteJob($jobId, $token, $hit + ['raw_html' => '<p>no</p>']), 'extra provider field accepted');
 rejectWorker(fn() => $service->CompleteJob($jobId, $token, array_replace($hit, ['canonical_gtin' => '00000096385074'])), 'wrong GTIN accepted');
 rejectWorker(fn() => $service->CompleteJob($jobId, $token, array_replace($hit, ['name_candidates' => [str_repeat('a', 201)]])), 'oversized name accepted');
 rejectWorker(fn() => $service->CompleteJob($jobId, $token, array_replace($hit, ['sources' => ['unknown-provider']])), 'unknown source accepted');
 rejectWorker(fn() => $service->CompleteJob($jobId, $token, array_replace($hit, ['sources' => []])), 'unattributed hit accepted');
+rejectWorker(fn() => $service->CompleteJob($jobId, $token, array_replace($hit, ['name_candidate_sources' => []])), 'misaligned candidate sources accepted');
+rejectWorker(fn() => $service->CompleteJob($jobId, $token, array_replace($hit, ['name_candidate_sources' => ['openfoodfacts']])), 'candidate source outside result sources accepted');
 rejectWorker(fn() => $service->CompleteJob($jobId, $token, array_replace($hit, ['outcome' => 'found', 'name_candidates' => []])), 'empty hit accepted');
 rejectWorker(fn() => $service->CompleteJob($jobId, $token, array_replace($hit, ['outcome' => 'retryable_failure', 'name_candidates' => []])), 'retryable failure without safe code accepted');
 rejectWorker(fn() => $service->CompleteJob($jobId, str_repeat('0', 64), $hit), 'stale token accepted');

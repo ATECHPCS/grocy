@@ -129,8 +129,17 @@ class GrocyAiCaptureResearchService
 	public function SetReceiptEvidence(int $tripId, int $lineId, ?int $receiptLineId, string $actor): array
 	{
 		if ($receiptLineId !== null && $receiptLineId < 1) throw new \InvalidArgumentException('Invalid receipt line');
-		return $this->MutateDraft($tripId, $lineId, $actor, 'receipt_evidence', function (array $draft) use ($tripId, $receiptLineId): array
+		return $this->MutateDraft($tripId, $lineId, $actor, 'receipt_evidence', function (array $draft) use ($tripId, $lineId, $receiptLineId): array
 		{
+			if ($receiptLineId !== null)
+			{
+				$claimed = $this->Db->prepare('SELECT 1 FROM grocy_ai_capture_research_drafts WHERE trip_id = ? AND receipt_line_id = ? AND id != ? LIMIT 1');
+				$claimed->execute([$tripId, $receiptLineId, $draft['id']]);
+				if ($claimed->fetchColumn() !== false) throw new \InvalidArgumentException('Receipt line already paired');
+				$allocated = $this->Db->prepare('SELECT 1 FROM grocy_ai_receipt_allocations WHERE trip_id = ? AND receipt_line_id = ? AND active = 1 AND capture_line_id IS NOT NULL AND capture_line_id != ? LIMIT 1');
+				$allocated->execute([$tripId, $receiptLineId, $lineId]);
+				if ($allocated->fetchColumn() !== false) throw new \InvalidArgumentException('Receipt allocation conflicts with research evidence');
+			}
 			$evidence = $receiptLineId === null ? null : (new GrocyAiReceiptService($this->Db))->ResearchEvidence($tripId, $receiptLineId);
 			$selected = json_decode($draft['selected_json'], true, 512, JSON_THROW_ON_ERROR);
 			$edits = json_decode($draft['user_edits_json'], true, 512, JSON_THROW_ON_ERROR);
@@ -219,14 +228,14 @@ class GrocyAiCaptureResearchService
 		$suggested = json_decode($draft['suggested_json'], true, 512, JSON_THROW_ON_ERROR);
 		$selected = json_decode($draft['selected_json'], true, 512, JSON_THROW_ON_ERROR);
 		$names = [];
-		foreach ($suggested['name_candidates'] ?? [] as $name) $names[] = ['value' => $name, 'sources' => $suggested['sources'] ?? []];
+		foreach ($suggested['name_candidates'] ?? [] as $index => $name) $names[] = ['value' => $name, 'source' => $suggested['name_candidate_sources'][$index] ?? 'unknown'];
 		$evidence = null;
 		if ($draft['receipt_line_id'] !== null)
 		{
 			try { $evidence = (new GrocyAiReceiptService($this->Db))->ResearchEvidence($tripId, (int)$draft['receipt_line_id']); }
 			catch (\InvalidArgumentException) { $evidence = null; }
 		}
-		if ($evidence !== null) $names[] = ['value' => $evidence['description'], 'sources' => ['receipt_ocr']];
+		if ($evidence !== null) $names[] = ['value' => $evidence['description'], 'source' => 'receipt_ocr'];
 		return ['id' => (int)$draft['id'], 'line_id' => $lineId, 'seq' => (int)$draft['seq'], 'revision' => (int)$draft['revision'], 'outcome' => $draft['outcome'], 'job_state' => $job['state'], 'safe_error_code' => $job['safe_error_code'], 'scanned_barcode' => $draft['scanned_barcode'], 'canonical_gtin' => $job['canonical_gtin'], 'selected' => $selected, 'suggested' => $suggested, 'name_alternatives' => $names, 'receipt_evidence' => $evidence, 'group_candidates' => $this->GroupCandidates($suggested), 'taxonomy_candidates' => $this->TaxonomyCandidates($suggested), 'possible_existing_products' => $this->PossibleProducts($selected, $suggested), 'final_product_id' => $draft['final_product_id'] === null ? null : (int)$draft['final_product_id']];
 	}
 
@@ -252,7 +261,9 @@ class GrocyAiCaptureResearchService
 		foreach ($suggested['categories'] as $category)
 		{
 			$query->execute([self::CategoryKey($category), GrocyAiTaxonomyMigration::VERSION]);
-			foreach ($query->fetchAll(PDO::FETCH_ASSOC) as $row) $matches[$row['slug']] = ['slug' => $row['slug'], 'label' => $row['label'], 'source' => 'openfoodfacts', 'provider_category' => $category, 'ruleset_version' => GrocyAiTaxonomyMigration::VERSION];
+			$row = $query->fetch(PDO::FETCH_ASSOC);
+			if ($row === false) return [];
+			$matches[$row['slug']] = ['slug' => $row['slug'], 'label' => $row['label'], 'source' => 'openfoodfacts', 'provider_category' => $category, 'ruleset_version' => GrocyAiTaxonomyMigration::VERSION];
 		}
 		return count($matches) === 1 ? array_values($matches) : [];
 	}
@@ -452,7 +463,7 @@ class GrocyAiCaptureResearchService
 	private static function NormalizeResult(array $result, string $canonical): array
 	{
 		$required = ['contract_version', 'canonical_gtin', 'outcome', 'name_candidates', 'brand', 'package', 'categories', 'sources'];
-		$allowed = array_merge($required, ['error_code']);
+		$allowed = array_merge($required, ['error_code', 'name_candidate_sources']);
 		if (array_diff($required, array_keys($result)) || array_diff(array_keys($result), $allowed) || $result['contract_version'] !== 1 || $result['canonical_gtin'] !== $canonical || !in_array($result['outcome'], ['found', 'miss', 'retryable_failure'], true)) throw new \InvalidArgumentException('Invalid research result');
 		foreach (['name_candidates' => [8, 200], 'categories' => [3, 100], 'sources' => [2, 32]] as $field => [$count, $length])
 		{
@@ -462,6 +473,11 @@ class GrocyAiCaptureResearchService
 		}
 		foreach (['brand', 'package'] as $field) if ($result[$field] !== null && (!is_string($result[$field]) || trim($result[$field]) !== $result[$field] || $result[$field] === '' || mb_strlen($result[$field]) > 200)) throw new \InvalidArgumentException('Invalid research result');
 		foreach ($result['sources'] as $source) if (!in_array($source, ['bb-federation', 'openfoodfacts'], true)) throw new \InvalidArgumentException('Invalid research result');
+		if (array_key_exists('name_candidate_sources', $result))
+		{
+			if (!is_array($result['name_candidate_sources']) || !array_is_list($result['name_candidate_sources']) || count($result['name_candidate_sources']) !== count($result['name_candidates'])) throw new \InvalidArgumentException('Invalid name candidate sources');
+			foreach ($result['name_candidate_sources'] as $source) if (!is_string($source) || !in_array($source, ['bb-federation', 'openfoodfacts'], true) || !in_array($source, $result['sources'], true)) throw new \InvalidArgumentException('Invalid name candidate source');
+		}
 		if (!in_array('openfoodfacts', $result['sources'], true) && ($result['categories'] !== [] || $result['brand'] !== null || $result['package'] !== null)) throw new \InvalidArgumentException('Invalid research result');
 		if ($result['outcome'] === 'found' && $result['name_candidates'] === [] || $result['outcome'] !== 'found' && $result['name_candidates'] !== []) throw new \InvalidArgumentException('Invalid research result');
 		if ($result['outcome'] === 'found' && $result['sources'] === []) throw new \InvalidArgumentException('Invalid research result');

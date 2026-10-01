@@ -37,6 +37,11 @@ checkDraft(($service->ReviewForTrip(1)['drafts'][0]['selected']['name'] ?? null)
 rejectDraft(fn() => $service->SetReceiptEvidence(1, 1, 3, 'tester'));
 $paired = $service->SetReceiptEvidence(1, 1, 1, 'tester');
 checkDraft($paired['selected']['name'] === 'Receipt Granola' && $paired['receipt_evidence']['source'] === 'receipt_ocr', 'explicit same-trip receipt gives provisional name');
+$db->exec("INSERT INTO grocy_ai_capture_lines (id, trip_id, seq, scanned_barcode, canonical_gtin, status) VALUES (4, 1, 2, '036000291452', '00036000291452', 'unknown')");
+$service->EnqueueUnknown(1, 4, '036000291452');
+rejectDraft(fn() => $service->SetReceiptEvidence(1, 4, 1, 'tester'));
+$db->exec("INSERT INTO grocy_ai_receipt_allocations (trip_id, receipt_id, receipt_line_id, capture_line_id, quantity, unit_price) VALUES (1, 1, 2, 4, 1, 1)");
+rejectDraft(fn() => $service->SetReceiptEvidence(1, 1, 2, 'tester'));
 $receiptService = new GrocyAI\Services\GrocyAiReceiptService($db);
 $receiptService->UpdateLine(1, 1, ['description' => 'Corrected Granola'], 'tester');
 $corrected = $service->ReviewForTrip(1)['drafts'][0];
@@ -49,17 +54,23 @@ checkDraft($service->ReviewForTrip(1)['drafts'][0]['selected']['name'] === 'My g
 $service->RetryJob(1, 1, 'tester');
 checkDraft($service->ReviewForTrip(1)['drafts'][0]['selected']['name'] === 'My granola', 'retry preserves manual edit');
 $reclaim = $service->ClaimJobs(1, 'draft-retry')[0];
-$service->CompleteJob((int)$reclaim['id'], $reclaim['lease_token'], ['contract_version' => 1, 'canonical_gtin' => '04006381333931', 'outcome' => 'found', 'name_candidates' => ['Existing fish'], 'brand' => 'Brand', 'package' => '1 kg', 'categories' => ['Seafood'], 'sources' => ['bb-federation', 'openfoodfacts']]);
+$service->CompleteJob((int)$reclaim['id'], $reclaim['lease_token'], ['contract_version' => 1, 'canonical_gtin' => '04006381333931', 'outcome' => 'found', 'name_candidates' => ['Existing fish', 'OFF fish'], 'name_candidate_sources' => ['bb-federation', 'openfoodfacts'], 'brand' => 'Brand', 'package' => '1 kg', 'categories' => ['Seafood'], 'sources' => ['bb-federation', 'openfoodfacts']]);
 $review = $service->ReviewForTrip(1)['drafts'][0];
-checkDraft($review['selected']['name'] === 'My granola' && $review['name_alternatives'][0]['sources'] === ['bb-federation', 'openfoodfacts'], 'provider retry cannot overwrite user edit and sources remain labeled');
+checkDraft($review['selected']['name'] === 'My granola' && $review['name_alternatives'][0]['source'] === 'bb-federation' && $review['name_alternatives'][1]['source'] === 'openfoodfacts', 'provider retry cannot overwrite user edit and each name has its own source');
 checkDraft($review['group_candidates'][0]['id'] === 1 && $review['taxonomy_candidates'][0]['slug'] === 'meat-seafood', 'exact active group and versioned taxonomy rule proposed');
 checkDraft($review['possible_existing_products'][0]['id'] === 1 && !isset($review['selected']['product_group_id']), 'existing match and group remain unapplied');
 $db->exec("UPDATE grocy_ai_capture_research_drafts SET suggested_json = '{\"contract_version\":1,\"outcome\":\"found\",\"name_candidates\":[\"Existing fish\"],\"categories\":[\"Seafood\",\"Produce\"],\"sources\":[\"openfoodfacts\"]}' WHERE line_id = 1");
 $ambiguous = $service->ReviewForTrip(1)['drafts'][0];
 checkDraft($ambiguous['group_candidates'] === [] && $ambiguous['taxonomy_candidates'] === [], 'ambiguous categories remain unset');
+$updateSuggestion = $db->prepare('UPDATE grocy_ai_capture_research_drafts SET suggested_json = ? WHERE line_id = 1');
+foreach (['Baby Food', 'Unsupported Category'] as $unsafeCategory)
+{
+	$updateSuggestion->execute([json_encode(['contract_version' => 1, 'outcome' => 'found', 'name_candidates' => ['Existing fish'], 'name_candidate_sources' => ['openfoodfacts'], 'categories' => ['Seafood', $unsafeCategory], 'sources' => ['openfoodfacts']], JSON_THROW_ON_ERROR)]);
+	checkDraft($service->ReviewForTrip(1)['drafts'][0]['taxonomy_candidates'] === [], 'excluded or unsupported category prevents taxonomy proposal');
+}
 $db->exec("UPDATE grocy_ai_capture_research_drafts SET suggested_json = '{\"contract_version\":1,\"outcome\":\"found\",\"name_candidates\":[\"Existing fish\"],\"categories\":[],\"sources\":[\"bb-federation\"]}' WHERE line_id = 1");
 $federation = $service->ReviewForTrip(1)['drafts'][0];
-checkDraft($federation['taxonomy_candidates'] === [] && $federation['group_candidates'] === [], 'Federation-only name gives no OFF category');
+checkDraft($federation['taxonomy_candidates'] === [] && $federation['group_candidates'] === [] && $federation['name_alternatives'][0]['source'] === 'unknown', 'legacy Federation-only name gives no OFF category or fabricated provenance');
 rejectDraft(fn() => $service->UpdateDraft(2, 1, 1, ['name' => 'wrong'], 'tester'));
 rejectDraft(fn() => $service->UpdateDraft(3, 3, 1, ['name' => 'No'], 'tester'));
 $db->exec("INSERT INTO grocy_ai_capture_trip_cancellations (trip_id, actor) VALUES (1, 'tester')");
