@@ -504,3 +504,5 @@ Open Purchase capture review, attach receipt photos (JPEG, PNG or WebP), and cho
 Correct printed/line totals or explicitly accept the displayed difference, then Finish receipt. Any edit reopens review and clears difference acceptance. The purchase button stays disabled until server readiness passes; only Commit purchase writes stock. Receipt store applies to inherited allocations. Product creation opens the existing product form in a new tab; return to receipt review and request suggestions after saving the product.
 
 Receipt drafts are retained per section while moving between trips or saving another section in the current page. Finish, difference acceptance, OCR and removal actions require all edited sections to be saved first. When a photo batch partly fails, successful receipts remain visible and **Retry failed photos** resends only failed files with their original upload request IDs.
+
+Use **Discard receipt edits**, **Discard line edits**, or **Discard allocation edits** to reset only that section to its saved values. Other drafts remain intact. Saving Ignore (or Needs review) clears drafts for the allocation editors that it hides.

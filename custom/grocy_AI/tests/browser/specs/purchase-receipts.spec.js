@@ -448,3 +448,52 @@ test('partial photo upload shows success and retries only failed photo with the 
 	expect(uploads[2]).toBe(uploads[1]);
 	expect(state.receipts).toHaveLength(2);
 });
+
+async function seedEditableReceipt(page, allocated)
+{
+	const state = await setup(page);
+	await page.getByLabel('Add receipt photos').setInputFiles(photo);
+	await expect(page.locator('.grocy-ai-receipt')).toHaveCount(1);
+	state.receipts[0].lines = [{ id: 1, description: 'Milk', quantity: 1, line_total: 2, decision: 'include', allocations: allocated ? [{ id: 1, active: 1, product_id: 101, capture_line_id: null, quantity: 1, unit_price: 2 }] : [] }];
+	state.receipts[0].receipt.printed_total = 2;
+	state.receipts[0].totals = { entered_total: 2, printed_total: 2, difference: 0 };
+	state.receipts[0].issues = [];
+	await page.locator('#grocyai-capture-review-trips button').click();
+	return state;
+}
+
+test('discarding an abandoned allocation draft preserves other sections and unblocks finish', async ({ page }) =>
+{
+	const state = await seedEditableReceipt(page, true);
+	const allocation = page.locator('.grocy-ai-receipt-allocation').last();
+	await allocation.getByLabel('Confirmed unit price').fill('3');
+	await allocation.getByLabel('Confirmed unit price').fill('');
+	await page.getByLabel('Description', { exact: true }).fill('Draft milk');
+	await page.getByLabel('Merchant', { exact: true }).fill('Draft store');
+	const writes = state.writes.length;
+	await allocation.getByRole('button', { name: 'Discard allocation edits' }).click();
+	await expect(page.getByLabel('Description', { exact: true })).toHaveValue('Draft milk');
+	await expect(page.getByLabel('Merchant', { exact: true })).toHaveValue('Draft store');
+	await page.getByRole('button', { name: 'Discard line edits' }).click();
+	await expect(page.getByLabel('Description', { exact: true })).toHaveValue('Milk');
+	await expect(page.getByLabel('Merchant', { exact: true })).toHaveValue('Draft store');
+	await page.getByRole('button', { name: 'Discard receipt edits' }).click();
+	await expect(page.getByLabel('Merchant', { exact: true })).toHaveValue('');
+	expect(state.writes.length).toBe(writes);
+	await page.getByRole('button', { name: 'Finish receipt', exact: true }).click();
+	await expect(page.getByRole('button', { name: 'Reopen receipt' })).toBeVisible();
+});
+
+test('saving Ignore removes hidden allocation drafts and preserves unrelated receipt edits', async ({ page }) =>
+{
+	await seedEditableReceipt(page, false);
+	await page.getByLabel('Confirmed unit price').fill('3');
+	await page.getByLabel('Merchant', { exact: true }).fill('Draft store');
+	await page.getByLabel('Decision').selectOption('ignore');
+	await page.getByRole('button', { name: 'Save line', exact: true }).click();
+	await expect(page.locator('.grocy-ai-receipt-allocation')).toHaveCount(0);
+	await expect(page.getByLabel('Merchant', { exact: true })).toHaveValue('Draft store');
+	await page.getByRole('button', { name: 'Save receipt details' }).click();
+	await page.getByRole('button', { name: 'Finish receipt', exact: true }).click();
+	await expect(page.getByRole('button', { name: 'Reopen receipt' })).toBeVisible();
+});

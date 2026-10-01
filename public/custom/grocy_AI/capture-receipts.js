@@ -168,8 +168,27 @@
 		{
 			run(function ()
 			{
-				return request(path, method, body);
+				return request(path, method, body).then(function (result)
+				{
+					// Saving a non-inventory decision hides its allocation editors.
+					if (body.decision && body.decision !== 'include')
+					{
+						Object.keys(state.drafts).forEach(function (key)
+						{
+							if (key.indexOf(path + '/allocation/') === 0) delete state.drafts[key];
+						});
+					}
+					return result;
+				});
 			}, scope);
+		}
+
+		function discardButton(parent, label)
+		{
+			button(parent, label, function ()
+			{
+				run(function () { return { message: 'Edits discarded.' }; }, parent.getAttribute('data-draft-scope'));
+			});
 		}
 
 		function number(input)
@@ -233,6 +252,7 @@
 				if (existing) body.id = Number(existing.id);
 				save(path + '/allocation', 'PUT', body, box.getAttribute('data-draft-scope'));
 			});
+			discardButton(box, 'Discard allocation edits');
 			if (existing) button(box, 'Remove allocation', function ()
 			{
 				save(path + '/allocation', 'PUT',
@@ -268,6 +288,7 @@
 					decision: decision.value
 				}, path);
 			});
+			discardButton(box, 'Discard line edits');
 			if (line.decision === 'ignore') box.appendChild(el('p', 'Ignored — retained on the receipt, excluded from stock.'));
 			if (line.decision === 'include')
 			{
@@ -284,7 +305,7 @@
 				link.target = '_blank';
 				link.rel = 'noopener';
 				box.appendChild(link);
-				box.appendChild(el('p', 'After creating a product, return here and find suggestions. Remove existing allocations before changing Include to Ignore.'));
+				box.appendChild(el('p', 'After creating a product, return here and find suggestions. Remove existing allocations before changing Include to Ignore. Saving Ignore or Needs review discards unsaved allocation edits.'));
 			}
 		}
 
@@ -332,6 +353,7 @@
 					shopping_location_id: store.value ? Number(store.value) : null
 				}, path);
 			});
+			discardButton(card, 'Discard receipt edits');
 			card.appendChild(el('p', 'Entered total: ' + view.totals.entered_total + ' · Difference: ' + (view.totals.difference === null ? 'enter printed total' : view.totals.difference)));
 			if (receipt.difference_accepted_amount !== null && receipt.difference_accepted_amount !== undefined) card.appendChild(el('p', 'Difference accepted: ' + receipt.difference_accepted_amount));
 			else if (view.totals.difference !== null && Math.abs(view.totals.difference) >= 0.005) button(card, 'Accept difference and leave as is', function ()
