@@ -111,6 +111,7 @@ checkWorker($service->DraftsForTrip(1)[1]['outcome'] === 'needs_input', 'termina
 $db->exec("INSERT INTO grocy_ai_capture_lines (id, trip_id, seq, scanned_barcode, canonical_gtin, status) VALUES (4, 1, 3, '012345678905', '00012345678905', 'unknown')");
 $service->EnqueueUnknown(1, 4, '012345678905');
 $providerFailure = $service->ClaimJobs(1, 'worker-e')[0];
+checkWorker($providerFailure['canonical_gtin'] === '00012345678905' && $providerFailure['lookup_barcode'] === '012345678905', 'UPC claim keeps original scan for provider lookup');
 $retryable = ['contract_version' => 1, 'canonical_gtin' => '00012345678905', 'outcome' => 'retryable_failure', 'name_candidates' => [], 'brand' => null, 'package' => null, 'categories' => [], 'sources' => [], 'error_code' => 'provider_unavailable'];
 $failedResult = $service->CompleteJob((int)$providerFailure['id'], $providerFailure['lease_token'], $retryable);
 checkWorker($failedResult['state'] === 'retryable_failure' && $failedResult['safe_error_code'] === 'provider_unavailable', 'contract retryable failure enters bounded retry path');
@@ -125,14 +126,16 @@ $eligibilityDb->exec('PRAGMA foreign_keys = ON');
 $eligibilityDb->exec('CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT NOT NULL)');
 $eligibilityDb->exec('CREATE TABLE product_barcodes (id INTEGER PRIMARY KEY, product_id INTEGER NOT NULL, barcode TEXT NOT NULL)');
 GrocyAiCaptureMigration::Bootstrap($eligibilityDb);
-$eligibilityDb->exec("INSERT INTO grocy_ai_capture_trips (id, status, module_version) VALUES (10, 'reviewing', 'test'), (11, 'reviewing', 'test'), (12, 'reviewing', 'test'), (13, 'reviewing', 'test')");
+$eligibilityDb->exec("INSERT INTO grocy_ai_capture_trips (id, status, module_version) VALUES (10, 'reviewing', 'test'), (11, 'reviewing', 'test'), (12, 'reviewing', 'test'), (13, 'reviewing', 'test'), (14, 'reviewing', 'test'), (15, 'reviewing', 'test')");
 $eligibilityService = new GrocyAiCaptureResearchService($eligibilityDb);
 $cases = [
+	[8, 15, '00000096385074', '00000096385074'],
+	[9, 14, '00000096385074', '00000096385074'],
 	[10, 10, '036000291452', '00036000291452'],
 	[11, 11, '042100005264', '00042100005264'],
 	[12, 12, '012345678905', '00012345678905'],
 	[13, 13, '96385074', '00000096385074'],
-	[14, 10, '96385074', '00000096385074'],
+	[14, 10, '00000096385074', '00000096385074'],
 	[15, 13, '4006381333931', '04006381333931']
 ];
 foreach ($cases as [$lineId, $tripId, $barcode, $canonical])
@@ -143,9 +146,13 @@ foreach ($cases as [$lineId, $tripId, $barcode, $canonical])
 $eligibilityDb->exec("INSERT INTO grocy_ai_capture_trip_cancellations (trip_id, actor) VALUES (10, 'test')");
 $eligibilityDb->exec("UPDATE grocy_ai_capture_trips SET status = 'committed' WHERE id = 11");
 $eligibilityDb->exec("UPDATE grocy_ai_capture_lines SET selected = 0 WHERE id = 12");
+$eligibilityDb->exec("UPDATE grocy_ai_capture_lines SET selected = 0 WHERE id = 9");
+$eligibilityDb->exec("UPDATE grocy_ai_capture_lines SET scanned_barcode = '00000096385075' WHERE id = 8");
+$eligibilityDb->exec("UPDATE grocy_ai_capture_research_drafts SET scanned_barcode = '00000096385075' WHERE line_id = 8");
 $eligibilityDb->exec("UPDATE grocy_ai_capture_lines SET status = 'known' WHERE id = 15");
 $eligible = $eligibilityService->ClaimJobs(5, 'eligibility-worker');
 checkWorker(count($eligible) === 1 && $eligible[0]['canonical_gtin'] === '00000096385074', 'only shared job with active selected unknown line is claimed');
+checkWorker($eligible[0]['lookup_barcode'] === '96385074', 'claim uses active original scan instead of canceled shared variant');
 
 checkWorker(is_file(__DIR__ . '/../src/GrocyAiCaptureResearchController.php'), 'worker controller missing');
 require_once __DIR__ . '/../src/GrocyAiCaptureResearchController.php';

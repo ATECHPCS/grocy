@@ -103,10 +103,11 @@ class GrocyAiCaptureResearchService
 			$jobs = [];
 			foreach ($select->fetchAll(PDO::FETCH_ASSOC) as $job)
 			{
+				$lookupBarcode = $this->LookupBarcodeForJob((int)$job['id'], $job['canonical_gtin']);
 				$token = bin2hex(random_bytes(32));
 				$this->Db->prepare("UPDATE grocy_ai_capture_research_jobs SET state = 'leased', attempts = attempts + 1, lease_hash = ?, lease_expires_at = datetime('now', '+60 seconds'), next_retry_at = NULL, safe_error_code = NULL, revision = revision + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
 					->execute([hash('sha256', $token), $job['id']]);
-				$jobs[] = ['id' => (int)$job['id'], 'canonical_gtin' => $job['canonical_gtin'], 'attempts' => (int)$job['attempts'] + 1, 'revision' => (int)$job['revision'] + 1, 'lease_token' => $token, 'lease_expires_at' => gmdate('Y-m-d H:i:s', time() + 60)];
+				$jobs[] = ['id' => (int)$job['id'], 'canonical_gtin' => $job['canonical_gtin'], 'lookup_barcode' => $lookupBarcode, 'attempts' => (int)$job['attempts'] + 1, 'revision' => (int)$job['revision'] + 1, 'lease_token' => $token, 'lease_expires_at' => gmdate('Y-m-d H:i:s', time() + 60)];
 			}
 			$this->Db->commit();
 			return $jobs;
@@ -116,6 +117,17 @@ class GrocyAiCaptureResearchService
 			if ($this->Db->inTransaction()) $this->Db->rollBack();
 			throw $ex;
 		}
+	}
+
+	private function LookupBarcodeForJob(int $jobId, string $canonical): string
+	{
+		$query = $this->Db->prepare("SELECT l.scanned_barcode FROM grocy_ai_capture_research_drafts d JOIN grocy_ai_capture_lines l ON l.id = d.line_id AND l.trip_id = d.trip_id JOIN grocy_ai_capture_trips t ON t.id = d.trip_id WHERE d.job_id = ? AND l.status = 'unknown' AND l.selected = 1 AND l.applied_at IS NULL AND l.canonical_gtin = ? AND l.scanned_barcode = d.scanned_barcode AND t.status IN ('open', 'reviewing') AND NOT EXISTS (SELECT 1 FROM grocy_ai_capture_trip_cancellations c WHERE c.trip_id = t.id) ORDER BY l.id LIMIT 32");
+		$query->execute([$jobId, $canonical]);
+		foreach ($query->fetchAll(PDO::FETCH_COLUMN) as $barcode)
+		{
+			if (is_string($barcode) && GrocyAiGtin::CanonicalOrNull($barcode) === $canonical) return $barcode;
+		}
+		throw new \RuntimeException('Research lookup barcode unavailable');
 	}
 
 	/** @param array<string, mixed> $result
