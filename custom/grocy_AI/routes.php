@@ -21,6 +21,8 @@ require_once __DIR__ . '/src/GrocyAiBulkMigration.php';
 require_once __DIR__ . '/src/GrocyAiGroupSuggestionService.php';
 require_once __DIR__ . '/src/GrocyAiBulkService.php';
 require_once __DIR__ . '/src/GrocyAiCaptureMigration.php';
+require_once __DIR__ . '/src/GrocyAiReceiptMigration.php';
+require_once __DIR__ . '/src/GrocyAiReceiptImageStore.php';
 require_once __DIR__ . '/src/GrocyAiCaptureService.php';
 require_once __DIR__ . '/src/GrocyAiApiController.php';
 require_once __DIR__ . '/src/GrocyAiConversionController.php';
