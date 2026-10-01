@@ -7,6 +7,8 @@ use GrocyAI\Services\GrocyAiReceiptService;
 
 foreach (['GrocyAiGtin', 'GrocyAiBarcodeService', 'GrocyAiCaptureMigration', 'GrocyAiReceiptMigration', 'GrocyAiReceiptService', 'GrocyAiCaptureService'] as $class) require_once __DIR__ . '/../src/' . $class . '.php';
 require_once __DIR__ . '/capture.php';
+require_once dirname(__DIR__, 3) . '/packages/autoload.php';
+if (!defined('GROCY_USER_ID')) define('GROCY_USER_ID', 1);
 
 function commitCheck(bool $ok, string $message): void
 {
@@ -22,6 +24,21 @@ class ReceiptCommitStock
 		$transactionId ??= 'receipt-transaction';
 		$this->pdo->prepare('INSERT INTO stock (product_id, amount, transaction_id, price, store) VALUES (?, ?, ?, ?, ?)')->execute([$productId, $amount, $transactionId, $price, $store]);
 		if ($this->fail) throw new RuntimeException('Simulated native write failure');
+	}
+}
+// Exercise native AddProduct, including its tare arithmetic, stock writes, and compaction query.
+// Only the broad product-details query is adapted to this small deterministic SQLite fixture.
+class ReceiptNativeStock extends \Grocy\Services\StockService
+{
+	public function __construct(private PDO $pdo) {}
+	protected function getDatabase()
+	{
+		return new \LessQL\Database($this->pdo);
+	}
+	public function GetProductDetails(int $productId)
+	{
+		$product = $this->pdo->query('SELECT * FROM products WHERE id = ' . $productId)->fetch(PDO::FETCH_OBJ);
+		return ['product' => $product, 'stock_amount' => (float)$this->pdo->query('SELECT COALESCE(SUM(amount), 0) FROM stock WHERE product_id = ' . $productId)->fetchColumn()];
 	}
 }
 function commitFixture(): array
@@ -173,6 +190,36 @@ $tests['inactive allocation skipped and stock unit price converted'] = function 
 	$pdo->exec('UPDATE product_barcodes SET amount = 3');
 	$result = $capture->CommitTrip($trip, 'test', $capture->ChecksumForTrip($trip));
 	commitCheck($result['applied'] === 1 && $pdo->query('SELECT amount, price FROM stock')->fetchAll(PDO::FETCH_NUM) == [[3, 2]], 'active confirmed allocation posts conserved amount and value');
+};
+$tests['native tare purchases add each allocation to existing stock exactly'] = function (): void
+{
+	foreach ([0, 4] as $existingAmount)
+	{
+		[$pdo, , $receipts, $trip] = commitFixture();
+		$pdo->exec('ALTER TABLE products ADD COLUMN active INTEGER NOT NULL DEFAULT 1');
+		$pdo->exec('ALTER TABLE products ADD COLUMN enable_tare_weight_handling INTEGER NOT NULL DEFAULT 1');
+		$pdo->exec('ALTER TABLE products ADD COLUMN tare_weight REAL NOT NULL DEFAULT 1');
+		foreach (['stock', 'stock_log'] as $table)
+		{
+			foreach (['best_before_date TEXT', 'purchased_date TEXT', 'stock_id TEXT', 'location_id INTEGER', 'shopping_location_id INTEGER', 'note TEXT'] as $column) $pdo->exec('ALTER TABLE ' . $table . ' ADD COLUMN ' . $column);
+		}
+		$pdo->exec('ALTER TABLE stock_log ADD COLUMN price REAL');
+		$pdo->exec('ALTER TABLE stock_log ADD COLUMN user_id INTEGER');
+		$pdo->exec('CREATE VIEW stock_splits AS SELECT product_id FROM stock WHERE 0');
+		if ($existingAmount > 0) $pdo->prepare('INSERT INTO stock (product_id, amount) VALUES (101, ?)')->execute([$existingAmount]);
+		$pdo->exec("UPDATE grocy_ai_capture_lines SET quantity = 6, best_before_override = '2027-01-01'");
+		commitReceipt($pdo, $receipts, $trip, 1, 7, 3, 2);
+		commitReceipt($pdo, $receipts, $trip, 1, 8, 3, 4);
+		$capture = new GrocyAiCaptureService($pdo, true, new ReceiptNativeStock($pdo));
+		$result = $capture->CommitTrip($trip, 'test', $capture->ChecksumForTrip($trip));
+		commitCheck($result['outcome'] === 'committed' && $result['applied'] === 2, 'native tare split must commit with starting stock ' . $existingAmount . ', got ' . $result['outcome']);
+		commitCheck((float)$pdo->query('SELECT SUM(amount) FROM stock')->fetchColumn() === $existingAmount + 6.0, 'native tare total must increase by six');
+		commitCheck($pdo->query('SELECT amount, price, shopping_location_id FROM stock_log ORDER BY id')->fetchAll(PDO::FETCH_NUM) == [[3, 2, 7], [3, 4, 8]], 'native stock log must preserve both allocation quantities, prices, and stores');
+		$events = $pdo->query("SELECT after_json FROM grocy_ai_receipt_audit WHERE action = 'commit_allocation' ORDER BY id")->fetchAll(PDO::FETCH_COLUMN);
+		commitCheck(count($events) === 2 && json_decode($events[0], true)['amount'] == 3 && json_decode($events[1], true)['amount'] == 3, 'receipt events must match native tare stock log amounts');
+		$repeat = $capture->CommitTrip($trip, 'test', $capture->ChecksumForTrip($trip));
+		commitCheck($repeat['outcome'] === 'already_committed' && (float)$pdo->query('SELECT SUM(amount) FROM stock')->fetchColumn() === $existingAmount + 6.0, 'native tare repeat must not change stock');
+	}
 };
 $tests['stock failure rolls back stock and audit'] = function (): void
 {

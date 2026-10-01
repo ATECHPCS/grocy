@@ -362,9 +362,10 @@ class GrocyAiCaptureService
 				$amount = (float)$allocation['quantity'] * $multiplier;
 				$bestBefore = $row['best_before_override'] ?? null;
 				// Receipt prices are per purchased unit; Grocy stores the price per stock unit.
+				// Allocations are incremental amounts, including for products with tare weight handling.
 				$price = (float)$allocation['unit_price'] / $multiplier;
 				$store = $allocation['shopping_location_id'] === null ? null : (int)$allocation['shopping_location_id'];
-				$stock->AddProduct($productId, $amount, $bestBefore, 'purchase', $today, $price, $location, $store, $transactionId, 0, false, $note . ' receipt #' . $allocation['receipt_id'] . ' allocation #' . $allocation['id']);
+				$stock->AddProduct($productId, $amount, $bestBefore, 'purchase', $today, $price, $location, $store, $transactionId, 0, true, $note . ' receipt #' . $allocation['receipt_id'] . ' allocation #' . $allocation['id']);
 				$receiptAudit->execute([$tripId, $allocation['receipt_id'], $allocation['receipt_line_id'], $allocation['id'], (string)($actor ?? ''), 'commit_allocation', $this->CanonicalJson($allocation), $this->CanonicalJson(['transaction_id' => $transactionId, 'amount' => $amount, 'stock_unit_price' => $price]), $appliedAt]);
 				if ($lineId !== null)
 				{
