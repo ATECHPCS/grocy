@@ -12,7 +12,7 @@ mkdir($receiptApiPath);
 if (!defined('GROCY_DATAPATH')) define('GROCY_DATAPATH', $receiptApiPath);
 if (!defined('GROCY_USER_ID')) define('GROCY_USER_ID', 1);
 require_once dirname(__DIR__, 3) . '/packages/autoload.php';
-foreach (['GrocyAiCaptureMigration', 'GrocyAiReceiptMigration', 'GrocyAiReceiptImageStore', 'GrocyAiReceiptService', 'GrocyAiReceiptExtractor', 'GrocyAiApiController'] as $file) require_once __DIR__ . '/../src/' . $file . '.php';
+foreach (['GrocyAiGtin', 'GrocyAiBarcodeService', 'GrocyAiCaptureService', 'GrocyAiCaptureMigration', 'GrocyAiReceiptMigration', 'GrocyAiReceiptImageStore', 'GrocyAiReceiptService', 'GrocyAiReceiptExtractor', 'GrocyAiApiController'] as $file) require_once __DIR__ . '/../src/' . $file . '.php';
 function receiptApiCheck(bool $condition, string $message): void { if (!$condition) throw new RuntimeException($message); }
 function receiptApiCall(GrocyAiApiController $controller, string $method, array $args, ?array $body = null, array $files = []): Psr\Http\Message\ResponseInterface
 {
@@ -67,6 +67,12 @@ $retry = receiptApiCall($controller, 'RetryCaptureReceipt', ['tripId' => '1', 'r
 receiptApiCheck($retry->getStatusCode() === 200 && json_decode((string)$retry->getBody(), true)['status'] === 'manual_entry', 'retry preserves manual state');
 $extract = receiptApiCall($controller, 'ExtractCaptureReceipt', ['tripId' => '1', 'receiptId' => $createdId]);
 receiptApiCheck($extract->getStatusCode() === 200 && json_decode((string)$extract->getBody(), true)['status'] === 'manual_entry', 'OCR failure leaves manual state');
+$captureService = new \GrocyAI\Services\GrocyAiCaptureService($pdo);
+$blockedCommit = receiptApiCall($controller, 'CommitCaptureTrip', ['tripId' => '1'], ['confirmed_checksum' => $captureService->ChecksumForTrip(1)]);
+receiptApiCheck($blockedCommit->getStatusCode() === 409 && json_decode((string)$blockedCommit->getBody(), true)['outcome'] === 'receipt_review_required', 'receipt guard returns explicit HTTP 409');
+$pdo->exec("INSERT INTO grocy_ai_capture_lines (trip_id, seq, scanned_barcode, status) VALUES (1, 1, 'test', 'unknown')");
+$blockedDelete = receiptApiCall($controller, 'UpdateCaptureLine', ['tripId' => '1', 'seq' => '1'], ['delete' => true]);
+receiptApiCheck($blockedDelete->getStatusCode() === 409, 'receipt-attached line delete returns explicit HTTP 409');
 $pdo->exec("UPDATE grocy_ai_capture_trips SET status = 'committed' WHERE id = 1");
 $blocked = receiptApiCall($controller, 'UpdateCaptureReceipt', ['tripId' => '1', 'receiptId' => '10'], ['merchant' => 'Other']);
 receiptApiCheck($blocked->getStatusCode() === 409, 'committed trip is read only');

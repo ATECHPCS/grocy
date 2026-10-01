@@ -105,6 +105,7 @@ class GrocyAiReceiptService
 					$inheritedAllocations = $this->Rows('SELECT * FROM grocy_ai_receipt_allocations WHERE receipt_id = ? AND active = 1 AND shopping_location_inherited = 1', [(int)$receipt['id']]);
 					foreach ($inheritedAllocations as $allocation)
 					{
+						if ($this->Scalar("SELECT COUNT(*) FROM grocy_ai_receipt_audit WHERE allocation_id = ? AND action = 'commit_allocation'", [(int)$allocation['id']]) > 0) throw new InvalidArgumentException('Applied allocation shopping location is read only');
 						$this->Apply('grocy_ai_receipt_allocations', (int)$allocation['id'], ['shopping_location_id' => $fields['shopping_location_id'], 'revision' => (int)$allocation['revision'] + 1]);
 						$this->Audit($receipt, (int)$allocation['receipt_line_id'], (int)$allocation['id'], $actor, 'inherit_shopping_location', $allocation, $this->Allocation((int)$receipt['id'], (int)$allocation['receipt_line_id'], (int)$allocation['id']));
 					}
@@ -162,6 +163,7 @@ class GrocyAiReceiptService
 			foreach (['capture_line_id', 'product_id', 'shopping_location_id'] as $key) if (array_key_exists($key, $change) && $change[$key] !== null) $change[$key] = $this->PositiveId($change[$key], $key);
 			if ($id !== null && (!is_int($id) || $id < 1)) throw new InvalidArgumentException('Invalid allocation ID');
 			$before = $id === null ? null : $this->Allocation($receiptId, $lineId, $id);
+			if ($id !== null && $this->Scalar("SELECT COUNT(*) FROM grocy_ai_receipt_audit WHERE allocation_id = ? AND action = 'commit_allocation'", [$id]) > 0) throw new InvalidArgumentException('Applied allocation is read only');
 			if (($change['delete'] ?? false) === true)
 			{
 				if ($before === null || count($change) !== 2) throw new InvalidArgumentException('Invalid allocation delete');

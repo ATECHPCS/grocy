@@ -1017,7 +1017,7 @@ class GrocyAiApiController extends BaseApiController
 		{
 			$service = new GrocyAiCaptureService(DatabaseService::GetInstance()->GetDbConnectionRaw());
 			$result = $service->CommitTrip((int)$tripId, (string)GROCY_USER_ID, $candidate['confirmed_checksum']);
-			if (in_array($result['outcome'], ['checksum_mismatch', 'already_committed', 'commit_failed'], true))
+			if (in_array($result['outcome'], ['checksum_mismatch', 'already_committed', 'commit_failed', 'receipt_review_required'], true))
 			{
 				return $this->ApiResponse($response->withStatus(409), $result);
 			}
@@ -1121,6 +1121,10 @@ class GrocyAiApiController extends BaseApiController
 		{
 			$service = new GrocyAiCaptureService(DatabaseService::GetInstance()->GetDbConnectionRaw());
 			return $this->ApiResponse($response, $service->UpdateLine((int)$tripId, (int)$seq, $candidate, (string)GROCY_USER_ID));
+		}
+		catch (\DomainException $ex)
+		{
+			return $this->GenericErrorResponse($response, $ex->getMessage(), 409);
 		}
 		catch (\InvalidArgumentException)
 		{
