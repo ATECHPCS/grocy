@@ -213,6 +213,7 @@ class GrocyAiReceiptService
 				$fields = array_diff_key($change, array_flip(['id']));
 				if ($fields === [] || array_diff(array_keys($fields), ['capture_line_id', 'product_id', 'quantity', 'unit_price', 'shopping_location_id']) !== []) throw new InvalidArgumentException('Unsupported allocation change');
 				$merged = array_merge($before ?? [], $fields);
+				$this->AssertResearchAllocation((int)$receipt['trip_id'], $lineId, isset($merged['capture_line_id']) ? (int)$merged['capture_line_id'] : null);
 				$resolvedProductId = $this->ValidateAllocation($receipt, $line, $merged, $id);
 				$fields['product_id'] = $resolvedProductId;
 				$inherited = !array_key_exists('shopping_location_id', $change) ? (int)($before['shopping_location_inherited'] ?? 1) : 0;
@@ -231,6 +232,13 @@ class GrocyAiReceiptService
 			$this->Revision($receiptId);
 			$this->Audit($receipt, $lineId, $action === 'delete_allocation' ? null : $id, $actor, $action, $before, $after);
 		});
+	}
+
+	private function AssertResearchAllocation(int $tripId, int $receiptLineId, ?int $captureLineId): void
+	{
+		if ($captureLineId === null || $this->Scalar("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'grocy_ai_capture_research_drafts'", []) === false) return;
+		$conflict = $this->Scalar('SELECT 1 FROM grocy_ai_capture_research_drafts WHERE trip_id = ? AND receipt_line_id = ? AND line_id IS NOT NULL AND line_id != ? LIMIT 1', [$tripId, $receiptLineId, $captureLineId]);
+		if ($conflict !== false) throw new InvalidArgumentException('Allocation conflicts with paired research evidence');
 	}
 
 	public function Finish(int $receiptId, ?string $actor = null): array

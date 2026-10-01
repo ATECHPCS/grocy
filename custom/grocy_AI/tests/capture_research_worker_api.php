@@ -49,14 +49,15 @@ rejectWorker(fn() => $service->ClaimJobs(6, 'worker-a'), 'oversized claim accept
 
 $jobId = (int)$claimed[0]['id'];
 $token = $claimed[0]['lease_token'];
-$hit = ['contract_version' => 1, 'canonical_gtin' => '04006381333931', 'outcome' => 'found', 'name_candidates' => ['Sample food'], 'name_candidate_sources' => ['bb-federation'], 'brand' => null, 'package' => null, 'categories' => [], 'sources' => ['bb-federation']];
+$hit = ['contract_version' => 1, 'canonical_gtin' => '04006381333931', 'outcome' => 'found', 'name_candidates' => ['Sample food'], 'name_candidate_sources' => [['bb-federation', 'openfoodfacts']], 'brand' => null, 'package' => null, 'categories' => [], 'sources' => ['bb-federation', 'openfoodfacts']];
 rejectWorker(fn() => $service->CompleteJob($jobId, $token, $hit + ['raw_html' => '<p>no</p>']), 'extra provider field accepted');
 rejectWorker(fn() => $service->CompleteJob($jobId, $token, array_replace($hit, ['canonical_gtin' => '00000096385074'])), 'wrong GTIN accepted');
 rejectWorker(fn() => $service->CompleteJob($jobId, $token, array_replace($hit, ['name_candidates' => [str_repeat('a', 201)]])), 'oversized name accepted');
 rejectWorker(fn() => $service->CompleteJob($jobId, $token, array_replace($hit, ['sources' => ['unknown-provider']])), 'unknown source accepted');
 rejectWorker(fn() => $service->CompleteJob($jobId, $token, array_replace($hit, ['sources' => []])), 'unattributed hit accepted');
-rejectWorker(fn() => $service->CompleteJob($jobId, $token, array_replace($hit, ['name_candidate_sources' => []])), 'misaligned candidate sources accepted');
-rejectWorker(fn() => $service->CompleteJob($jobId, $token, array_replace($hit, ['name_candidate_sources' => ['openfoodfacts']])), 'candidate source outside result sources accepted');
+rejectWorker(fn() => $service->CompleteJob($jobId, $token, array_replace($hit, ['name_candidate_sources' => [['bb-federation'], ['openfoodfacts']]])), 'misaligned candidate sources accepted');
+rejectWorker(fn() => $service->CompleteJob($jobId, $token, array_replace($hit, ['name_candidate_sources' => [['openfoodfacts', 'openfoodfacts']]])), 'duplicate candidate source accepted');
+rejectWorker(fn() => $service->CompleteJob($jobId, $token, array_replace($hit, ['name_candidate_sources' => [['unknown-provider']]])), 'unknown candidate source accepted');
 rejectWorker(fn() => $service->CompleteJob($jobId, $token, array_replace($hit, ['outcome' => 'found', 'name_candidates' => []])), 'empty hit accepted');
 rejectWorker(fn() => $service->CompleteJob($jobId, $token, array_replace($hit, ['outcome' => 'retryable_failure', 'name_candidates' => []])), 'retryable failure without safe code accepted');
 rejectWorker(fn() => $service->CompleteJob($jobId, str_repeat('0', 64), $hit), 'stale token accepted');
@@ -72,6 +73,7 @@ rejectWorker(fn() => $service->CompleteJob($jobId, $token, $hit), 'old token can
 
 $draft = $service->DraftsForTrip(1)[0];
 checkWorker($draft['outcome'] === 'ready' && json_decode($draft['suggested_json'], true)['name_candidates'] === ['Sample food'], 'normalized hit reaches draft');
+checkWorker(json_decode($draft['suggested_json'], true)['name_candidate_sources'] === [['bb-federation', 'openfoodfacts']], 'both providers retained on one exact name');
 $db->exec("INSERT INTO grocy_ai_capture_trips (id, status, module_version) VALUES (2, 'reviewing', 'test')");
 $db->exec("INSERT INTO grocy_ai_capture_lines (id, trip_id, seq, scanned_barcode, canonical_gtin, status) VALUES (3, 2, 1, '4006381333931', '04006381333931', 'unknown')");
 $service->EnqueueUnknown(2, 3, '4006381333931');
