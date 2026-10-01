@@ -21,6 +21,11 @@ module.exports = defineConfig({
 			}
 		},
 		{
+			name: 'chromium-desktop',
+			testMatch: /product-research\.spec\.js/,
+			use: { ...devices['Desktop Chrome'], viewport: { width: 1280, height: 800 } }
+		},
+		{
 			name: 'webkit-mobile',
 			use: {
 				...devices['iPhone 13'],

@@ -27,6 +27,7 @@ The small upstream integration surface is:
 - `views/productform.blade.php`: conditional product-enrichment panel and assets.
 - `public/viewjs/productform.js`: one post-Save continuation invokes transient barcode attachment only after Grocy establishes a trusted product ID and before redirect.
 - `migrations/0256.php`: transactional checksum-valid canonical GTIN uniqueness; collisions block without deleting or reassigning household data.
+- `services/StockService.php`: after Grocy's exact barcode lookup misses, resolve checksum-valid GTIN variants through the module's canonical owner lookup. This preserves existing stored barcode spellings while capture approval can link an equivalent scan under the canonical unique index. Non-GTIN barcodes retain the native exact-only behavior.
 - `version.json` at image build time: customization marker that invalidates Grocy's persisted route/view cache.
 
 The module implementation and contract are documented in [`custom/grocy_AI/README.md`](custom/grocy_AI/README.md).
@@ -83,3 +84,13 @@ The purchase review view loads isolated `capture-receipts.js` before `capture-re
 The capture and review views now link an open trip back to `/grocyai/capture?trip=<id>` and load its saved lines through the existing trip GET endpoint. A missing or closed trip does not create a replacement automatically. When no ID is supplied, the capture page selects the signed-in user's latest open trip with saved scans from the namespaced capture tables. The capture asset uses cache version `2.6.2`, and the stable customization marker advances to `ATECHPCS-grocy_AI-21` for the new view bytes.
 
 Receipt persistence is namespaced under `grocy_ai_receipt_*` in the Grocy SQLite data path; private images are under `GROCY_DATAPATH/grocy_ai/receipts/`. This adds no new upstream hook beyond the purchase review view, module routes/controller, and `Dockerfile.atech` overlay already listed above. The receipt release and recovery procedure is in [`docs/PURCHASE-RECEIPT-ACCEPTANCE.md`](docs/PURCHASE-RECEIPT-ACCEPTANCE.md).
+
+The purchase review view also loads `capture-product-research.js` between the receipt editor and `capture-review.js`. It reads the separate versioned research DTO and mounts a card beside each selected unknown line; the existing capture and receipt DTOs and their stock commit gate stay separate. The review asset version is `2.6.3`.
+
+## Capture research worker boundary
+
+The module registers three worker-only capture research routes for bounded job claim, completion, and failure. Grocy's existing API authentication runs before these routes, and the module also checks the server-held `GROCY_AI_RESEARCH_WORKER_KEY` with a timing-safe comparison. The only upstream configuration edit is the empty `AI_RESEARCH_WORKER_KEY` default in `config-dist.php`; deployments provide its secret outside Git. `custom/grocy_AI/version.json` advances to `ATECHPCS-grocy_AI-23` so the persisted route cache includes the new endpoints. Worker leases and raw results do not enter capture browser DTOs.
+
+The namespaced CLI `custom/grocy_AI/bin/capture-research-backfill.php` uses the configured absolute `GROCY_DATAPATH` to open `grocy.db`; `--db=PATH` is a local fixture override. It adds no web route or upstream hook. The customization marker advances to `ATECHPCS-grocy_AI-26` for the release image/cache boundary. Dry runs use SQLite `query_only`; apply uses one immediate transaction and the existing research queue. No core product, barcode, receipt, or stock table is written.
+
+The purchase review also reads `GET /api/grocy-ai/capture/research/options` once per review to show active local groups, the current taxonomy leaves, and active top-level parent products alongside provider suggestions. The route requires stock purchase permission and returns only review choices; approval still validates all references and parent unit compatibility. A selected known scan with an unfinished research draft presents an explicit link to its current product owner and cannot create a duplicate. The capture review asset token advances to `2.6.4` and the customization marker to `ATECHPCS-grocy_AI-27` for the new route and view bytes.

@@ -518,3 +518,29 @@ Use **Discard receipt edits**, **Discard line edits**, or **Discard allocation e
 Follow [`docs/PURCHASE-RECEIPT-ACCEPTANCE.md`](../../docs/PURCHASE-RECEIPT-ACCEPTANCE.md) before releasing receipt review. The companion supplies authenticated OCR suggestions through `POST /v1/receipts/extract`; Grocy stores receipt state and images and enforces readiness. Release the companion first, then the stable Grocy image. If OCR is unavailable, retain the uploaded receipt and enter or correct lines manually. A receipt still needs explicit line decisions, allocations, and a reconciled or accepted total before Finish; server readiness still gates Commit purchase.
 
 Receipt images live under `GROCY_DATAPATH/grocy_ai/receipts/<trip-id>/` with opaque file names. Their metadata, allocations, and append-only audit live in the same data path's SQLite database. Back up and restore the full persistent Grocy data path as one unit. The isolated controller rehearsal is `php8.5 custom/grocy_AI/tests/receipt_rehearsal.php`; it proves zero writes before an explicit fixture commit and an idempotent retry afterward. Live provider and physical-phone acceptance remain separate release gates.
+
+### Pending research after a barcode becomes known
+
+The research review DTO includes `line_status`, `resolved_product_id`, and `resolved_product_name` for each draft. A scan can become known when another trip approves the same canonical GTIN or when a product is created through Grocy's ordinary flow. Its draft remains unfinalized, so receipt readiness continues to report `capture_line_<id>_product_review_required`. The user must explicitly link that draft to the displayed owner with its current revision. The link endpoint verifies the canonical owner and resolved line together under `BEGIN IMMEDIATE`; it creates no product and books no stock. Receipt completion and allocation checks remain independent.
+
+### Capture research backfill
+
+After the companion research worker and Grocy release are configured, preview the existing trip from the deployed Grocy checkout with its persistent data path:
+
+```sh
+GROCY_DATAPATH=/etc/komodo/grocy php8.5 custom/grocy_AI/bin/capture-research-backfill.php --trip=12 --dry-run
+```
+
+The JSON lists at most 100 trip lines, candidate IDs and count, excluded line IDs with safe blocker reasons and counts, and a SHA-256 checksum. Only selected, unapplied, checksum-valid unknown lines with no resolved product are candidates. Review the IDs against trip #12 before applying. A missing, canceled, or committed trip cannot be applied; a trip over 100 lines is refused. The preview connection is read-only.
+
+To queue exactly the reviewed candidate set, paste the 64-character checksum from that preview when prompted, then run the command with the quoted shell variable:
+
+```sh
+printf 'Paste reviewed preview checksum: '
+IFS= read -r CHECKSUM
+GROCY_DATAPATH=/etc/komodo/grocy php8.5 custom/grocy_AI/bin/capture-research-backfill.php --trip=12 --apply --checksum="$CHECKSUM"
+```
+
+Apply locks SQLite for the duration, recalculates the trip/line checksum, and aborts if status, cancellation, selection, barcode, quantity, or another included line value changed. Run a fresh preview after any refusal. Repeating an accepted apply is safe: existing research drafts are reused, and `created_count` reports newly queued drafts. This command writes only namespaced research job, draft, and audit rows. It does not create products, attach barcodes, change receipt/capture rows, or book stock. The companion may start researching queued GTINs; product approval and purchase commit remain explicit separate actions. `--db=PATH` is for isolated fixture verification; omit it on the household deployment.
+
+Follow [capture research release acceptance](../../docs/CAPTURE-RESEARCH-ACCEPTANCE.md) for backup, count, phone, and rollback checks. The local focused test is `php8.5 custom/grocy_AI/tests/capture_research_backfill.php`.

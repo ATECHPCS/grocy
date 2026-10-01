@@ -12,7 +12,7 @@ mkdir($receiptApiPath);
 if (!defined('GROCY_DATAPATH')) define('GROCY_DATAPATH', $receiptApiPath);
 if (!defined('GROCY_USER_ID')) define('GROCY_USER_ID', 1);
 require_once dirname(__DIR__, 3) . '/packages/autoload.php';
-foreach (['GrocyAiGtin', 'GrocyAiBarcodeService', 'GrocyAiCaptureService', 'GrocyAiCaptureMigration', 'GrocyAiReceiptMigration', 'GrocyAiReceiptImageStore', 'GrocyAiReceiptService', 'GrocyAiReceiptExtractor', 'GrocyAiApiController'] as $file) require_once __DIR__ . '/../src/' . $file . '.php';
+foreach (['GrocyAiGtin', 'GrocyAiBarcodeService', 'GrocyAiCaptureMigration', 'GrocyAiReceiptMigration', 'GrocyAiReceiptImageStore', 'GrocyAiReceiptService', 'GrocyAiReceiptExtractor', 'GrocyAiCaptureResearchMigration', 'GrocyAiCaptureResearchService', 'GrocyAiCaptureService', 'GrocyAiApiController'] as $file) require_once __DIR__ . '/../src/' . $file . '.php';
 function receiptApiCheck(bool $condition, string $message): void { if (!$condition) throw new RuntimeException($message); }
 function receiptApiCall(GrocyAiApiController $controller, string $method, array $args, ?array $body = null, array $files = []): Psr\Http\Message\ResponseInterface
 {

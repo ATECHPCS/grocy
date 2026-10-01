@@ -5,7 +5,7 @@ declare(strict_types=1);
 use GrocyAI\Services\GrocyAiCaptureService;
 use GrocyAI\Services\GrocyAiReceiptService;
 
-foreach (['GrocyAiGtin', 'GrocyAiBarcodeService', 'GrocyAiCaptureMigration', 'GrocyAiReceiptMigration', 'GrocyAiReceiptService', 'GrocyAiCaptureService'] as $class) require_once __DIR__ . '/../src/' . $class . '.php';
+foreach (['GrocyAiGtin', 'GrocyAiBarcodeService', 'GrocyAiCaptureMigration', 'GrocyAiReceiptMigration', 'GrocyAiReceiptService', 'GrocyAiCaptureResearchMigration', 'GrocyAiCaptureResearchService', 'GrocyAiCaptureService'] as $class) require_once __DIR__ . '/../src/' . $class . '.php';
 require_once __DIR__ . '/capture.php';
 require_once dirname(__DIR__, 3) . '/packages/autoload.php';
 if (!defined('GROCY_USER_ID')) define('GROCY_USER_ID', 1);
@@ -62,7 +62,84 @@ function commitReceipt(PDO $pdo, GrocyAiReceiptService $receipts, int $trip, ?in
 	$receipts->Finish($id, 'test');
 	return $id;
 }
+function commitResearchFixture(): array
+{
+	[$pdo, $capture, $receipts, $trip, $stock] = commitFixture();
+	$capture->UpdateLine($trip, 1, ['selected' => false], 'test');
+	$capture->ScanIntoTrip($trip, '4006381333931', 'test');
+	$lineId = (int)$pdo->query("SELECT id FROM grocy_ai_capture_lines WHERE scanned_barcode = '4006381333931'")->fetchColumn();
+	$draftId = (int)$pdo->query('SELECT id FROM grocy_ai_capture_research_drafts WHERE line_id = ' . $lineId)->fetchColumn();
+	commitCheck($draftId > 0, 'unknown scan must have a research draft');
+	return [$pdo, $capture, $receipts, $trip, $stock, $lineId, $draftId];
+}
+function commitApproveResearch(PDO $pdo, GrocyAiCaptureService $capture, int $lineId, int $draftId): void
+{
+	$pdo->exec("INSERT INTO product_barcodes (product_id, barcode) VALUES (101, '4006381333931')");
+	$pdo->prepare("UPDATE grocy_ai_capture_research_drafts SET outcome = 'approved', final_product_id = 101, revision = revision + 1 WHERE id = ?")->execute([$draftId]);
+	$capture->ReresolveBarcode('04006381333931', 'test');
+	commitCheck((int)$pdo->query('SELECT resolved_product_id FROM grocy_ai_capture_lines WHERE id = ' . $lineId)->fetchColumn() === 101, 'approval must resolve product owner');
+}
 $tests = [];
+$tests['selected unknown draft blocks commit before stock'] = function (): void
+{
+	[$pdo, $capture, $receipts, $trip, , $lineId] = commitResearchFixture();
+	commitReceipt($pdo, $receipts, $trip, null);
+	$readiness = $receipts->Readiness($trip);
+	commitCheck(in_array('capture_line_' . $lineId . '_product_review_required', $readiness['reasons'], true), 'selected pending draft needs product review');
+	$result = $capture->CommitTrip($trip, 'test', $capture->ChecksumForTrip($trip));
+	commitCheck($result['outcome'] === 'receipt_review_required' && (int)$pdo->query('SELECT COUNT(*) FROM stock')->fetchColumn() === 0, 'draft alone cannot write stock');
+	$pdo->exec("INSERT INTO product_barcodes (product_id, barcode) VALUES (101, '4006381333931')");
+	$capture->ReresolveBarcode('04006381333931', 'test');
+	commitCheck(in_array('capture_line_' . $lineId . '_product_review_required', $receipts->Readiness($trip)['reasons'], true), 'external ownership does not approve a pending draft');
+};
+$tests['finalized draft must match resolved product'] = function (): void
+{
+	[$pdo, $capture, $receipts, $trip, , $lineId, $draftId] = commitResearchFixture();
+	commitApproveResearch($pdo, $capture, $lineId, $draftId);
+	commitReceipt($pdo, $receipts, $trip, $lineId);
+	$pdo->prepare('UPDATE grocy_ai_capture_research_drafts SET final_product_id = 102 WHERE id = ?')->execute([$draftId]);
+	commitCheck(in_array('capture_line_' . $lineId . '_product_review_required', $receipts->Readiness($trip)['reasons'], true), 'finalized draft for another product blocks commit');
+	commitCheck($capture->CommitTrip($trip, 'test', $capture->ChecksumForTrip($trip))['outcome'] === 'receipt_review_required' && (int)$pdo->query('SELECT COUNT(*) FROM stock')->fetchColumn() === 0, 'mismatched final product cannot write stock');
+};
+$tests['approved product still requires finished receipt then commits once'] = function (): void
+{
+	[$pdo, $capture, $receipts, $trip, , $lineId, $draftId] = commitResearchFixture();
+	commitApproveResearch($pdo, $capture, $lineId, $draftId);
+	$id = commitReceipt($pdo, $receipts, $trip, $lineId);
+	$receipts->Reopen($id, 'test');
+	commitCheck($capture->CommitTrip($trip, 'test', $capture->ChecksumForTrip($trip))['outcome'] === 'receipt_review_required', 'unfinished receipt must block approved product');
+	commitCheck((int)$pdo->query('SELECT COUNT(*) FROM stock')->fetchColumn() === 0, 'approval and allocation are not stock writes');
+	$receipts->Finish($id, 'test');
+	commitCheck($receipts->Readiness($trip)['ready'], 'finished allocation to approved product is ready');
+	$checksum = $capture->ChecksumForTrip($trip);
+	commitCheck($capture->CommitTrip($trip, 'test', $checksum)['outcome'] === 'committed', 'approved allocation commits');
+	commitCheck($capture->CommitTrip($trip, 'test', $checksum)['outcome'] === 'already_committed' && (int)$pdo->query('SELECT COUNT(*) FROM stock')->fetchColumn() === 1, 'approved allocation commits exactly once');
+};
+$tests['finalized draft revision and owner invalidate confirmed checksum'] = function (): void
+{
+	foreach (["UPDATE grocy_ai_capture_research_drafts SET revision = revision + 1", "UPDATE product_barcodes SET product_id = 102 WHERE barcode = '4006381333931'"] as $edit)
+	{
+		[$pdo, $capture, $receipts, $trip, , $lineId, $draftId] = commitResearchFixture();
+		commitApproveResearch($pdo, $capture, $lineId, $draftId);
+		commitReceipt($pdo, $receipts, $trip, $lineId);
+		$checksum = $capture->ChecksumForTrip($trip);
+		$pdo->beforeBegin = static fn(PDO $db) => $db->exec($edit);
+		$result = $capture->CommitTrip($trip, 'test', $checksum);
+		commitCheck($result['outcome'] === 'checksum_mismatch' && (int)$pdo->query('SELECT COUNT(*) FROM stock')->fetchColumn() === 0, 'changed approval or owner must invalidate checksum under lock');
+	}
+};
+$tests['ignored and deselected research scans do not require approval'] = function (): void
+{
+	[$pdo, $capture, $receipts, $trip, , $lineId] = commitResearchFixture();
+	$capture->UpdateLine($trip, $lineId, ['selected' => false], 'test');
+	$id = commitReceipt($pdo, $receipts, $trip, null);
+	$receipts->Reopen($id, 'test');
+	$receipts->AddLine($id, ['description' => 'Ignored unknown item', 'decision' => 'ignore', 'quantity' => 1, 'line_total' => 0], 'test');
+	$receipts->Finish($id, 'test');
+	$readiness = $receipts->Readiness($trip);
+	commitCheck(!in_array('capture_line_' . $lineId . '_product_review_required', $readiness['reasons'], true) && $readiness['ready'], 'deselected draft does not block receipt-only purchase');
+	commitCheck($capture->CommitTrip($trip, 'test', $capture->ChecksumForTrip($trip))['outcome'] === 'committed', 'deselected scan permits explicit commit');
+};
 $tests['no receipts cannot write stock'] = function (): void
 {
 	[$pdo, $capture, , $trip] = commitFixture();

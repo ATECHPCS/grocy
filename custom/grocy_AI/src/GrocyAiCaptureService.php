@@ -37,7 +37,7 @@ class GrocyAiCaptureService
 		$this->StockService = $stockService;
 		if ($bootstrap)
 		{
-			GrocyAiCaptureMigration::Bootstrap($this->Db);
+			GrocyAiCaptureResearchMigration::Bootstrap($this->Db);
 		}
 	}
 
@@ -66,37 +66,51 @@ class GrocyAiCaptureService
 	 */
 	public function ScanIntoTrip(int $tripId, string $barcode, ?string $actor = null): array
 	{
-		$trip = $this->FetchTrip($tripId);
-		$this->AssertMutable($trip);
-		if ($trip['status'] === 'committed')
+		$started = !$this->Db->inTransaction();
+		if ($started) $this->Db->exec('BEGIN IMMEDIATE');
+		try
 		{
-			throw new \InvalidArgumentException('A committed trip cannot accept scans');
-		}
+			$trip = $this->FetchTrip($tripId);
+			$this->AssertMutable($trip);
+			$resolution = $this->Resolve($barcode);
 
-		$resolution = $this->Resolve($barcode);
+			// The coalescing bucket is the canonical GTIN when the scan has a checksum-valid form, otherwise
+			// the raw scanned barcode — exactly the migration's UNIQUE index key.
+			$coalesceKey = $resolution['canonical_gtin'] ?? $barcode;
+			$existing = $this->Db->prepare('SELECT * FROM grocy_ai_capture_lines WHERE trip_id = ? AND COALESCE(canonical_gtin, scanned_barcode) = ?');
+			$existing->execute([$tripId, $coalesceKey]);
+			$existingRow = $existing->fetch(PDO::FETCH_ASSOC);
 
-		// The coalescing bucket is the canonical GTIN when the scan has a checksum-valid form, otherwise the
-		// raw scanned barcode — exactly the migration's UNIQUE index key.
-		$coalesceKey = $resolution['canonical_gtin'] ?? $barcode;
-		$existing = $this->Db->prepare('SELECT * FROM grocy_ai_capture_lines WHERE trip_id = ? AND COALESCE(canonical_gtin, scanned_barcode) = ?');
-		$existing->execute([$tripId, $coalesceKey]);
-		$existingRow = $existing->fetch(PDO::FETCH_ASSOC);
-
-		if ($existingRow !== false)
-		{
-			$update = $this->Db->prepare('UPDATE grocy_ai_capture_lines SET quantity = quantity + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?');
-			$update->execute([(int)$existingRow['id']]);
-			$line = $this->FetchLineById((int)$existingRow['id']);
-			$this->WriteAudit($tripId, (int)$line['id'], $actor, 'scan_coalesce', $existingRow, $line);
+			if ($existingRow !== false)
+			{
+				$this->Db->prepare('UPDATE grocy_ai_capture_lines SET quantity = quantity + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?')->execute([(int)$existingRow['id']]);
+				$line = $this->FetchLineById((int)$existingRow['id']);
+				$this->WriteAudit($tripId, (int)$line['id'], $actor, 'scan_coalesce', $existingRow, $line);
+				if ($resolution['status'] === 'unknown' && $existingRow['status'] === 'unknown' && $resolution['canonical_gtin'] !== null)
+				{
+					(new GrocyAiCaptureResearchService($this->Db, false))->EnqueueUnknown($tripId, (int)$line['id'], (string)$line['scanned_barcode']);
+				}
+			}
+			else
+			{
+				$seq = (int)$this->Db->query('SELECT COALESCE(MAX(seq), 0) + 1 FROM grocy_ai_capture_lines WHERE trip_id = ' . $tripId)->fetchColumn();
+				$insert = $this->Db->prepare('INSERT INTO grocy_ai_capture_lines (trip_id, seq, scanned_barcode, canonical_gtin, resolved_product_id, status, quantity, selected) VALUES (?, ?, ?, ?, ?, ?, 1, 1)');
+				$insert->execute([$tripId, $seq, $barcode, $resolution['canonical_gtin'], $resolution['resolved_product_id'], $resolution['status']]);
+				$line = $this->FetchLineById((int)$this->Db->lastInsertId());
+				$this->WriteAudit($tripId, (int)$line['id'], $actor, 'scan_new_line', null, $line);
+				if ($resolution['status'] === 'unknown' && $resolution['canonical_gtin'] !== null)
+				{
+					(new GrocyAiCaptureResearchService($this->Db, false))->EnqueueUnknown($tripId, (int)$line['id'], $barcode);
+				}
+			}
+			if ($started) $this->Db->commit();
 			return $line;
 		}
-
-		$seq = (int)$this->Db->query('SELECT COALESCE(MAX(seq), 0) + 1 FROM grocy_ai_capture_lines WHERE trip_id = ' . $tripId)->fetchColumn();
-		$insert = $this->Db->prepare('INSERT INTO grocy_ai_capture_lines (trip_id, seq, scanned_barcode, canonical_gtin, resolved_product_id, status, quantity, selected) VALUES (?, ?, ?, ?, ?, ?, 1, 1)');
-		$insert->execute([$tripId, $seq, $barcode, $resolution['canonical_gtin'], $resolution['resolved_product_id'], $resolution['status']]);
-		$line = $this->FetchLineById((int)$this->Db->lastInsertId());
-		$this->WriteAudit($tripId, (int)$line['id'], $actor, 'scan_new_line', null, $line);
-		return $line;
+		catch (\Throwable $ex)
+		{
+			if ($started && $this->Db->inTransaction()) $this->Db->rollBack();
+			throw $ex;
+		}
 	}
 
 	/**
@@ -127,6 +141,20 @@ class GrocyAiCaptureService
 		}
 
 		return ['trip' => $this->FetchTrip($tripId), 'lines' => $this->FetchLines($tripId)];
+	}
+
+	/** Re-resolve matching active capture lines after a product has acquired this canonical GTIN. */
+	public function ReresolveBarcode(string $canonical, ?string $actor = null): void
+	{
+		$query = $this->Db->prepare("SELECT l.* FROM grocy_ai_capture_lines l JOIN grocy_ai_capture_trips t ON t.id = l.trip_id WHERE l.canonical_gtin = ? AND l.status IN ('unknown', 'conflict') AND t.status != 'committed' AND NOT EXISTS (SELECT 1 FROM grocy_ai_capture_trip_cancellations c WHERE c.trip_id = t.id)");
+		$query->execute([$canonical]);
+		foreach ($query->fetchAll(PDO::FETCH_ASSOC) as $before)
+		{
+			$resolution = $this->Resolve((string)$before['scanned_barcode']);
+			if ($resolution['status'] !== 'known') continue;
+			$this->Db->prepare("UPDATE grocy_ai_capture_lines SET status = 'known', resolved_product_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")->execute([$resolution['resolved_product_id'], $before['id']]);
+			$this->WriteAudit((int)$before['trip_id'], (int)$before['id'], $actor, 'reresolve_line', $before, $this->FetchLineById((int)$before['id']));
+		}
 	}
 
 	/**
@@ -281,9 +309,9 @@ class GrocyAiCaptureService
 	/**
 	 * The deterministic trip checksum: a lowercase 64-hex SHA-256 over the commit-relevant content of the
 	 * selected known lines — resolved product, canonical/scanned barcode, quantity, price, and best-before
-	 * override — via the canonical-JSON idiom (mirrors `GrocyAiBulkService::ChecksumForPlan`). Lines are
-	 * normalized and sorted by identity, so reordering never changes it and mutating any covered value
-	 * always does. The reviewed trip and the committed trip are provably the same artifact.
+	 * override — via the canonical-JSON idiom (mirrors `GrocyAiBulkService::ChecksumForPlan`). It also
+	 * binds selected barcode owners and finalized research draft identity/revision to the reviewed receipt
+	 * and allocation state. The reviewed trip and the committed trip are provably the same artifact.
 	 */
 	public function ChecksumForTrip(int $tripId): string
 	{
@@ -307,8 +335,15 @@ class GrocyAiCaptureService
 		$receiptLines = $this->Db->query('SELECT l.* FROM grocy_ai_receipt_lines l JOIN grocy_ai_receipts r ON r.id = l.receipt_id WHERE r.trip_id = ' . $tripId . ' ORDER BY l.id')->fetchAll(PDO::FETCH_ASSOC);
 		$allocations = $this->Db->query('SELECT * FROM grocy_ai_receipt_allocations WHERE trip_id = ' . $tripId . ' ORDER BY id')->fetchAll(PDO::FETCH_ASSOC);
 		$captures = $this->Db->query('SELECT id, resolved_product_id, scanned_barcode, canonical_gtin, selected, quantity, best_before_override FROM grocy_ai_capture_lines WHERE trip_id = ' . $tripId . ' ORDER BY id')->fetchAll(PDO::FETCH_ASSOC);
+		$approvedDrafts = $this->Db->query("SELECT d.line_id, d.id, d.revision, d.outcome, d.final_product_id FROM grocy_ai_capture_research_drafts d JOIN grocy_ai_capture_lines c ON c.id = d.line_id AND c.trip_id = d.trip_id WHERE d.trip_id = " . $tripId . " AND c.selected = 1 AND d.outcome IN ('approved', 'linked') ORDER BY d.line_id")->fetchAll(PDO::FETCH_ASSOC);
+		$owners = [];
+		foreach ($captures as $capture)
+		{
+			if ((int)$capture['selected'] !== 1) continue;
+			$owners[(int)$capture['id']] = $this->Resolve((string)$capture['scanned_barcode'])['resolved_product_id'];
+		}
 		$trip = $this->FetchTrip($tripId);
-		return hash('sha256', $this->CanonicalJson(['version' => GrocyAiReceiptMigration::VERSION, 'lines' => $normalized, 'captures' => $captures, 'receipts' => $receipts, 'receipt_lines' => $receiptLines, 'allocations' => $allocations, 'location' => $trip['default_location_id']]));
+		return hash('sha256', $this->CanonicalJson(['version' => GrocyAiReceiptMigration::VERSION, 'lines' => $normalized, 'captures' => $captures, 'selected_owners' => $owners, 'approved_drafts' => $approvedDrafts, 'receipts' => $receipts, 'receipt_lines' => $receiptLines, 'allocations' => $allocations, 'location' => $trip['default_location_id']]));
 	}
 
 	/**
