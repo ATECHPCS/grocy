@@ -23,6 +23,30 @@ class GrocyAiReceiptService
 		return array_map(fn(array $row) => $this->View((int)$row['id']), $rows);
 	}
 
+	public function SuggestMatches(int $receiptId, int $lineId): array
+	{
+		$receipt = $this->Receipt($receiptId);
+		$line = $this->Line($receiptId, $lineId);
+		$description = mb_strtolower(trim((string)$line['description']));
+		$captures = $this->Rows('SELECT c.id, c.seq, c.scanned_barcode, c.resolved_product_id AS product_id, c.quantity, p.name AS product_name FROM grocy_ai_capture_lines c LEFT JOIN products p ON p.id = c.resolved_product_id WHERE c.trip_id = ? AND c.selected = 1 ORDER BY c.seq', [(int)$receipt['trip_id']]);
+		$score = static function (string $name) use ($description): int
+		{
+			$name = mb_strtolower(trim($name));
+			if ($description === '' || $name === '') return 0;
+			if ($description === $name) return 2;
+			return str_contains($description, $name) || str_contains($name, $description) ? 1 : 0;
+		};
+		foreach ($captures as &$capture) $capture['match_score'] = $score((string)($capture['product_name'] ?? ''));
+		unset($capture);
+		usort($captures, static fn(array $a, array $b) => $b['match_score'] <=> $a['match_score'] ?: $a['seq'] <=> $b['seq']);
+		$products = $this->Rows('SELECT id, name FROM products ORDER BY id', []);
+		foreach ($products as &$product) $product['match_score'] = $score((string)$product['name']);
+		unset($product);
+		$products = array_values(array_filter($products, static fn(array $product) => $product['match_score'] > 0));
+		usort($products, static fn(array $a, array $b) => $b['match_score'] <=> $a['match_score'] ?: $a['id'] <=> $b['id']);
+		return ['capture_lines' => array_slice($captures, 0, 20), 'products' => array_slice($products, 0, 20)];
+	}
+
 	public function ImportExtraction(int $receiptId, array $suggestions, ?string $actor = null): array
 	{
 		return $this->Mutate($receiptId, function (array $receipt) use ($suggestions, $actor): void
@@ -74,6 +98,15 @@ class GrocyAiReceiptService
 			{
 				$fields = $this->HeaderChange($change);
 				if ($fields === [] || count($fields) !== count($change)) throw new InvalidArgumentException('Unsupported receipt change');
+				if (array_key_exists('shopping_location_id', $fields) && $fields['shopping_location_id'] != $receipt['shopping_location_id'])
+				{
+					$inheritedAllocations = $this->Rows('SELECT * FROM grocy_ai_receipt_allocations WHERE receipt_id = ? AND active = 1 AND shopping_location_inherited = 1', [(int)$receipt['id']]);
+					foreach ($inheritedAllocations as $allocation)
+					{
+						$this->Apply('grocy_ai_receipt_allocations', (int)$allocation['id'], ['shopping_location_id' => $fields['shopping_location_id'], 'revision' => (int)$allocation['revision'] + 1]);
+						$this->Audit($receipt, (int)$allocation['receipt_line_id'], (int)$allocation['id'], $actor, 'inherit_shopping_location', $allocation, $this->Allocation((int)$receipt['id'], (int)$allocation['receipt_line_id'], (int)$allocation['id']));
+					}
+				}
 				$this->Apply('grocy_ai_receipts', (int)$receipt['id'], $fields + $this->Invalidation());
 				$action = 'update_receipt';
 			}
@@ -109,6 +142,7 @@ class GrocyAiReceiptService
 			{
 				throw new InvalidArgumentException('Remove allocations before ignoring a line');
 			}
+			$this->ValidateLineAllocations($before, array_merge($before, $fields));
 			$this->Apply('grocy_ai_receipt_lines', $lineId, $fields + ['revision' => (int)$before['revision'] + 1]);
 			$this->Apply('grocy_ai_receipts', $receiptId, $this->Invalidation());
 			$this->Revision($receiptId);
@@ -123,6 +157,7 @@ class GrocyAiReceiptService
 			$line = $this->Line($receiptId, $lineId);
 			if ($line['decision'] !== 'include') throw new InvalidArgumentException('Only included lines accept allocations');
 			$id = $change['id'] ?? null;
+			foreach (['capture_line_id', 'product_id', 'shopping_location_id'] as $key) if (array_key_exists($key, $change) && $change[$key] !== null) $change[$key] = $this->PositiveId($change[$key], $key);
 			if ($id !== null && (!is_int($id) || $id < 1)) throw new InvalidArgumentException('Invalid allocation ID');
 			$before = $id === null ? null : $this->Allocation($receiptId, $lineId, $id);
 			if (($change['delete'] ?? false) === true)
@@ -137,10 +172,14 @@ class GrocyAiReceiptService
 				$fields = array_diff_key($change, array_flip(['id']));
 				if ($fields === [] || array_diff(array_keys($fields), ['capture_line_id', 'product_id', 'quantity', 'unit_price', 'shopping_location_id']) !== []) throw new InvalidArgumentException('Unsupported allocation change');
 				$merged = array_merge($before ?? [], $fields);
-				$this->ValidateAllocation($receipt, $line, $merged, $id);
+				$resolvedProductId = $this->ValidateAllocation($receipt, $line, $merged, $id);
+				$fields['product_id'] = $resolvedProductId;
+				$inherited = !array_key_exists('shopping_location_id', $change) ? (int)($before['shopping_location_inherited'] ?? 1) : 0;
+				if ($inherited === 1) $fields['shopping_location_id'] = $receipt['shopping_location_id'];
+				$fields['shopping_location_inherited'] = $inherited;
 				if ($id === null)
 				{
-					$this->Db->prepare('INSERT INTO grocy_ai_receipt_allocations (trip_id, receipt_id, receipt_line_id, capture_line_id, product_id, quantity, unit_price, shopping_location_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')->execute([(int)$receipt['trip_id'], $receiptId, $lineId, $merged['capture_line_id'] ?? null, $merged['product_id'] ?? ($merged['capture_line_id'] !== null ? $this->One('SELECT resolved_product_id FROM grocy_ai_capture_lines WHERE id = ?', [$merged['capture_line_id']])['resolved_product_id'] : $line['product_id']), $merged['quantity'], $merged['unit_price'], $merged['shopping_location_id'] ?? $receipt['shopping_location_id']]);
+					$this->Db->prepare('INSERT INTO grocy_ai_receipt_allocations (trip_id, receipt_id, receipt_line_id, capture_line_id, product_id, quantity, unit_price, shopping_location_id, shopping_location_inherited) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')->execute([(int)$receipt['trip_id'], $receiptId, $lineId, $merged['capture_line_id'] ?? null, $resolvedProductId, $merged['quantity'], $merged['unit_price'], $fields['shopping_location_id'], $inherited]);
 					$id = (int)$this->Db->lastInsertId();
 				}
 				else $this->Apply('grocy_ai_receipt_allocations', $id, $fields + ['revision' => (int)$before['revision'] + 1]);
@@ -219,7 +258,10 @@ class GrocyAiReceiptService
 					if ($capture === null || (int)$capture['selected'] !== 1 || (int)$capture['resolved_product_id'] !== (int)$allocation['product_id']) $issues[] = 'line_' . $id . '_capture_conflict';
 				}
 				if ((float)$allocation['quantity'] <= 0 || (float)$allocation['unit_price'] < 0) $issues[] = 'line_' . $id . '_invalid_amount';
+				if ($line['product_id'] !== null && (int)$line['product_id'] !== (int)$allocation['product_id']) $issues[] = 'line_' . $id . '_product_conflict';
+				if ((int)$allocation['shopping_location_inherited'] === 1 && $allocation['shopping_location_id'] != $receipt['shopping_location_id']) $issues[] = 'line_' . $id . '_store_conflict';
 			}
+			if ($line['quantity'] !== null && array_sum(array_map(static fn(array $allocation) => (float)$allocation['quantity'], $allocations)) > (float)$line['quantity'] + 0.000001) $issues[] = 'line_' . $id . '_quantity_overallocated';
 		}
 		$totals = $this->Totals($receipt);
 		if ($totals['difference'] === null) $issues[] = 'printed_total_missing';
@@ -227,12 +269,14 @@ class GrocyAiReceiptService
 		return $issues;
 	}
 
-	private function ValidateAllocation(array $receipt, array $line, array $allocation, ?int $id): void
+	private function ValidateAllocation(array $receipt, array $line, array $allocation, ?int $id): int
 	{
 		foreach (['quantity', 'unit_price'] as $key) if (!isset($allocation[$key]) || !is_numeric($allocation[$key]) || !is_finite((float)$allocation[$key])) throw new InvalidArgumentException('Allocation amount is required');
 		if ((float)$allocation['quantity'] <= 0 || (float)$allocation['unit_price'] < 0) throw new InvalidArgumentException('Allocation amount is invalid');
 		$captureId = $allocation['capture_line_id'] ?? null;
+		if ($captureId !== null) $captureId = $this->PositiveId($captureId, 'capture_line_id');
 		$productId = $allocation['product_id'] ?? $line['product_id'];
+		if ($productId !== null) $productId = $this->PositiveId($productId, 'product_id');
 		if ($captureId !== null)
 		{
 			$capture = $this->One('SELECT * FROM grocy_ai_capture_lines WHERE trip_id = ? AND id = ?', [(int)$receipt['trip_id'], $captureId]);
@@ -246,6 +290,27 @@ class GrocyAiReceiptService
 		if ($line['product_id'] !== null && (int)$line['product_id'] !== (int)$productId) throw new InvalidArgumentException('Allocation product conflicts with receipt line');
 		$lineTotal = (float)$this->Scalar('SELECT COALESCE(SUM(quantity), 0) FROM grocy_ai_receipt_allocations WHERE active = 1 AND receipt_line_id = ? AND id != ?', [(int)$line['id'], $id ?? 0]);
 		if ($line['quantity'] !== null && $lineTotal + (float)$allocation['quantity'] > (float)$line['quantity'] + 0.000001) throw new InvalidArgumentException('Allocation exceeds receipt line quantity');
+		return (int)$productId;
+	}
+
+	private function PositiveId(mixed $value, string $field): int
+	{
+		if (!is_int($value) || $value < 1) throw new InvalidArgumentException('Invalid ' . $field);
+		return $value;
+	}
+
+	private function ValidateLineAllocations(array $before, array $after): void
+	{
+		$allocations = $this->Rows('SELECT * FROM grocy_ai_receipt_allocations WHERE receipt_line_id = ? AND active = 1', [(int)$before['id']]);
+		if ($allocations === []) return;
+		if ($after['decision'] !== 'include') throw new InvalidArgumentException('Remove allocations before changing the line decision');
+		$total = 0.0;
+		foreach ($allocations as $allocation)
+		{
+			$total += (float)$allocation['quantity'];
+			if ($after['product_id'] !== null && (int)$after['product_id'] !== (int)$allocation['product_id']) throw new InvalidArgumentException('Line product conflicts with allocation');
+		}
+		if ($after['quantity'] !== null && $total > (float)$after['quantity'] + 0.000001) throw new InvalidArgumentException('Line quantity is less than allocated quantity');
 	}
 
 	private function HeaderChange(array $input): array
@@ -254,6 +319,7 @@ class GrocyAiReceiptService
 		$fields = array_intersect_key($input, array_flip($allowed));
 		foreach ($fields as $key => $value)
 		{
+			if ($key === 'shopping_location_id' && $value !== null) $fields[$key] = $this->PositiveId($value, $key);
 			if (in_array($key, ['printed_total', 'shopping_location_id'], true))
 			{
 				if ($value !== null && (!is_numeric($value) || !is_finite((float)$value) || (float)$value < 0)) throw new InvalidArgumentException('Invalid receipt amount or location');
@@ -271,7 +337,7 @@ class GrocyAiReceiptService
 			if ($key === 'decision' && !in_array($value, ['needs_review', 'include', 'ignore'], true)) throw new InvalidArgumentException('Invalid line decision');
 			if ($key === 'kind' && !in_array($value, ['item', 'tax', 'discount', 'deposit', 'fee', 'other'], true)) throw new InvalidArgumentException('Invalid line kind');
 			if (in_array($key, ['quantity', 'line_total', 'confidence'], true) && $value !== null && (!is_numeric($value) || !is_finite((float)$value) || ($key === 'quantity' && (float)$value <= 0))) throw new InvalidArgumentException('Invalid line amount');
-			if ($key === 'product_id' && $value !== null && (!$this->KnownProduct((int)$value) || (string)(int)$value !== (string)$value)) throw new InvalidArgumentException('Unknown product');
+			if ($key === 'product_id' && $value !== null && !$this->KnownProduct($this->PositiveId($value, $key))) throw new InvalidArgumentException('Unknown product');
 			if ($key === 'description' && $value === null) throw new InvalidArgumentException('Description is required');
 			if (in_array($key, ['description', 'raw_text'], true) && $value !== null && (!is_string($value) || strlen($value) > 1000)) throw new InvalidArgumentException('Invalid line text');
 		}
