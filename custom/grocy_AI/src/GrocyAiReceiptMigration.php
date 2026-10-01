@@ -6,7 +6,7 @@ use PDO;
 
 class GrocyAiReceiptMigration
 {
-	public const VERSION = 'v2';
+	public const VERSION = 'v3';
 
 	public static function Bootstrap(PDO $pdo): void
 	{
@@ -25,6 +25,8 @@ class GrocyAiReceiptMigration
 			$pdo->exec("CREATE TABLE IF NOT EXISTS grocy_ai_receipt_lines (id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT, receipt_id INTEGER NOT NULL, seq INTEGER NOT NULL, raw_text TEXT NULL, description TEXT NOT NULL DEFAULT '', quantity REAL NULL, line_total REAL NULL, kind TEXT NOT NULL DEFAULT 'item' CHECK (kind IN ('item', 'tax', 'discount', 'deposit', 'fee', 'other')), decision TEXT NOT NULL DEFAULT 'needs_review' CHECK (decision IN ('needs_review', 'include', 'ignore')), product_id INTEGER NULL, confidence REAL NULL, revision INTEGER NOT NULL DEFAULT 1 CHECK (revision > 0), created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (receipt_id) REFERENCES grocy_ai_receipts(id), UNIQUE (receipt_id, seq), UNIQUE (receipt_id, id))");
 			$pdo->exec("CREATE TABLE IF NOT EXISTS grocy_ai_receipt_allocations (id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT, trip_id INTEGER NOT NULL, receipt_id INTEGER NOT NULL, receipt_line_id INTEGER NOT NULL, capture_line_id INTEGER NULL, product_id INTEGER NULL, quantity REAL NOT NULL CHECK (quantity > 0), unit_price REAL NOT NULL CHECK (unit_price >= 0), shopping_location_id INTEGER NULL, revision INTEGER NOT NULL DEFAULT 1 CHECK (revision > 0), created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (trip_id, receipt_id) REFERENCES grocy_ai_receipts(trip_id, id), FOREIGN KEY (receipt_id, receipt_line_id) REFERENCES grocy_ai_receipt_lines(receipt_id, id), FOREIGN KEY (trip_id, capture_line_id) REFERENCES grocy_ai_capture_lines(trip_id, id))");
 			$pdo->exec('CREATE UNIQUE INDEX IF NOT EXISTS grocy_ai_capture_lines_trip_id_unique ON grocy_ai_capture_lines (trip_id, id)');
+			$columns = $pdo->query('PRAGMA table_info(grocy_ai_receipt_allocations)')->fetchAll(PDO::FETCH_ASSOC);
+			if (!in_array('active', array_column($columns, 'name'), true)) $pdo->exec('ALTER TABLE grocy_ai_receipt_allocations ADD COLUMN active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1))');
 			$pdo->exec('CREATE INDEX IF NOT EXISTS grocy_ai_receipt_allocations_receipt_idx ON grocy_ai_receipt_allocations (receipt_id, receipt_line_id)');
 			$pdo->exec('CREATE UNIQUE INDEX IF NOT EXISTS grocy_ai_receipt_allocations_scope_idx ON grocy_ai_receipt_allocations (trip_id, receipt_id, id)');
 			$pdo->exec("CREATE TABLE IF NOT EXISTS grocy_ai_receipt_audit (id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT, trip_id INTEGER NOT NULL, receipt_id INTEGER NOT NULL, line_id INTEGER NULL, allocation_id INTEGER NULL, actor TEXT NOT NULL, action TEXT NOT NULL, before_json TEXT NULL, after_json TEXT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (trip_id, receipt_id) REFERENCES grocy_ai_receipts(trip_id, id), FOREIGN KEY (receipt_id, line_id) REFERENCES grocy_ai_receipt_lines(receipt_id, id), FOREIGN KEY (trip_id, receipt_id, allocation_id) REFERENCES grocy_ai_receipt_allocations(trip_id, receipt_id, id))");
@@ -32,6 +34,7 @@ class GrocyAiReceiptMigration
 			$pdo->exec("CREATE TRIGGER IF NOT EXISTS grocy_ai_receipt_audit_no_update BEFORE UPDATE ON grocy_ai_receipt_audit BEGIN SELECT RAISE(ABORT, 'receipt audit is append-only'); END");
 			$pdo->exec("CREATE TRIGGER IF NOT EXISTS grocy_ai_receipt_audit_no_delete BEFORE DELETE ON grocy_ai_receipt_audit BEGIN SELECT RAISE(ABORT, 'receipt audit is append-only'); END");
 			self::UpgradeAuditScope($pdo);
+			$pdo->prepare('INSERT OR IGNORE INTO grocy_ai_receipt_migrations (version) VALUES (?)')->execute(['v2']);
 			$pdo->prepare('INSERT OR IGNORE INTO grocy_ai_receipt_migrations (version) VALUES (?)')->execute([self::VERSION]);
 			if ($started) $pdo->commit();
 		}
