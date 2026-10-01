@@ -37,6 +37,8 @@ Do not commit the API key. The status route only reports whether one is configur
 
 Product enrichment always uses a 12-second total request limit and a 2-second connect limit, even when the legacy `AI_REQUEST_TIMEOUT_SECONDS` setting is larger. Redirects are disabled so neither the API key nor owned trace context can be forwarded to another host. No automatic retry is performed.
 
+Receipt OCR uses the same companion URL and server-held API key. `GrocyAiReceiptExtractor` sends private stored image bytes to `POST /v1/receipts/extract` with a stable request ID for the receipt revision. It accepts JPEG, PNG, and WebP images up to 5 MiB, accepts up to 200 item rows plus 50 adjustment rows and limits the response to 1 MiB (including escaped Unicode), and uses a 28-second total timeout with a 2-second connect limit. A valid response imports suggestions into `needs_review`; failures return a generic manual-entry state while retaining the stored image and editable receipt. The extractor does not add stock or expose the API key or receipt text in failure messages. Receipt API routes and review controls are added separately.
+
 ## Grocy routes
 
 - `GET /api/grocy-ai/status`
@@ -494,3 +496,19 @@ Perform this smoke only after the portable and adapter commits exist in `/Users/
 ## Next phase
 
 Attach the reviewed transient barcode through Grocy's normal Save boundary and enforce canonical uniqueness only after the migration and rollback gates pass.
+
+### Receipt review on a phone
+
+Open Purchase capture review, attach receipt photos (JPEG, PNG or WebP), and choose Read receipt or enter lines manually. Save each section before moving on. Each line needs an Include or Ignore decision; included lines require explicit product/scanned-item allocations with confirmed quantity and unit price. Add multiple allocations to split a line. Remove allocations before ignoring an included line. Ignored purchases and adjustments remain in receipt totals without entering stock.
+
+Correct printed/line totals or explicitly accept the displayed difference, then Finish receipt. Any edit reopens review and clears difference acceptance. The purchase button stays disabled until server readiness passes; only Commit purchase writes stock. Receipt store applies to inherited allocations. Correct purchase prices in the confirmed receipt allocations and stores in receipt details; reopen a finished receipt before correcting it. The scanned-line review retains the inventory location default but has no separate purchase-price or trip-store editor. Product creation opens the existing product form in a new tab; return to receipt review and request suggestions after saving the product.
+
+Receipt drafts are retained per section while moving between trips or saving another section in the current page. Finish, difference acceptance, OCR and removal actions require all edited sections to be saved first. When a photo batch partly fails, successful receipts remain visible and **Retry failed photos** resends only failed files with their original upload request IDs.
+
+Use **Discard receipt edits**, **Discard line edits**, or **Discard allocation edits** to reset only that section to its saved values. Other drafts remain intact. Saving Ignore (or Needs review) clears drafts for the allocation editors that it hides.
+
+### Receipt release and recovery
+
+Follow [`docs/PURCHASE-RECEIPT-ACCEPTANCE.md`](../../docs/PURCHASE-RECEIPT-ACCEPTANCE.md) before releasing receipt review. The companion supplies authenticated OCR suggestions through `POST /v1/receipts/extract`; Grocy stores receipt state and images and enforces readiness. Release the companion first, then the stable Grocy image. If OCR is unavailable, retain the uploaded receipt and enter or correct lines manually. A receipt still needs explicit line decisions, allocations, and a reconciled or accepted total before Finish; server readiness still gates Commit purchase.
+
+Receipt images live under `GROCY_DATAPATH/grocy_ai/receipts/<trip-id>/` with opaque file names. Their metadata, allocations, and append-only audit live in the same data path's SQLite database. Back up and restore the full persistent Grocy data path as one unit. The isolated controller rehearsal is `php8.5 custom/grocy_AI/tests/receipt_rehearsal.php`; it proves zero writes before an explicit fixture commit and an idempotent retry afterward. Live provider and physical-phone acceptance remain separate release gates.

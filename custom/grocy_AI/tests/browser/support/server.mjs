@@ -157,6 +157,7 @@ const allowlistedFiles = new Map([
 		path: resolve(repositoryRoot, 'public/custom/grocy_AI/capture.js'),
 		contentType: 'text/javascript; charset=utf-8'
 	}],
+	['/assets/capture-receipts.js', { path: resolve(repositoryRoot, 'public/custom/grocy_AI/capture-receipts.js'), contentType: 'text/javascript; charset=utf-8' }],
 	['/assets/capture-review.js', {
 		path: resolve(repositoryRoot, 'public/custom/grocy_AI/capture-review.js'),
 		contentType: 'text/javascript; charset=utf-8'

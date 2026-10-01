@@ -8,7 +8,7 @@ use GrocyAI\Services\GrocyAiBarcodeService;
 
 // A new tests/<mode>.php must require_once its own src/* dependencies (guarded by is_file), mirroring the
 // run.php top block, or class_exists() stays false and later plans mis-report "not implemented".
-foreach (['GrocyAiCaptureMigration', 'GrocyAiCaptureService'] as $captureClassFile)
+foreach (['GrocyAiCaptureMigration', 'GrocyAiReceiptMigration', 'GrocyAiReceiptService', 'GrocyAiCaptureService'] as $captureClassFile)
 {
 	$captureClassPath = __DIR__ . '/../src/' . $captureClassFile . '.php';
 	if (is_file($captureClassPath))
@@ -134,6 +134,20 @@ function captureFixturePdo(?PDO $pdo = null): PDO
 	return $pdo;
 }
 
+function captureReviewedReceipt(PDO $pdo, int $tripId): void
+{
+	$receipts = new \GrocyAI\Services\GrocyAiReceiptService($pdo);
+	$pdo->prepare("INSERT INTO grocy_ai_receipts (trip_id, image_id, mime_type, image_bytes, printed_total, shopping_location_id) VALUES (?, ?, 'image/png', 10, 0, 7)")->execute([$tripId, uniqid()]);
+	$id = (int)$pdo->lastInsertId();
+	foreach ($pdo->query('SELECT * FROM grocy_ai_capture_lines WHERE trip_id = ' . $tripId . ' AND selected = 1')->fetchAll(PDO::FETCH_ASSOC) as $line)
+	{
+		$view = $receipts->AddLine($id, ['description' => 'Reviewed item', 'decision' => 'include', 'line_total' => 0], 'test');
+		$receiptLine = end($view['lines']);
+		$receipts->UpdateAllocation($id, (int)$receiptLine['id'], ['capture_line_id' => (int)$line['id'], 'quantity' => (float)$line['quantity'], 'unit_price' => 0], 'test');
+	}
+	$receipts->Finish($id, 'test');
+}
+
 function captureSnapshotTables(PDO $pdo, array $tables): array
 {
 	$snapshots = [];
@@ -242,9 +256,14 @@ function runCaptureContract(): never
 	}
 	captureAssert($secondScanRejected, CAPTURE_CONTRACT_MARKER, 'A second same-canonical scan was not rejected by the coalescing UNIQUE index');
 
-	// The migration source exposes no row-rewriting/row-removal path (the audit ledger is append-only).
-	$migrationSource = (string)file_get_contents(__DIR__ . '/../src/GrocyAiCaptureMigration.php');
-	captureAssert(preg_match('/\b(UPDATE|DELETE|DROP|ALTER)\b/', $migrationSource) !== 1, CAPTURE_CONTRACT_MARKER, 'The capture migration must expose no UPDATE/DELETE/DROP/ALTER path');
+	// Historical audit records remain append-only even when their scan line is deleted.
+	$pdo->exec("INSERT INTO grocy_ai_capture_audit (trip_id, actor, action) VALUES (1, 'test', 'test')");
+	foreach (["UPDATE grocy_ai_capture_audit SET actor = 'changed'", 'DELETE FROM grocy_ai_capture_audit'] as $sql)
+	{
+		$rejected = false;
+		try { $pdo->exec($sql); } catch (PDOException) { $rejected = true; }
+		captureAssert($rejected, CAPTURE_CONTRACT_MARKER, 'Capture audit allowed history mutation');
+	}
 
 	// Bootstrapping alongside native tables creates/alters/drops no native object (excluding sqlite_%
 	// internals, since AUTOINCREMENT tables create sqlite_sequence) and mutates no native row.
@@ -445,6 +464,10 @@ function runCaptureInvariants(): never
 	$service->ScanIntoTrip($tripId, '10012345000017', 'capture-actor'); // qty 3, product 103, barcode amount override 12 → amount 36
 	$service->ScanIntoTrip($tripId, '96385074', 'capture-actor'); // unowned → unknown, selected, blocks full commit
 	$service->SetTripDefaults($tripId, 5, 7, 'capture-actor');
+	$pdo->exec("INSERT INTO product_barcodes (id, product_id, barcode) VALUES (4, 101, '96385074')");
+	$service->LoadTrip($tripId);
+	captureReviewedReceipt($pdo, $tripId);
+	$pdo->exec('DELETE FROM product_barcodes WHERE id = 4');
 
 	// Stock-write boundary: nothing before commit touched the native stock writer.
 	captureAssert($fake->calls === [], CAPTURE_INVARIANTS_MARKER, 'A capture/scan/review path wrote stock before commit');
@@ -460,6 +483,7 @@ function runCaptureInvariants(): never
 	$raceService = new GrocyAiCaptureService($racePdo, true, $raceStock);
 	$raceTripId = (int)$raceService->StartTrip('capture-actor')['id'];
 	$raceService->ScanIntoTrip($raceTripId, '012345678905', 'capture-actor');
+	captureReviewedReceipt($racePdo, $raceTripId);
 	$raceChecksum = $raceService->ChecksumForTrip($raceTripId);
 	$racePdo->beforeBegin = static function (PDO $connection): void
 	{
@@ -468,10 +492,9 @@ function runCaptureInvariants(): never
 	$raceResult = $raceService->CommitTrip($raceTripId, 'capture-actor', $raceChecksum);
 	captureAssert($raceResult['outcome'] === 'checksum_mismatch' && $raceStock->calls === [] && !$racePdo->inTransaction(), CAPTURE_INVARIANTS_MARKER, 'A reviewed line changed before the write lock and still reached native stock');
 
-	// Partial commit: the three selected known lines post as one native purchase batch; the selected
-	// unknown line is not written and remains, so the trip stays reviewing (Q9).
+	// Partial commit: three allocations post; the fourth barcode owner drifted after receipt review.
 	$committed = $service->CommitTrip($tripId, 'capture-actor', $checksum);
-	captureAssert($committed['outcome'] === 'partial' && (int)$committed['applied'] === 3 && (int)$committed['conflicted'] === 0, CAPTURE_INVARIANTS_MARKER, 'The partial commit did not apply exactly the three selected known lines');
+	captureAssert($committed['outcome'] === 'partial' && (int)$committed['applied'] === 3 && (int)$committed['conflicted'] === 1, CAPTURE_INVARIANTS_MARKER, 'The partial commit did not apply exactly the three selected known lines');
 	captureAssert(count($fake->calls) === 3, CAPTURE_INVARIANTS_MARKER, 'The commit did not post exactly three native purchases');
 	$byProduct = [];
 	$transactionIds = [];
@@ -497,7 +520,7 @@ function runCaptureInvariants(): never
 		{
 			$appliedCount++;
 		}
-		if ($partialLine['status'] === 'unknown')
+		if ($partialLine['status'] === 'conflict')
 		{
 			$unknownRemains = true;
 		}
@@ -535,6 +558,7 @@ function runCaptureInvariants(): never
 	$conflictService = new GrocyAiCaptureService($conflictPdo, true, $conflictFake);
 	$conflictTrip = (int)$conflictService->StartTrip('capture-actor')['id'];
 	$conflictService->ScanIntoTrip($conflictTrip, '012345678905', 'capture-actor');
+	captureReviewedReceipt($conflictPdo, $conflictTrip);
 	$conflictChecksum = $conflictService->ChecksumForTrip($conflictTrip);
 	$conflictPdo->exec("UPDATE product_barcodes SET product_id = 102 WHERE barcode = '012345678905'");
 	$conflictResult = $conflictService->CommitTrip($conflictTrip, 'capture-actor', $conflictChecksum);

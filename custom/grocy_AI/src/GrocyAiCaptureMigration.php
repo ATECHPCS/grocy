@@ -18,7 +18,7 @@ use PDO;
  */
 class GrocyAiCaptureMigration
 {
-	public const VERSION = 'v1';
+	public const VERSION = 'v2';
 
 	public static function Bootstrap(PDO $pdo): void
 	{
@@ -70,9 +70,20 @@ class GrocyAiCaptureMigration
 
 		// Q12/Q14: the append-only audit ledger records the actor, the action and its timestamp, the exact
 		// before/after values, and the native purchase transaction id once a commit groups its stock batch.
-		// This migration creates rows only; it exposes no row-rewriting or row-removal path, so the ledger is
-		// immutable by construction.
-		$pdo->exec("CREATE TABLE IF NOT EXISTS grocy_ai_capture_audit (id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT, trip_id INTEGER NOT NULL, line_id INTEGER NULL, actor TEXT NOT NULL, action TEXT NOT NULL, before_json TEXT NULL, after_json TEXT NULL, transaction_id TEXT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (trip_id) REFERENCES grocy_ai_capture_trips(id), FOREIGN KEY (line_id) REFERENCES grocy_ai_capture_lines(id))");
+		// Triggers keep existing ledger entries immutable; a schema upgrade preserves their exact values.
+		$pdo->exec("CREATE TABLE IF NOT EXISTS grocy_ai_capture_audit (id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT, trip_id INTEGER NOT NULL, line_id INTEGER NULL, actor TEXT NOT NULL, action TEXT NOT NULL, before_json TEXT NULL, after_json TEXT NULL, transaction_id TEXT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (trip_id) REFERENCES grocy_ai_capture_trips(id))");
+		// Audit history outlives scan-only line deletion. Keep the original line ID as evidence without
+		// a live-line foreign key; preserve the trip foreign key and every existing audit value.
+		$keys = $pdo->query('PRAGMA foreign_key_list(grocy_ai_capture_audit)')->fetchAll(PDO::FETCH_ASSOC);
+		if (in_array('line_id', array_column($keys, 'from'), true))
+		{
+			$pdo->exec("CREATE TABLE grocy_ai_capture_audit_v2 (id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT, trip_id INTEGER NOT NULL, line_id INTEGER NULL, actor TEXT NOT NULL, action TEXT NOT NULL, before_json TEXT NULL, after_json TEXT NULL, transaction_id TEXT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (trip_id) REFERENCES grocy_ai_capture_trips(id))");
+			$pdo->exec('INSERT INTO grocy_ai_capture_audit_v2 SELECT * FROM grocy_ai_capture_audit');
+			$pdo->exec('DROP TABLE grocy_ai_capture_audit');
+			$pdo->exec('ALTER TABLE grocy_ai_capture_audit_v2 RENAME TO grocy_ai_capture_audit');
+		}
+		$pdo->exec("CREATE TRIGGER IF NOT EXISTS grocy_ai_capture_audit_no_update BEFORE UPDATE ON grocy_ai_capture_audit BEGIN SELECT RAISE(ABORT, 'capture audit is append-only'); END");
+		$pdo->exec("CREATE TRIGGER IF NOT EXISTS grocy_ai_capture_audit_no_delete BEFORE DELETE ON grocy_ai_capture_audit BEGIN SELECT RAISE(ABORT, 'capture audit is append-only'); END");
 		$pdo->exec('CREATE INDEX IF NOT EXISTS grocy_ai_capture_audit_trip_idx ON grocy_ai_capture_audit (trip_id, line_id)');
 	}
 }

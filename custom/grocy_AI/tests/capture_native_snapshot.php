@@ -38,6 +38,8 @@ require_once __DIR__ . '/../src/GrocyAiGtin.php';
 require_once __DIR__ . '/../src/GrocyAiBarcodeService.php';
 require_once __DIR__ . '/../src/GrocyAiCaptureMigration.php';
 require_once __DIR__ . '/../src/GrocyAiCaptureService.php';
+require_once __DIR__ . '/../src/GrocyAiReceiptMigration.php';
+require_once __DIR__ . '/../src/GrocyAiReceiptService.php';
 
 $db = DatabaseService::GetInstance()->GetDbConnectionRaw();
 $userId = (int)$db->query('SELECT MIN(id) FROM users')->fetchColumn();
@@ -71,10 +73,17 @@ if ($line['status'] !== 'known' || (int)$line['resolved_product_id'] !== $produc
 	throw new RuntimeException('The snapshot GTIN did not resolve to its native product');
 }
 
-$note = 'grocy_AI purchase capture trip #' . $tripId;
+$receipts = new \GrocyAI\Services\GrocyAiReceiptService($db);
+$db->prepare("INSERT INTO grocy_ai_receipts (trip_id, image_id, mime_type, image_bytes, printed_total) VALUES (?, ?, 'image/png', 20, 0)")->execute([$tripId, bin2hex(random_bytes(24))]);
+$receiptId = (int)$db->lastInsertId();
+$receipt = $receipts->AddLine($receiptId, ['description' => 'Reviewed snapshot purchase', 'decision' => 'include', 'line_total' => 0], 'snapshot-test');
+$receipt = $receipts->UpdateAllocation($receiptId, (int)$receipt['lines'][0]['id'], ['capture_line_id' => (int)$line['id'], 'quantity' => 1, 'unit_price' => 0], 'snapshot-test');
+$allocationId = (int)$receipt['lines'][0]['allocations'][0]['id'];
+$receipts->Finish($receiptId, 'snapshot-test');
+$note = 'grocy_AI purchase capture trip #' . $tripId . ' receipt #' . $receiptId . ' allocation #' . $allocationId;
 $stock = StockService::GetInstance();
 $transactionId = null;
-$stock->AddProduct($productId, 1.0, null, 'purchase', date('Y-m-d'), null, null, null, $transactionId, 0, false, $note);
+$stock->AddProduct($productId, 1.0, null, 'purchase', date('Y-m-d'), 0, null, null, $transactionId, 0, false, $note);
 $before = (float)$db->query('SELECT IFNULL(SUM(amount), 0) FROM stock WHERE product_id = ' . $productId)->fetchColumn();
 $rowCountBefore = (int)$db->query('SELECT COUNT(*) FROM stock WHERE product_id = ' . $productId)->fetchColumn();
 

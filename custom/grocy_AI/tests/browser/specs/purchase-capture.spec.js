@@ -186,6 +186,8 @@ async function installReviewApi(page, options)
 			return json(route, { trip: trip, lines: rendered, checksum: CHECKSUM });
 		}
 
+		if (method === 'GET' && pathname.endsWith('/receipt-readiness')) return json(route, { ready: true, reasons: [], receipts: [] });
+
 		const commit = /\/capture\/trips\/\d+\/commit$/.exec(pathname);
 		if (method === 'POST' && commit)
 		{

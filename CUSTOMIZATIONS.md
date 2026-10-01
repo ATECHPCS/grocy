@@ -75,3 +75,9 @@ Setting('FEATURE_FLAG_BATTERIES', false);
 ```
 
 Keeping the upstream implementations intact avoids unnecessary merge conflicts and allows either feature to be restored without a database migration.
+
+## Purchase receipt review
+
+The purchase review view loads isolated `capture-receipts.js` before `capture-review.js`. Receipt edits and allocations remain in extension endpoints. `GET /api/grocy-ai/capture/trips/{tripId}/receipt-readiness` exposes the same server blockers used during commit. The customization marker in `custom/grocy_AI/version.json` advances to `ATECHPCS-grocy_AI-19`; the image copies it into root `version.json` to invalidate persisted Blade and route caches for this UI and route update.
+
+Receipt persistence is namespaced under `grocy_ai_receipt_*` in the Grocy SQLite data path; private images are under `GROCY_DATAPATH/grocy_ai/receipts/`. This adds no new upstream hook beyond the purchase review view, module routes/controller, and `Dockerfile.atech` overlay already listed above. The receipt release and recovery procedure is in [`docs/PURCHASE-RECEIPT-ACCEPTANCE.md`](docs/PURCHASE-RECEIPT-ACCEPTANCE.md). The existing `ATECHPCS-grocy_AI-19` marker already covers the receipt view and route bytes, so this documentation and rehearsal test do not require a further cache marker change.

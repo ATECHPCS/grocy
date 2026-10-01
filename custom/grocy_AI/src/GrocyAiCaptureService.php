@@ -19,6 +19,7 @@ use PDO;
 class GrocyAiCaptureService
 {
 	private PDO $Db;
+	private ?GrocyAiReceiptService $Receipts = null;
 
 	/**
 	 * The native purchase writer. In production this is Grocy's `StockService` (the ONLY module code
@@ -199,6 +200,11 @@ class GrocyAiCaptureService
 			{
 				throw new \InvalidArgumentException('delete is exclusive');
 			}
+			$this->Receipts ??= new GrocyAiReceiptService($this->Db);
+			if ((int)$this->Db->query('SELECT COUNT(*) FROM grocy_ai_receipts WHERE trip_id = ' . $tripId)->fetchColumn() > 0)
+			{
+				throw new \DomainException('A trip with receipts cannot delete capture lines; remove their allocations and deselect them instead');
+			}
 			$this->Db->prepare('DELETE FROM grocy_ai_capture_lines WHERE id = ?')->execute([$lineId]);
 			$this->WriteAudit($tripId, $lineId, $actor, 'delete_line', $beforeRow, null);
 			return ['trip' => $this->FetchTrip($tripId), 'lines' => $this->FetchLines($tripId)];
@@ -250,6 +256,7 @@ class GrocyAiCaptureService
 	 */
 	public function ChecksumForTrip(int $tripId): string
 	{
+		$this->Receipts ??= new GrocyAiReceiptService($this->Db);
 		$rows = $this->Db->query("SELECT resolved_product_id, canonical_gtin, scanned_barcode, quantity, price, best_before_override FROM grocy_ai_capture_lines WHERE trip_id = " . $tripId . " AND selected = 1 AND status = 'known' ORDER BY seq")->fetchAll(PDO::FETCH_ASSOC);
 		$normalized = [];
 		foreach ($rows as $row)
@@ -265,26 +272,21 @@ class GrocyAiCaptureService
 		usort($normalized, static fn(array $left, array $right): int =>
 			[$left['product_id'], $left['barcode']] <=> [$right['product_id'], $right['barcode']]);
 
-		return hash('sha256', $this->CanonicalJson(['version' => GrocyAiCaptureMigration::VERSION, 'lines' => $normalized]));
+		$receipts = $this->Db->query('SELECT * FROM grocy_ai_receipts WHERE trip_id = ' . $tripId . ' ORDER BY id')->fetchAll(PDO::FETCH_ASSOC);
+		$receiptLines = $this->Db->query('SELECT l.* FROM grocy_ai_receipt_lines l JOIN grocy_ai_receipts r ON r.id = l.receipt_id WHERE r.trip_id = ' . $tripId . ' ORDER BY l.id')->fetchAll(PDO::FETCH_ASSOC);
+		$allocations = $this->Db->query('SELECT * FROM grocy_ai_receipt_allocations WHERE trip_id = ' . $tripId . ' ORDER BY id')->fetchAll(PDO::FETCH_ASSOC);
+		$captures = $this->Db->query('SELECT id, resolved_product_id, scanned_barcode, canonical_gtin, selected, quantity, best_before_override FROM grocy_ai_capture_lines WHERE trip_id = ' . $tripId . ' ORDER BY id')->fetchAll(PDO::FETCH_ASSOC);
+		$trip = $this->FetchTrip($tripId);
+		return hash('sha256', $this->CanonicalJson(['version' => GrocyAiReceiptMigration::VERSION, 'lines' => $normalized, 'captures' => $captures, 'receipts' => $receipts, 'receipt_lines' => $receiptLines, 'allocations' => $allocations, 'location' => $trip['default_location_id']]));
 	}
 
 	/**
-	 * Commit a reviewed trip to real Grocy stock — the ONLY module path that writes stock (CAP-05..CAP-08).
+	 * Commit reviewed receipt allocations under one BEGIN IMMEDIATE transaction. Readiness and the
+	 * confirmed checksum are checked before and inside the lock. Barcode owner drift leaves a partial
+	 * trip; append-only commit_allocation events prevent repeat stock writes and correlate native stock
+	 * transactions with receipt evidence. No network work occurs under the lock.
 	 *
-	 * Mirrors `GrocyAiBulkService::ApplyPlan`: the recomputed checksum is `hash_equals`-checked against the
-	 * caller's confirmed checksum before and after acquiring the write lock, refusing BEFORE any write;
-	 * the write set is taken under one raw
-	 * `BEGIN IMMEDIATE` with a single `COMMIT` (or `ROLLBACK` on any `\Throwable`), never PDO's
-	 * begin/commit. Only selected known lines with a null `applied_at` are written; each is re-resolved
-	 * in-lock (a changed owner is recorded `conflict` and skipped), its stock amount is
-	 * `quantity × (barcode amount override | product purchase→stock factor)`, and it is posted through
-	 * `StockService::AddProduct('purchase', …)` sharing one `transaction_id`, then stamped `applied_at`.
-	 * Deselected / unknown / conflict lines are never written and remain in the trip (partial commit). A
-	 * re-tap is idempotent: an already-applied line is skipped. When every selected line is applied the trip
-	 * archives `committed` (+ `committed_at` + `transaction_id` + `checksum`), read-only; otherwise it stays
-	 * `reviewing`. No network call happens under the lock.
-	 *
-	 * @return array<string, mixed> the commit result DTO
+	 * @return array<string, mixed>
 	 */
 	public function CommitTrip(int $tripId, ?string $actor, string $confirmedChecksum): array
 	{
@@ -298,10 +300,14 @@ class GrocyAiCaptureService
 			return $this->CommitResult($tripId, $status, $status === 'committed' ? ($trip['transaction_id'] === null ? null : (string)$trip['transaction_id']) : null, $recomputed, $status === 'committed' ? 'already_committed' : 'checksum_mismatch', 0, 0, 0);
 		}
 
+		// ChecksumForTrip initialized the receipt service before BEGIN IMMEDIATE.
+		$receipts = $this->Receipts;
+		if (!$receipts->Readiness($tripId)['ready'] || !$this->AppliedAllocationsUnchanged($tripId))
+		{
+			return $this->CommitResult($tripId, $status, null, $recomputed, 'receipt_review_required', 0, 0, 0);
+		}
 		$stock = $this->StockService ?? \Grocy\Services\StockService::GetInstance();
 		$today = date('Y-m-d');
-		$location = $trip['default_location_id'] === null ? null : (int)$trip['default_location_id'];
-		$store = $trip['default_shopping_location_id'] === null ? null : (int)$trip['default_shopping_location_id'];
 		$note = 'grocy_AI purchase capture trip #' . $tripId;
 
 		$this->Db->exec('BEGIN IMMEDIATE');
@@ -316,54 +322,67 @@ class GrocyAiCaptureService
 				return $this->CommitResult($tripId, $lockedStatus, $lockedTrip['transaction_id'] === null ? null : (string)$lockedTrip['transaction_id'], $lockedChecksum, $lockedStatus === 'committed' ? 'already_committed' : 'checksum_mismatch', 0, 0, 0);
 			}
 
+			if (!$receipts->Readiness($tripId)['ready'] || !$this->AppliedAllocationsUnchanged($tripId))
+			{
+				$this->Db->exec('ROLLBACK');
+				return $this->CommitResult($tripId, $lockedStatus, null, $lockedChecksum, 'receipt_review_required', 0, 0, 0);
+			}
+			$location = $lockedTrip['default_location_id'] === null ? null : (int)$lockedTrip['default_location_id'];
+
 			$appliedAt = (string)$this->Db->query('SELECT CURRENT_TIMESTAMP')->fetchColumn();
 			$auditInsert = $this->Db->prepare('INSERT INTO grocy_ai_capture_audit (trip_id, line_id, actor, action, before_json, after_json, transaction_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
 			$markConflict = $this->Db->prepare("UPDATE grocy_ai_capture_lines SET status = 'conflict', outcome = 'conflict', updated_at = ? WHERE id = ?");
 			$markApplied = $this->Db->prepare("UPDATE grocy_ai_capture_lines SET outcome = 'applied', applied_at = ?, updated_at = ? WHERE id = ?");
 
-			$selected = $this->Db->query("SELECT * FROM grocy_ai_capture_lines WHERE trip_id = " . $tripId . " AND selected = 1 AND status = 'known' AND applied_at IS NULL ORDER BY seq")->fetchAll(PDO::FETCH_ASSOC);
-
-			$transactionId = null;
+			$receiptAudit = $this->Db->prepare('INSERT INTO grocy_ai_receipt_audit (trip_id, receipt_id, line_id, allocation_id, actor, action, before_json, after_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
+			$selected = $this->Db->query("SELECT a.* FROM grocy_ai_receipt_allocations a JOIN grocy_ai_receipt_lines l ON l.id = a.receipt_line_id WHERE a.trip_id = " . $tripId . " AND a.active = 1 AND l.decision = 'include' AND NOT EXISTS (SELECT 1 FROM grocy_ai_receipt_audit e WHERE e.allocation_id = a.id AND e.action = 'commit_allocation') ORDER BY a.id")->fetchAll(PDO::FETCH_ASSOC);
+			$transactionId = $lockedTrip['transaction_id'] === null ? null : (string)$lockedTrip['transaction_id'];
 			$applied = 0;
 			$conflicted = 0;
 			$skipped = 0;
-			foreach ($selected as $row)
+			foreach ($selected as $allocation)
 			{
-				$lineId = (int)$row['id'];
-				$productId = (int)$row['resolved_product_id'];
-
-				// In-lock optimistic-concurrency re-resolve (Q12): a line whose owner drifted since review is
-				// recorded conflict and never written; it stays in the trip for the next review/re-resolve.
-				$resolution = $this->Resolve((string)$row['scanned_barcode']);
-				if ($resolution['status'] !== 'known' || $resolution['resolved_product_id'] !== $productId)
+				$lineId = $allocation['capture_line_id'] === null ? null : (int)$allocation['capture_line_id'];
+				$row = $lineId === null ? null : $this->FetchLineByIdRaw($lineId);
+				$productId = (int)$allocation['product_id'];
+				if ($row !== null)
 				{
-					$markConflict->execute([$appliedAt, $lineId]);
-					$auditInsert->execute([$tripId, $lineId, (string)($actor ?? ''), 'commit_conflict', $this->CanonicalJson($row), null, null, $appliedAt]);
-					$conflicted++;
-					continue;
+					$resolution = $this->Resolve((string)$row['scanned_barcode']);
+					if ($resolution['status'] !== 'known' || $resolution['resolved_product_id'] !== $productId)
+					{
+						$markConflict->execute([$appliedAt, $lineId]);
+						$auditInsert->execute([$tripId, $lineId, (string)($actor ?? ''), 'commit_conflict', $this->CanonicalJson($row), null, null, $appliedAt]);
+						$receiptAudit->execute([$tripId, $allocation['receipt_id'], $allocation['receipt_line_id'], $allocation['id'], (string)($actor ?? ''), 'commit_conflict', $this->CanonicalJson($allocation), null, $appliedAt]);
+						$conflicted++;
+						continue;
+					}
 				}
-
-				$amount = (float)$row['quantity'] * $this->StockMultiplier($productId, $row['canonical_gtin'] !== null ? (string)$row['canonical_gtin'] : (string)$row['scanned_barcode']);
-				$bestBefore = $row['best_before_override'] === null ? null : (string)$row['best_before_override'];
-				$price = $row['price'] === null ? null : (string)$row['price'];
-
-				// The single documented stock-write exception. Shares one transaction_id across the batch; the
-				// native API auto-computes best-before from default_best_before_days when null. No network here.
-				// The native purchase transaction type ('purchase' == StockService::TRANSACTION_TYPE_PURCHASE);
-				// kept as the literal so the commit path never hard-loads the framework under an injected fake.
-				$stock->AddProduct($productId, $amount, $bestBefore, 'purchase', $today, $price, $location, $store, $transactionId, 0, false, $note);
-
-				$markApplied->execute([$appliedAt, $appliedAt, $lineId]);
-				$after = $this->FetchLineByIdRaw($lineId);
-				$auditInsert->execute([$tripId, $lineId, (string)($actor ?? ''), 'commit_line', $this->CanonicalJson($row), $this->CanonicalJson($after), $transactionId, $appliedAt]);
+				$barcode = $row === null ? '' : (string)($row['canonical_gtin'] ?? $row['scanned_barcode']);
+				$multiplier = $this->StockMultiplier($productId, $barcode);
+				$amount = (float)$allocation['quantity'] * $multiplier;
+				$bestBefore = $row['best_before_override'] ?? null;
+				// Receipt prices are per purchased unit; Grocy stores the price per stock unit.
+				// Allocations are incremental amounts, including for products with tare weight handling.
+				$price = (float)$allocation['unit_price'] / $multiplier;
+				$store = $allocation['shopping_location_id'] === null ? null : (int)$allocation['shopping_location_id'];
+				$stock->AddProduct($productId, $amount, $bestBefore, 'purchase', $today, $price, $location, $store, $transactionId, 0, true, $note . ' receipt #' . $allocation['receipt_id'] . ' allocation #' . $allocation['id']);
+				$receiptAudit->execute([$tripId, $allocation['receipt_id'], $allocation['receipt_line_id'], $allocation['id'], (string)($actor ?? ''), 'commit_allocation', $this->CanonicalJson($allocation), $this->CanonicalJson(['transaction_id' => $transactionId, 'amount' => $amount, 'stock_unit_price' => $price]), $appliedAt]);
+				if ($lineId !== null)
+				{
+					$pending = $this->Db->query("SELECT COUNT(*) FROM grocy_ai_receipt_allocations a WHERE a.active = 1 AND a.capture_line_id = " . $lineId . " AND NOT EXISTS (SELECT 1 FROM grocy_ai_receipt_audit e WHERE e.allocation_id = a.id AND e.action = 'commit_allocation')")->fetchColumn();
+					if ((int)$pending === 0)
+					{
+						$markApplied->execute([$appliedAt, $appliedAt, $lineId]);
+						$this->Db->prepare("UPDATE grocy_ai_capture_lines SET status = 'known' WHERE id = ?")->execute([$lineId]);
+						$auditInsert->execute([$tripId, $lineId, (string)($actor ?? ''), 'commit_line', $this->CanonicalJson($row), $this->CanonicalJson($this->FetchLineByIdRaw($lineId)), $transactionId, $appliedAt]);
+					}
+				}
 				$applied++;
 			}
-
-			// Every selected line applied (none left unresolved/unapplied) → archive committed, read-only.
-			$outstanding = (int)$this->Db->query('SELECT COUNT(*) FROM grocy_ai_capture_lines WHERE trip_id = ' . $tripId . ' AND selected = 1 AND applied_at IS NULL')->fetchColumn();
+			$outstanding = (int)$this->Db->query("SELECT COUNT(*) FROM grocy_ai_receipt_allocations a WHERE a.trip_id = " . $tripId . " AND a.active = 1 AND NOT EXISTS (SELECT 1 FROM grocy_ai_receipt_audit e WHERE e.allocation_id = a.id AND e.action = 'commit_allocation')")->fetchColumn();
 			$fullyCommitted = $outstanding === 0;
 
-			if ($applied > 0 || $conflicted > 0)
+			if ($applied > 0 || $conflicted > 0 || $fullyCommitted)
 			{
 				if ($fullyCommitted)
 				{
@@ -393,6 +412,22 @@ class GrocyAiCaptureService
 			$this->Db->exec('ROLLBACK');
 			return $this->CommitResult($tripId, $status, null, $recomputed, 'commit_failed', 0, 0, 0);
 		}
+	}
+
+	private function AppliedAllocationsUnchanged(int $tripId): bool
+	{
+		// Pre-receipt partial commits have no allocation evidence. Never infer or replay those writes.
+		$legacyApplied = $this->Db->query("SELECT COUNT(*) FROM grocy_ai_capture_lines c WHERE c.trip_id = " . $tripId . " AND c.applied_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM grocy_ai_receipt_audit e JOIN grocy_ai_receipt_allocations a ON a.id = e.allocation_id WHERE a.capture_line_id = c.id AND e.action = 'commit_allocation')")->fetchColumn();
+		if ((int)$legacyApplied > 0) return false;
+		$events = $this->Db->query("SELECT allocation_id, before_json FROM grocy_ai_receipt_audit WHERE trip_id = " . $tripId . " AND action = 'commit_allocation' ORDER BY id")->fetchAll(PDO::FETCH_ASSOC);
+		foreach ($events as $event)
+		{
+			$statement = $this->Db->prepare('SELECT * FROM grocy_ai_receipt_allocations WHERE id = ? AND trip_id = ?');
+			$statement->execute([$event['allocation_id'], $tripId]);
+			$current = $statement->fetch(PDO::FETCH_ASSOC);
+			if ($current === false || !hash_equals((string)$event['before_json'], $this->CanonicalJson($current))) return false;
+		}
+		return true;
 	}
 
 	/**

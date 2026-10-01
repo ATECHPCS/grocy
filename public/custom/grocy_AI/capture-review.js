@@ -36,9 +36,7 @@
 		deleteLabel: 'Delete',
 		selected: 'Include in purchase',
 		quantity: 'Quantity',
-		price: 'Price (optional)',
 		location: 'Default location',
-		store: 'Default store',
 		none: '(none)',
 		markReviewing: 'Finish scanning',
 		finishFirst: 'Finish scanning this trip and open review? This will not change stock.',
@@ -123,9 +121,7 @@
 			deleteLabel: d.labelDelete || DEFAULT_COPY.deleteLabel,
 			selected: d.labelSelected || DEFAULT_COPY.selected,
 			quantity: d.labelQuantity || DEFAULT_COPY.quantity,
-			price: d.labelPrice || DEFAULT_COPY.price,
 			location: d.labelLocation || DEFAULT_COPY.location,
-			store: d.labelStore || DEFAULT_COPY.store,
 			none: d.labelNone || DEFAULT_COPY.none,
 			markReviewing: d.labelMarkReviewing || DEFAULT_COPY.markReviewing,
 			finishFirst: d.labelFinishFirst || DEFAULT_COPY.finishFirst,
@@ -158,6 +154,12 @@
 		var currentTrip = null;
 		var currentLines = [];
 		var currentChecksum = null;
+		var receiptReadiness = null;
+		var receiptBusy = false;
+		var commitMessage = '';
+		var receiptNotice = '';
+		var receiptStates = {};
+		var loadRevision = 0;
 		var productNames = {};
 		var locations = [];
 		var shoppingLocations = [];
@@ -219,7 +221,7 @@
 				window.Grocy.Api.Get('objects/products/' + encodeURIComponent(key), function (product)
 				{
 					productNames[key] = product && typeof product.name === 'string' ? product.name : null;
-					renderDetail();
+					if (!receiptBusy) renderDetail();
 				}, function () { productNames[key] = null; });
 			}
 		}
@@ -230,8 +232,8 @@
 			{
 				return;
 			}
-			window.Grocy.Api.Get('objects/locations', function (rows) { locations = Array.isArray(rows) ? rows : []; renderDetail(); }, function () {});
-			window.Grocy.Api.Get('objects/shopping_locations', function (rows) { shoppingLocations = Array.isArray(rows) ? rows : []; renderDetail(); }, function () {});
+			window.Grocy.Api.Get('objects/locations', function (rows) { locations = Array.isArray(rows) ? rows : []; if (!receiptBusy) renderDetail(); }, function () {});
+			window.Grocy.Api.Get('objects/shopping_locations', function (rows) { shoppingLocations = Array.isArray(rows) ? rows : []; if (!receiptBusy) renderDetail(); }, function () {});
 		}
 
 		function loadTripList()
@@ -252,8 +254,16 @@
 
 		function loadTrip(tripId)
 		{
-			return fetchJson(tripUrl(tripId), { method: 'GET' }).then(function (payload)
+			var revision = ++loadRevision;
+			receiptReadiness = null;
+			return Promise.all([fetchJson(tripUrl(tripId), { method: 'GET' }), fetchJson(tripUrl(tripId) + '/receipt-readiness').catch(function () { return null; })]).then(function (results)
 			{
+				if (revision !== loadRevision) return;
+				receiptReadiness = results[1] && typeof results[1].ready === 'boolean' && Array.isArray(results[1].reasons) && Array.isArray(results[1].receipts) ? results[1] : null;
+				return results[0];
+			}).then(function (payload)
+			{
+				if (revision !== loadRevision) return;
 				if (!isLoadedTripPayload(payload))
 				{
 					detailEl.textContent = copy.loadError;
@@ -344,7 +354,7 @@
 					currentTrip = payload.trip;
 					currentLines = payload.lines;
 					currentLines.forEach(function (line) { if (line.status === 'known') { resolveProductName(line.resolved_product_id); } });
-					renderDetail();
+					return loadTrip(currentTripId);
 				}
 			}).catch(function () { flashError(); });
 		}
@@ -421,17 +431,14 @@
 			}
 			detailEl.appendChild(statusRow);
 
-			// Trip-level defaults (Q11): location + store only.
+			// Inventory location remains a trip default; purchase stores belong to receipts.
 			var defaults = element('div', 'grocy-ai-capture-review-defaults row');
 			var locCol = element('div', 'form-group col-12 col-sm-6');
 			locCol.appendChild(element('label', null, copy.location));
 			locCol.appendChild(locationSelect('grocyai-capture-review-location', currentTrip.default_location_id, locations, function (value) { putTrip({ default_location_id: value }); }));
-			var storeCol = element('div', 'form-group col-12 col-sm-6');
-			storeCol.appendChild(element('label', null, copy.store));
-			storeCol.appendChild(locationSelect('grocyai-capture-review-store', currentTrip.default_shopping_location_id, shoppingLocations, function (value) { putTrip({ default_shopping_location_id: value }); }));
 			defaults.appendChild(locCol);
-			defaults.appendChild(storeCol);
 			detailEl.appendChild(defaults);
+			detailEl.appendChild(element('p', 'text-muted', 'Correct purchase prices and stores in the receipts below.'));
 
 			// Lines.
 			var linesList = element('ul', 'list-group grocy-ai-capture-review-lines');
@@ -441,6 +448,19 @@
 			}
 			currentLines.forEach(function (line) { linesList.appendChild(renderLine(line)); });
 			detailEl.appendChild(linesList);
+
+			var receiptsHost = element('div', 'grocy-ai-receipts');
+			detailEl.appendChild(receiptsHost);
+			if (window.GrocyAIReceipts && receiptReadiness && Array.isArray(receiptReadiness.receipts))
+			{
+				receiptStates[currentTripId] = receiptStates[currentTripId] || { drafts: {}, uploads: [] };
+				window.GrocyAIReceipts(receiptsHost, { state: receiptStates[currentTripId], url: tripUrl(currentTripId), receipts: receiptReadiness.receipts, lines: currentLines, names: productNames, stores: shoppingLocations, productNew: productNewBase, readOnly: currentTrip.status === 'committed', notice: receiptNotice, reload: function (notice) { receiptNotice = notice; return loadTrip(currentTripId); }, onBusy: function (value) { receiptBusy = value; var button = document.getElementById('grocyai-capture-review-commit'); if (button) button.disabled = value || !receiptReadiness || receiptReadiness.ready !== true; } });
+			}
+			var readiness = element('div', 'alert alert-info');
+			readiness.id = 'grocyai-receipt-readiness';
+			readiness.setAttribute('role', 'status');
+			readiness.textContent = !receiptReadiness ? 'Could not check receipt readiness. Reload to try again.' : receiptReadiness.ready ? 'Receipts reviewed — ready to commit purchase.' : (receiptReadiness.reasons || []).map(window.GrocyAIReceiptReason).join('. ');
+			detailEl.appendChild(readiness);
 
 			// Commit (CAP-05): the single stock-write trigger. Hidden once the trip is archived committed.
 			var commitSection = element('div', 'grocy-ai-capture-review-commit mt-3');
@@ -452,23 +472,27 @@
 			{
 				var commitButton = element('button', 'btn btn-success', copy.commit);
 				commitButton.type = 'button';
+				commitButton.disabled = receiptBusy || !receiptReadiness || receiptReadiness.ready !== true;
+				commitButton.setAttribute('aria-describedby', 'grocyai-receipt-readiness');
 				commitButton.id = 'grocyai-capture-review-commit';
 				commitButton.addEventListener('click', function () { commitTrip(); });
 				commitSection.appendChild(commitButton);
 			}
 			var commitResult = element('div', 'grocy-ai-capture-review-commit-result mt-2');
 			commitResult.id = 'grocyai-capture-review-commit-result';
+			commitResult.textContent = commitMessage;
 			commitResult.setAttribute('role', 'status');
 			commitResult.setAttribute('aria-live', 'polite');
 			commitSection.appendChild(commitResult);
 			detailEl.appendChild(commitSection);
 
 			detailEl.appendChild(error);
+			if (currentTrip.status === 'committed') Array.prototype.forEach.call(detailEl.querySelectorAll('input, select, button'), function (control) { control.disabled = true; });
 		}
 
 		function commitTrip()
 		{
-			if (currentTripId === null || typeof currentChecksum !== 'string')
+			if (receiptBusy || !receiptReadiness || receiptReadiness.ready !== true || currentTripId === null || typeof currentChecksum !== 'string')
 			{
 				return Promise.resolve(null);
 			}
@@ -476,6 +500,8 @@
 			{
 				return Promise.resolve(null);
 			}
+			receiptBusy = true;
+			document.getElementById('grocyai-capture-review-commit').disabled = true;
 			return fetch(tripUrl(currentTripId) + '/commit', {
 				method: 'POST',
 				credentials: 'same-origin',
@@ -491,9 +517,10 @@
 				return response.json();
 			}).then(function (result)
 			{
+				receiptBusy = false;
 				renderCommitResult(result);
 				loadTrip(currentTripId);
-			}).catch(function () { flashError(); });
+			}).catch(function () { receiptBusy = false; flashError(); var button = document.getElementById('grocyai-capture-review-commit'); if (button) button.disabled = false; });
 		}
 
 		function renderCommitResult(result)
@@ -518,8 +545,9 @@
 			}
 			else
 			{
-				message = copy.saveError;
+				message = result.outcome === 'receipt_review_required' ? 'Receipt review is required before purchase commit.' : copy.saveError;
 			}
+			commitMessage = message;
 			target.textContent = message;
 		}
 
@@ -567,22 +595,6 @@
 			qtyRow.appendChild(appendGroup(plus));
 			qtyGroup.appendChild(qtyRow);
 			controls.appendChild(qtyGroup);
-
-			// Optional price.
-			var priceGroup = element('div', 'form-group mr-3 mb-0');
-			priceGroup.appendChild(element('label', 'small mb-0', copy.price));
-			var priceInput = element('input', 'form-control form-control-sm');
-			priceInput.type = 'number';
-			priceInput.step = '0.01';
-			priceInput.min = '0';
-			priceInput.value = line.price === null || line.price === undefined ? '' : String(line.price);
-			priceInput.addEventListener('change', function ()
-			{
-				var raw = priceInput.value.trim();
-				putLine(line.seq, { price: raw === '' ? null : parseFloat(raw) });
-			});
-			priceGroup.appendChild(priceInput);
-			controls.appendChild(priceGroup);
 
 			// Selection.
 			var selectGroup = element('div', 'form-group form-check mr-3 mb-0 align-self-center');

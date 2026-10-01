@@ -8,6 +8,9 @@ use Grocy\Services\DatabaseService;
 use GrocyAI\Services\GrocyAiBarcodeService;
 use GrocyAI\Services\GrocyAiBulkService;
 use GrocyAI\Services\GrocyAiCaptureService;
+use GrocyAI\Services\GrocyAiReceiptService;
+use GrocyAI\Services\GrocyAiReceiptImageStore;
+use GrocyAI\Services\GrocyAiReceiptExtractor;
 use GrocyAI\Services\GrocyAiConversionMigration;
 use GrocyAI\Services\GrocyAiDiagnostic;
 use GrocyAI\Services\GrocyAiService;
@@ -16,6 +19,7 @@ use GrocyAI\Services\GrocyAiTaxonomyService;
 use GrocyAI\Services\GrocyAiConversionService;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
+use Psr\Http\Message\UploadedFileInterface;
 
 class GrocyAiApiController extends BaseApiController
 {
@@ -1013,7 +1017,7 @@ class GrocyAiApiController extends BaseApiController
 		{
 			$service = new GrocyAiCaptureService(DatabaseService::GetInstance()->GetDbConnectionRaw());
 			$result = $service->CommitTrip((int)$tripId, (string)GROCY_USER_ID, $candidate['confirmed_checksum']);
-			if (in_array($result['outcome'], ['checksum_mismatch', 'already_committed', 'commit_failed'], true))
+			if (in_array($result['outcome'], ['checksum_mismatch', 'already_committed', 'commit_failed', 'receipt_review_required'], true))
 			{
 				return $this->ApiResponse($response->withStatus(409), $result);
 			}
@@ -1118,6 +1122,10 @@ class GrocyAiApiController extends BaseApiController
 			$service = new GrocyAiCaptureService(DatabaseService::GetInstance()->GetDbConnectionRaw());
 			return $this->ApiResponse($response, $service->UpdateLine((int)$tripId, (int)$seq, $candidate, (string)GROCY_USER_ID));
 		}
+		catch (\DomainException $ex)
+		{
+			return $this->GenericErrorResponse($response, $ex->getMessage(), 409);
+		}
 		catch (\InvalidArgumentException)
 		{
 			return $this->GenericErrorResponse($response, 'Invalid capture line update', 400);
@@ -1126,6 +1134,177 @@ class GrocyAiApiController extends BaseApiController
 		{
 			return $this->GenericErrorResponse($response, 'Capture line unavailable', 404);
 		}
+	}
+
+	private function ReceiptIds(array $args): array
+	{
+		$ids = [];
+		foreach (['tripId', 'receiptId', 'lineId'] as $name)
+		{
+			if (!array_key_exists($name, $args)) continue;
+			$value = $args[$name];
+			if (!is_string($value) || preg_match('/^[1-9][0-9]{0,9}$/D', $value) !== 1) throw new \InvalidArgumentException('Invalid receipt identifier');
+			$ids[$name] = (int)$value;
+		}
+		return $ids;
+	}
+
+	private function ReceiptView(GrocyAiReceiptService $service, int $tripId, int $receiptId): array
+	{
+		foreach ($service->ListForTrip($tripId) as $view) if ((int)$view['receipt']['id'] === $receiptId) return $view;
+		throw new \OutOfBoundsException('Receipt not found');
+	}
+
+	private function ReceiptBody(Request $request, array $allowed, bool $allowEmpty = false): array
+	{
+		$body = $request->getParsedBody();
+		if ($allowEmpty && $body === null) $body = [];
+		if (!is_array($body) || (!$allowEmpty && $body === []) || array_diff(array_keys($body), $allowed) !== []) throw new \InvalidArgumentException('Invalid receipt request');
+		return $body;
+	}
+
+	private function ReceiptEndpoint(Request $request, Response $response, array $args, callable $action): Response
+	{
+		User::CheckPermission($request, User::PERMISSION_STOCK_PURCHASE);
+		try
+		{
+			$ids = $this->ReceiptIds($args);
+			$service = new GrocyAiReceiptService(DatabaseService::GetInstance()->GetDbConnectionRaw());
+			if (isset($ids['receiptId'])) $this->ReceiptView($service, $ids['tripId'], $ids['receiptId']);
+			return $action($service, $ids);
+		}
+		catch (\OutOfBoundsException)
+		{
+			return $this->GenericErrorResponse($response, 'Receipt not found', 404);
+		}
+		catch (\InvalidArgumentException $ex)
+		{
+			$status = str_contains(strtolower($ex->getMessage()), 'committed') || str_contains(strtolower($ex->getMessage()), 'read only') || str_contains(strtolower($ex->getMessage()), 'unavailable for receipt upload') ? 409 : 400;
+			return $this->GenericErrorResponse($response, $ex->getMessage(), $status);
+		}
+		catch (\RuntimeException)
+		{
+			return $this->GenericErrorResponse($response, 'Receipt unavailable', 503);
+		}
+	}
+
+	public function UploadCaptureReceipt(Request $request, Response $response, array $args): Response
+	{
+		return $this->ReceiptEndpoint($request, $response, $args, function (GrocyAiReceiptService $service, array $ids) use ($request, $response): Response
+		{
+			$statement = DatabaseService::GetInstance()->GetDbConnectionRaw()->prepare('SELECT status FROM grocy_ai_capture_trips WHERE id = ?');
+			$statement->execute([$ids['tripId']]);
+			$tripStatus = $statement->fetchColumn();
+			if ($tripStatus === false) throw new \OutOfBoundsException('Capture trip not found');
+			if ($tripStatus === 'committed') throw new \InvalidArgumentException('Committed trip is read only');
+			$body = $this->ReceiptBody($request, ['request_id'], true);
+			if (array_key_exists('request_id', $body) && !is_string($body['request_id'])) throw new \InvalidArgumentException('Invalid receipt request ID');
+			$files = $request->getUploadedFiles();
+			if (array_keys($files) !== ['image'] || !$files['image'] instanceof UploadedFileInterface) throw new \InvalidArgumentException('Receipt image required');
+			$stored = (new GrocyAiReceiptImageStore(DatabaseService::GetInstance()->GetDbConnectionRaw()))->Save($ids['tripId'], $files['image'], $body['request_id'] ?? null, (string)GROCY_USER_ID);
+			return $this->ApiResponse($response->withStatus(201), $this->ReceiptView($service, $ids['tripId'], $stored['receipt_id']));
+		});
+	}
+
+	public function CaptureReceiptReadiness(Request $request, Response $response, array $args): Response
+	{
+		return $this->ReceiptEndpoint($request, $response, $args, fn(GrocyAiReceiptService $service, array $ids): Response => $this->ApiResponse($response, $service->Readiness($ids['tripId'])));
+	}
+
+	public function ListCaptureReceipts(Request $request, Response $response, array $args): Response
+	{
+		return $this->ReceiptEndpoint($request, $response, $args, fn(GrocyAiReceiptService $service, array $ids): Response => $this->ApiResponse($response, ['receipts' => $service->ListForTrip($ids['tripId'])]));
+	}
+
+	public function CaptureReceipt(Request $request, Response $response, array $args): Response
+	{
+		return $this->ReceiptEndpoint($request, $response, $args, fn(GrocyAiReceiptService $service, array $ids): Response => $this->ApiResponse($response, $this->ReceiptView($service, $ids['tripId'], $ids['receiptId'])));
+	}
+
+	public function CaptureReceiptImage(Request $request, Response $response, array $args): Response
+	{
+		return $this->ReceiptEndpoint($request, $response, $args, function (GrocyAiReceiptService $service, array $ids) use ($response): Response
+		{
+			$view = $this->ReceiptView($service, $ids['tripId'], $ids['receiptId']);
+			$image = (new GrocyAiReceiptImageStore(DatabaseService::GetInstance()->GetDbConnectionRaw()))->Read($ids['tripId'], $view['receipt']['image_id']);
+			$response = $response->withHeader('Content-Type', $image['mime_type'])->withHeader('Cache-Control', 'private, no-store')->withHeader('X-Content-Type-Options', 'nosniff')->withHeader('Content-Disposition', 'inline');
+			$response->getBody()->write($image['bytes']);
+			return $response;
+		});
+	}
+
+	public function ExtractCaptureReceipt(Request $request, Response $response, array $args): Response
+	{
+		return $this->ReceiptExtraction($request, $response, $args, false);
+	}
+
+	public function RetryCaptureReceipt(Request $request, Response $response, array $args): Response
+	{
+		return $this->ReceiptExtraction($request, $response, $args, true);
+	}
+
+	private function ReceiptExtraction(Request $request, Response $response, array $args, bool $retry): Response
+	{
+		return $this->ReceiptEndpoint($request, $response, $args, function (GrocyAiReceiptService $service, array $ids) use ($request, $response, $retry): Response
+		{
+			$this->ReceiptBody($request, [], true);
+			$extractor = new GrocyAiReceiptExtractor(DatabaseService::GetInstance()->GetDbConnectionRaw());
+			$result = $retry ? $extractor->Retry($ids['tripId'], $ids['receiptId']) : $extractor->Extract($ids['tripId'], $ids['receiptId']);
+			return $this->ApiResponse($response, $result);
+		});
+	}
+
+	public function UpdateCaptureReceipt(Request $request, Response $response, array $args): Response
+	{
+		return $this->ReceiptMutation($request, $response, $args, ['merchant', 'purchase_date', 'printed_total', 'currency', 'shopping_location_id', 'accept_difference'], fn($s, $i, $b) => $s->UpdateReceipt($i['receiptId'], $b, (string)GROCY_USER_ID));
+	}
+
+	public function AddCaptureReceiptLine(Request $request, Response $response, array $args): Response
+	{
+		return $this->ReceiptMutation($request, $response, $args, ['raw_text', 'description', 'quantity', 'line_total', 'kind', 'decision', 'product_id', 'confidence'], fn($s, $i, $b) => $s->AddLine($i['receiptId'], $b, (string)GROCY_USER_ID));
+	}
+
+	public function UpdateCaptureReceiptLine(Request $request, Response $response, array $args): Response
+	{
+		return $this->ReceiptMutation($request, $response, $args, ['raw_text', 'description', 'quantity', 'line_total', 'kind', 'decision', 'product_id', 'confidence'], fn($s, $i, $b) => $s->UpdateLine($i['receiptId'], $i['lineId'], $b, (string)GROCY_USER_ID));
+	}
+
+	public function UpdateCaptureReceiptAllocation(Request $request, Response $response, array $args): Response
+	{
+		return $this->ReceiptMutation($request, $response, $args, ['id', 'delete', 'capture_line_id', 'product_id', 'quantity', 'unit_price', 'shopping_location_id'], fn($s, $i, $b) => $s->UpdateAllocation($i['receiptId'], $i['lineId'], $b, (string)GROCY_USER_ID));
+	}
+
+	private function ReceiptMutation(Request $request, Response $response, array $args, array $allowed, callable $change): Response
+	{
+		return $this->ReceiptEndpoint($request, $response, $args, function (GrocyAiReceiptService $service, array $ids) use ($request, $response, $allowed, $change): Response
+		{
+			$body = $this->ReceiptBody($request, $allowed);
+			return $this->ApiResponse($response, $change($service, $ids, $body));
+		});
+	}
+
+	public function FinishCaptureReceipt(Request $request, Response $response, array $args): Response
+	{
+		return $this->ReceiptTransition($request, $response, $args, 'Finish');
+	}
+
+	public function ReopenCaptureReceipt(Request $request, Response $response, array $args): Response
+	{
+		return $this->ReceiptTransition($request, $response, $args, 'Reopen');
+	}
+
+	private function ReceiptTransition(Request $request, Response $response, array $args, string $method): Response
+	{
+		return $this->ReceiptEndpoint($request, $response, $args, function (GrocyAiReceiptService $service, array $ids) use ($request, $response, $method): Response
+		{
+			$this->ReceiptBody($request, [], true);
+			return $this->ApiResponse($response, $service->$method($ids['receiptId'], (string)GROCY_USER_ID));
+		});
+	}
+
+	public function SuggestCaptureReceiptMatches(Request $request, Response $response, array $args): Response
+	{
+		return $this->ReceiptEndpoint($request, $response, $args, fn(GrocyAiReceiptService $service, array $ids): Response => $this->ApiResponse($response, $service->SuggestMatches($ids['receiptId'], $ids['lineId'])));
 	}
 
 	private static function ExpectedConversionCatalogSeed(): array
