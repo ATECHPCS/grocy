@@ -96,7 +96,7 @@ class GrocyAiCaptureResearchService
 					$this->Db->prepare("INSERT INTO grocy_ai_capture_research_audit (trip_id, draft_id, actor, action, before_json, after_json) VALUES (?, ?, 'research-worker', 'research_failure', ?, ?)")->execute([$draft['trip_id'], $draft['id'], json_encode(['outcome' => $draft['outcome']], JSON_THROW_ON_ERROR), json_encode(['outcome' => 'needs_input', 'safe_error_code' => 'worker_unavailable', 'attempts' => 5], JSON_THROW_ON_ERROR)]);
 				}
 			}
-			$select = $this->Db->prepare("SELECT id, canonical_gtin, attempts, revision FROM grocy_ai_capture_research_jobs WHERE attempts < ? AND ((state = 'queued' AND (next_retry_at IS NULL OR next_retry_at <= CURRENT_TIMESTAMP)) OR (state = 'retryable_failure' AND next_retry_at <= CURRENT_TIMESTAMP) OR (state = 'leased' AND lease_expires_at <= CURRENT_TIMESTAMP)) ORDER BY id LIMIT ?");
+			$select = $this->Db->prepare("SELECT j.id, j.canonical_gtin, j.attempts, j.revision FROM grocy_ai_capture_research_jobs j WHERE j.attempts < ? AND ((j.state = 'queued' AND (j.next_retry_at IS NULL OR j.next_retry_at <= CURRENT_TIMESTAMP)) OR (j.state = 'retryable_failure' AND j.next_retry_at <= CURRENT_TIMESTAMP) OR (j.state = 'leased' AND j.lease_expires_at <= CURRENT_TIMESTAMP)) AND EXISTS (SELECT 1 FROM grocy_ai_capture_research_drafts d JOIN grocy_ai_capture_lines l ON l.id = d.line_id AND l.trip_id = d.trip_id JOIN grocy_ai_capture_trips t ON t.id = d.trip_id WHERE d.job_id = j.id AND l.status = 'unknown' AND l.selected = 1 AND l.applied_at IS NULL AND l.canonical_gtin = j.canonical_gtin AND l.scanned_barcode = d.scanned_barcode AND t.status IN ('open', 'reviewing') AND NOT EXISTS (SELECT 1 FROM grocy_ai_capture_trip_cancellations c WHERE c.trip_id = t.id)) ORDER BY j.id LIMIT ?");
 			$select->bindValue(1, self::MAX_ATTEMPTS, PDO::PARAM_INT);
 			$select->bindValue(2, $limit, PDO::PARAM_INT);
 			$select->execute();
@@ -248,6 +248,7 @@ class GrocyAiCaptureResearchService
 		foreach ($result['sources'] as $source) if (!in_array($source, ['bb-federation', 'openfoodfacts'], true)) throw new \InvalidArgumentException('Invalid research result');
 		if (!in_array('openfoodfacts', $result['sources'], true) && ($result['categories'] !== [] || $result['brand'] !== null || $result['package'] !== null)) throw new \InvalidArgumentException('Invalid research result');
 		if ($result['outcome'] === 'found' && $result['name_candidates'] === [] || $result['outcome'] !== 'found' && $result['name_candidates'] !== []) throw new \InvalidArgumentException('Invalid research result');
+		if ($result['outcome'] === 'found' && $result['sources'] === []) throw new \InvalidArgumentException('Invalid research result');
 		if ($result['outcome'] === 'retryable_failure')
 		{
 			if (($result['error_code'] ?? null) !== 'provider_unavailable') throw new \InvalidArgumentException('Invalid research result');

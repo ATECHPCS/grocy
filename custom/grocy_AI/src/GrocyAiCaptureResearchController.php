@@ -3,6 +3,7 @@
 namespace GrocyAI\Controllers\Api;
 
 use Grocy\Controllers\BaseApiController;
+use Grocy\Services\ApiKeyService;
 use Grocy\Services\DatabaseService;
 use GrocyAI\Services\GrocyAiCaptureResearchService;
 use Psr\Http\Message\ResponseInterface as Response;
@@ -18,6 +19,14 @@ class GrocyAiCaptureResearchController extends BaseApiController
 	private function Authorized(Request $request): bool
 	{
 		return self::ValidWorkerKey($request->getHeaderLine('X-Grocy-AI-Worker-Key'), (string)(defined('GROCY_AI_RESEARCH_WORKER_KEY') ? GROCY_AI_RESEARCH_WORKER_KEY : ''));
+	}
+
+	protected function HasApiCredential(Request $request): bool
+	{
+		$key = $request->getHeaderLine('GROCY-API-KEY');
+		if ($key === '' || strlen($key) > 256) return false;
+		try { return (new ApiKeyService())->IsValidApiKey($key); }
+		catch (\Throwable) { return false; }
 	}
 
 	protected function Service(): GrocyAiCaptureResearchService
@@ -43,6 +52,7 @@ class GrocyAiCaptureResearchController extends BaseApiController
 
 	public function Claim(Request $request, Response $response, array $args): Response
 	{
+		if (!$this->HasApiCredential($request)) return $this->GenericErrorResponse($response, 'API authentication required', 401);
 		if (!$this->Authorized($request)) return $this->GenericErrorResponse($response, 'Worker authorization failed', 403);
 		$body = $this->Body($request);
 		if ($body === null || !$this->HasFields($body, ['limit', 'worker_id']) || !is_int($body['limit']) || !is_string($body['worker_id'])) return $this->GenericErrorResponse($response, 'Invalid research claim', 400);
@@ -53,6 +63,7 @@ class GrocyAiCaptureResearchController extends BaseApiController
 
 	public function Complete(Request $request, Response $response, array $args): Response
 	{
+		if (!$this->HasApiCredential($request)) return $this->GenericErrorResponse($response, 'API authentication required', 401);
 		if (!$this->Authorized($request)) return $this->GenericErrorResponse($response, 'Worker authorization failed', 403);
 		$jobId = $this->JobId($args);
 		$body = $this->Body($request);
@@ -64,6 +75,7 @@ class GrocyAiCaptureResearchController extends BaseApiController
 
 	public function Fail(Request $request, Response $response, array $args): Response
 	{
+		if (!$this->HasApiCredential($request)) return $this->GenericErrorResponse($response, 'API authentication required', 401);
 		if (!$this->Authorized($request)) return $this->GenericErrorResponse($response, 'Worker authorization failed', 403);
 		$jobId = $this->JobId($args);
 		$body = $this->Body($request);

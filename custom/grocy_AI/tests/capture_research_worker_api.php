@@ -54,6 +54,7 @@ rejectWorker(fn() => $service->CompleteJob($jobId, $token, $hit + ['raw_html' =>
 rejectWorker(fn() => $service->CompleteJob($jobId, $token, array_replace($hit, ['canonical_gtin' => '00000096385074'])), 'wrong GTIN accepted');
 rejectWorker(fn() => $service->CompleteJob($jobId, $token, array_replace($hit, ['name_candidates' => [str_repeat('a', 201)]])), 'oversized name accepted');
 rejectWorker(fn() => $service->CompleteJob($jobId, $token, array_replace($hit, ['sources' => ['unknown-provider']])), 'unknown source accepted');
+rejectWorker(fn() => $service->CompleteJob($jobId, $token, array_replace($hit, ['sources' => []])), 'unattributed hit accepted');
 rejectWorker(fn() => $service->CompleteJob($jobId, $token, array_replace($hit, ['outcome' => 'found', 'name_candidates' => []])), 'empty hit accepted');
 rejectWorker(fn() => $service->CompleteJob($jobId, $token, array_replace($hit, ['outcome' => 'retryable_failure', 'name_candidates' => []])), 'retryable failure without safe code accepted');
 rejectWorker(fn() => $service->CompleteJob($jobId, str_repeat('0', 64), $hit), 'stale token accepted');
@@ -107,7 +108,8 @@ for ($attempt = 3; $attempt <= 5; $attempt++)
 $terminal = $service->FailJob((int)$failure['id'], $lease['lease_token'], 'worker_unavailable');
 checkWorker($terminal['state'] === 'needs_input' && count($service->ClaimJobs(1, 'worker-d')) === 0, 'fifth failure is terminal');
 checkWorker($service->DraftsForTrip(1)[1]['outcome'] === 'needs_input', 'terminal failure leaves a reviewable draft');
-$db->exec("INSERT INTO grocy_ai_capture_research_jobs (canonical_gtin) VALUES ('00012345678905')");
+$db->exec("INSERT INTO grocy_ai_capture_lines (id, trip_id, seq, scanned_barcode, canonical_gtin, status) VALUES (4, 1, 3, '012345678905', '00012345678905', 'unknown')");
+$service->EnqueueUnknown(1, 4, '012345678905');
 $providerFailure = $service->ClaimJobs(1, 'worker-e')[0];
 $retryable = ['contract_version' => 1, 'canonical_gtin' => '00012345678905', 'outcome' => 'retryable_failure', 'name_candidates' => [], 'brand' => null, 'package' => null, 'categories' => [], 'sources' => [], 'error_code' => 'provider_unavailable'];
 $failedResult = $service->CompleteJob((int)$providerFailure['id'], $providerFailure['lease_token'], $retryable);
@@ -117,29 +119,64 @@ $db->exec("UPDATE grocy_ai_capture_research_jobs SET state = 'leased', attempts 
 checkWorker(count($service->ClaimJobs(1, 'worker-f')) === 0, 'expired fifth lease is never issued as sixth attempt');
 checkWorker($db->query("SELECT state FROM grocy_ai_capture_research_jobs WHERE id = {$failure['id']}")->fetchColumn() === 'needs_input', 'expired fifth lease resolves to reviewable terminal state');
 
+$eligibilityDb = new PDO('sqlite::memory:');
+$eligibilityDb->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+$eligibilityDb->exec('PRAGMA foreign_keys = ON');
+$eligibilityDb->exec('CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT NOT NULL)');
+$eligibilityDb->exec('CREATE TABLE product_barcodes (id INTEGER PRIMARY KEY, product_id INTEGER NOT NULL, barcode TEXT NOT NULL)');
+GrocyAiCaptureMigration::Bootstrap($eligibilityDb);
+$eligibilityDb->exec("INSERT INTO grocy_ai_capture_trips (id, status, module_version) VALUES (10, 'reviewing', 'test'), (11, 'reviewing', 'test'), (12, 'reviewing', 'test'), (13, 'reviewing', 'test')");
+$eligibilityService = new GrocyAiCaptureResearchService($eligibilityDb);
+$cases = [
+	[10, 10, '036000291452', '00036000291452'],
+	[11, 11, '042100005264', '00042100005264'],
+	[12, 12, '012345678905', '00012345678905'],
+	[13, 13, '96385074', '00000096385074'],
+	[14, 10, '96385074', '00000096385074'],
+	[15, 13, '4006381333931', '04006381333931']
+];
+foreach ($cases as [$lineId, $tripId, $barcode, $canonical])
+{
+	$eligibilityDb->prepare('INSERT INTO grocy_ai_capture_lines (id, trip_id, seq, scanned_barcode, canonical_gtin, status) VALUES (?, ?, ?, ?, ?, \'unknown\')')->execute([$lineId, $tripId, $lineId, $barcode, $canonical]);
+	$eligibilityService->EnqueueUnknown($tripId, $lineId, $barcode);
+}
+$eligibilityDb->exec("INSERT INTO grocy_ai_capture_trip_cancellations (trip_id, actor) VALUES (10, 'test')");
+$eligibilityDb->exec("UPDATE grocy_ai_capture_trips SET status = 'committed' WHERE id = 11");
+$eligibilityDb->exec("UPDATE grocy_ai_capture_lines SET selected = 0 WHERE id = 12");
+$eligibilityDb->exec("UPDATE grocy_ai_capture_lines SET status = 'known' WHERE id = 15");
+$eligible = $eligibilityService->ClaimJobs(5, 'eligibility-worker');
+checkWorker(count($eligible) === 1 && $eligible[0]['canonical_gtin'] === '00000096385074', 'only shared job with active selected unknown line is claimed');
+
 checkWorker(is_file(__DIR__ . '/../src/GrocyAiCaptureResearchController.php'), 'worker controller missing');
 require_once __DIR__ . '/../src/GrocyAiCaptureResearchController.php';
 checkWorker(!GrocyAI\Controllers\Api\GrocyAiCaptureResearchController::ValidWorkerKey('', 'configured-secret'), 'absent key rejected');
 checkWorker(!GrocyAI\Controllers\Api\GrocyAiCaptureResearchController::ValidWorkerKey('wrong', 'configured-secret'), 'wrong key rejected');
 checkWorker(!GrocyAI\Controllers\Api\GrocyAiCaptureResearchController::ValidWorkerKey('configured-secret', ''), 'unset config rejected');
 checkWorker(GrocyAI\Controllers\Api\GrocyAiCaptureResearchController::ValidWorkerKey('configured-secret', 'configured-secret'), 'matching key accepted');
-$controller = (new ReflectionClass(GrocyAI\Controllers\Api\GrocyAiCaptureResearchController::class))->newInstanceWithoutConstructor();
 $request = (new Slim\Psr7\Factory\ServerRequestFactory())->createServerRequest('POST', '/api/grocy-ai/capture/research/jobs/claim')->withParsedBody(['limit' => 1, 'worker_id' => 'test-worker']);
 $response = (new Slim\Psr7\Factory\ResponseFactory())->createResponse();
-checkWorker($controller->Claim($request, $response, [])->getStatusCode() === 403, 'HTTP claim rejects missing worker key');
-checkWorker($controller->Claim($request->withHeader('X-Grocy-AI-Worker-Key', 'wrong'), $response, [])->getStatusCode() === 403, 'HTTP claim rejects wrong worker key');
-checkWorker($controller->Complete($request, $response, ['jobId' => (string)$jobId])->getStatusCode() === 403, 'HTTP completion rejects missing worker key');
-checkWorker($controller->Fail($request, $response, ['jobId' => (string)$jobId])->getStatusCode() === 403, 'HTTP failure rejects missing worker key');
 $jsonRequest = (new Slim\Psr7\Factory\ServerRequestFactory())->createServerRequest('POST', '/api/grocy-ai/capture/research/jobs/claim')->withHeader('X-Grocy-AI-Worker-Key', 'configured-secret')->withHeader('Content-Type', 'application/json');
 $jsonRequest->getBody()->write('{"worker_id":"test-worker","limit":0}');
 class ResearchTestController extends GrocyAI\Controllers\Api\GrocyAiCaptureResearchController
 {
 	public function __construct(private GrocyAiCaptureResearchService $research) {}
 	protected function Service(): GrocyAiCaptureResearchService { return $this->research; }
+	protected function HasApiCredential(Psr\Http\Message\ServerRequestInterface $request): bool { return $request->getHeaderLine('GROCY-API-KEY') === 'test-api-key'; }
 }
 $testController = new ResearchTestController($service);
-checkWorker($testController->Claim($jsonRequest, $response, [])->getStatusCode() === 400, 'HTTP claim parses unordered JSON and validates limit');
-$validJson = (new Slim\Psr7\Factory\ServerRequestFactory())->createServerRequest('POST', '/api/grocy-ai/capture/research/jobs/claim')->withHeader('X-Grocy-AI-Worker-Key', 'configured-secret')->withHeader('Content-Type', 'application/json');
+checkWorker($testController->Claim($request->withCookieParams(['grocy_session' => 'session-only'])->withHeader('X-Grocy-AI-Worker-Key', 'configured-secret'), $response, [])->getStatusCode() === 401, 'session-only request cannot claim with worker key');
+define('GROCY_DISABLE_AUTH', true);
+checkWorker($testController->Claim($request->withHeader('X-Grocy-AI-Worker-Key', 'configured-secret'), $response, [])->getStatusCode() === 401, 'auth-disabled mode still requires API credential');
+checkWorker($testController->Claim($request->withHeader('GROCY-API-KEY', 'invalid')->withHeader('X-Grocy-AI-Worker-Key', 'configured-secret'), $response, [])->getStatusCode() === 401, 'invalid API credential cannot claim');
+checkWorker($testController->Complete($request->withHeader('X-Grocy-AI-Worker-Key', 'configured-secret'), $response, ['jobId' => (string)$jobId])->getStatusCode() === 401, 'completion requires API credential');
+checkWorker($testController->Fail($request->withHeader('X-Grocy-AI-Worker-Key', 'configured-secret'), $response, ['jobId' => (string)$jobId])->getStatusCode() === 401, 'failure requires API credential');
+$apiRequest = $request->withHeader('GROCY-API-KEY', 'test-api-key');
+checkWorker($testController->Claim($apiRequest, $response, [])->getStatusCode() === 403, 'HTTP claim rejects missing worker key');
+checkWorker($testController->Claim($apiRequest->withHeader('X-Grocy-AI-Worker-Key', 'wrong'), $response, [])->getStatusCode() === 403, 'HTTP claim rejects wrong worker key');
+checkWorker($testController->Complete($apiRequest, $response, ['jobId' => (string)$jobId])->getStatusCode() === 403, 'HTTP completion rejects missing worker key');
+checkWorker($testController->Fail($apiRequest, $response, ['jobId' => (string)$jobId])->getStatusCode() === 403, 'HTTP failure rejects missing worker key');
+checkWorker($testController->Claim($jsonRequest->withHeader('GROCY-API-KEY', 'test-api-key'), $response, [])->getStatusCode() === 400, 'HTTP claim parses unordered JSON and validates limit');
+$validJson = (new Slim\Psr7\Factory\ServerRequestFactory())->createServerRequest('POST', '/api/grocy-ai/capture/research/jobs/claim')->withHeader('GROCY-API-KEY', 'test-api-key')->withHeader('X-Grocy-AI-Worker-Key', 'configured-secret')->withHeader('Content-Type', 'application/json');
 $validJson->getBody()->write('{"worker_id":"test-worker","limit":1}');
 checkWorker($testController->Claim($validJson, $response, [])->getStatusCode() === 200, 'HTTP claim accepts bounded JSON without global parser');
 checkWorker((int)$db->query('SELECT COUNT(*) FROM products')->fetchColumn() === 0 && (int)$db->query('SELECT COUNT(*) FROM stock_log')->fetchColumn() === 0, 'worker research never writes product or stock');
