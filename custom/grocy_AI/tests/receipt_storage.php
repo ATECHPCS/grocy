@@ -152,6 +152,30 @@ namespace {
 			receiptCheck((int)$racePdo->query('SELECT COUNT(*) FROM grocy_ai_receipts')->fetchColumn() === 0, 'race rejection must leave no header');
 		}
 		finally { receiptCleanup($raceDirectory); }
+		[$legacyPdo, $legacyDirectory] = receiptFixture();
+		try
+		{
+			$legacyPdo->exec('DROP TABLE grocy_ai_receipt_audit');
+			$legacyPdo->exec("CREATE TABLE grocy_ai_receipt_audit (id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT, trip_id INTEGER NOT NULL, receipt_id INTEGER NOT NULL, line_id INTEGER NULL, allocation_id INTEGER NULL, actor TEXT NOT NULL, action TEXT NOT NULL, before_json TEXT NULL, after_json TEXT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (trip_id, receipt_id) REFERENCES grocy_ai_receipts(trip_id, id), FOREIGN KEY (receipt_id, line_id) REFERENCES grocy_ai_receipt_lines(receipt_id, id), FOREIGN KEY (allocation_id) REFERENCES grocy_ai_receipt_allocations(id))");
+			$legacyPdo->exec('CREATE INDEX grocy_ai_receipt_audit_receipt_idx ON grocy_ai_receipt_audit (receipt_id, id)');
+			$legacyPdo->exec("CREATE TRIGGER grocy_ai_receipt_audit_no_update BEFORE UPDATE ON grocy_ai_receipt_audit BEGIN SELECT RAISE(ABORT, 'receipt audit is append-only'); END");
+			$legacyPdo->exec("CREATE TRIGGER grocy_ai_receipt_audit_no_delete BEFORE DELETE ON grocy_ai_receipt_audit BEGIN SELECT RAISE(ABORT, 'receipt audit is append-only'); END");
+			$legacyPdo->exec("DELETE FROM grocy_ai_receipt_migrations WHERE version = 'v2'");
+			$legacyPdo->exec("INSERT OR IGNORE INTO grocy_ai_receipt_migrations (version) VALUES ('v1')");
+			$legacyPdo->exec("INSERT INTO grocy_ai_receipts (trip_id, request_id, image_id, mime_type, image_bytes) VALUES (1, 'old-a', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'image/png', 1), (1, 'old-b', 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'image/png', 1)");
+			$legacyPdo->exec("INSERT INTO grocy_ai_receipt_lines (receipt_id, seq, description) VALUES (1, 1, 'Old milk'), (2, 1, 'Old bread')");
+			$legacyPdo->exec("INSERT INTO grocy_ai_receipt_allocations (trip_id, receipt_id, receipt_line_id, quantity, unit_price) VALUES (1, 2, 2, 1, 3)");
+			$legacyPdo->exec("INSERT INTO grocy_ai_receipt_audit (trip_id, receipt_id, allocation_id, actor, action, before_json, after_json) VALUES (1, 1, NULL, 'old-user', 'uploaded', NULL, '{\"ok\":true}'), (1, 2, 1, 'old-user', 'allocate', NULL, '{\"quantity\":1}')");
+			GrocyAiReceiptMigration::Bootstrap($legacyPdo);
+			receiptCheck((int)$legacyPdo->query('SELECT COUNT(*) FROM grocy_ai_receipt_audit')->fetchColumn() === 2, 'v1 upgrade must preserve old audit rows');
+			receiptCheck((string)$legacyPdo->query('SELECT after_json FROM grocy_ai_receipt_audit WHERE id = 2')->fetchColumn() === '{"quantity":1}', 'v1 upgrade must preserve audit payload');
+			receiptThrows(fn() => $legacyPdo->exec("INSERT INTO grocy_ai_receipt_audit (trip_id, receipt_id, allocation_id, actor, action) VALUES (1, 1, 1, 'test', 'allocate')"), 'upgraded audit must reject another receipt allocation');
+			receiptThrows(fn() => $legacyPdo->exec("UPDATE grocy_ai_receipt_audit SET action = 'changed' WHERE id = 1"), 'upgraded audit must remain append-only');
+			GrocyAiReceiptMigration::Bootstrap($legacyPdo);
+			receiptCheck((int)$legacyPdo->query('SELECT COUNT(*) FROM grocy_ai_receipt_audit')->fetchColumn() === 2, 'v2 repeat bootstrap must preserve audit rows');
+			receiptCheck((int)$legacyPdo->query("SELECT COUNT(*) FROM grocy_ai_receipt_migrations WHERE version IN ('v1', 'v2')")->fetchColumn() === 2, 'v2 must retain v1 ledger and record its upgrade');
+		}
+		finally { receiptCleanup($legacyDirectory); }
 	}
 	receiptStorageTests();
 	fwrite(STDOUT, "Receipt storage tests passed\n");

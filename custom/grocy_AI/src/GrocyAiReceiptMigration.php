@@ -6,7 +6,7 @@ use PDO;
 
 class GrocyAiReceiptMigration
 {
-	public const VERSION = 'v1';
+	public const VERSION = 'v2';
 
 	public static function Bootstrap(PDO $pdo): void
 	{
@@ -31,6 +31,7 @@ class GrocyAiReceiptMigration
 			$pdo->exec('CREATE INDEX IF NOT EXISTS grocy_ai_receipt_audit_receipt_idx ON grocy_ai_receipt_audit (receipt_id, id)');
 			$pdo->exec("CREATE TRIGGER IF NOT EXISTS grocy_ai_receipt_audit_no_update BEFORE UPDATE ON grocy_ai_receipt_audit BEGIN SELECT RAISE(ABORT, 'receipt audit is append-only'); END");
 			$pdo->exec("CREATE TRIGGER IF NOT EXISTS grocy_ai_receipt_audit_no_delete BEFORE DELETE ON grocy_ai_receipt_audit BEGIN SELECT RAISE(ABORT, 'receipt audit is append-only'); END");
+			self::UpgradeAuditScope($pdo);
 			$pdo->prepare('INSERT OR IGNORE INTO grocy_ai_receipt_migrations (version) VALUES (?)')->execute([self::VERSION]);
 			if ($started) $pdo->commit();
 		}
@@ -40,4 +41,28 @@ class GrocyAiReceiptMigration
 			throw $ex;
 		}
 	}
+	private static function UpgradeAuditScope(PDO $pdo): void
+	{
+		$keys = $pdo->query('PRAGMA foreign_key_list(grocy_ai_receipt_audit)')->fetchAll(PDO::FETCH_ASSOC);
+		$allocationKeys = [];
+		foreach ($keys as $key)
+		{
+			if ($key['table'] === 'grocy_ai_receipt_allocations')
+			{
+				$allocationKeys[$key['from']] = $key['to'];
+			}
+		}
+		if ($allocationKeys === ['trip_id' => 'trip_id', 'receipt_id' => 'receipt_id', 'allocation_id' => 'id']) return;
+
+		// SQLite cannot alter a foreign key. Copy the append-only rows inside the migration
+		// transaction; inconsistent old rows abort without losing audit history.
+		$pdo->exec("CREATE TABLE grocy_ai_receipt_audit_upgrade (id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT, trip_id INTEGER NOT NULL, receipt_id INTEGER NOT NULL, line_id INTEGER NULL, allocation_id INTEGER NULL, actor TEXT NOT NULL, action TEXT NOT NULL, before_json TEXT NULL, after_json TEXT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (trip_id, receipt_id) REFERENCES grocy_ai_receipts(trip_id, id), FOREIGN KEY (receipt_id, line_id) REFERENCES grocy_ai_receipt_lines(receipt_id, id), FOREIGN KEY (trip_id, receipt_id, allocation_id) REFERENCES grocy_ai_receipt_allocations(trip_id, receipt_id, id))");
+		$pdo->exec('INSERT INTO grocy_ai_receipt_audit_upgrade (id, trip_id, receipt_id, line_id, allocation_id, actor, action, before_json, after_json, created_at) SELECT id, trip_id, receipt_id, line_id, allocation_id, actor, action, before_json, after_json, created_at FROM grocy_ai_receipt_audit ORDER BY id');
+		$pdo->exec('DROP TABLE grocy_ai_receipt_audit');
+		$pdo->exec('ALTER TABLE grocy_ai_receipt_audit_upgrade RENAME TO grocy_ai_receipt_audit');
+		$pdo->exec('CREATE INDEX grocy_ai_receipt_audit_receipt_idx ON grocy_ai_receipt_audit (receipt_id, id)');
+		$pdo->exec("CREATE TRIGGER grocy_ai_receipt_audit_no_update BEFORE UPDATE ON grocy_ai_receipt_audit BEGIN SELECT RAISE(ABORT, 'receipt audit is append-only'); END");
+		$pdo->exec("CREATE TRIGGER grocy_ai_receipt_audit_no_delete BEFORE DELETE ON grocy_ai_receipt_audit BEGIN SELECT RAISE(ABORT, 'receipt audit is append-only'); END");
+	}
+
 }
