@@ -59,6 +59,19 @@ $app->group('/api/grocy-ai', function (RouteCollectorProxy $group)
 	$group->put('/capture/trips/{tripId}', [GrocyAiApiController::class, 'UpdateCaptureTrip']);
 	$group->put('/capture/trips/{tripId}/lines/{seq}', [GrocyAiApiController::class, 'UpdateCaptureLine']);
 	$group->post('/capture/trips/{tripId}/commit', [GrocyAiApiController::class, 'CommitCaptureTrip']);
+	$group->post('/capture/trips/{tripId}/receipts', [GrocyAiApiController::class, 'UploadCaptureReceipt']);
+	$group->get('/capture/trips/{tripId}/receipts', [GrocyAiApiController::class, 'ListCaptureReceipts']);
+	$group->get('/capture/trips/{tripId}/receipts/{receiptId}', [GrocyAiApiController::class, 'CaptureReceipt']);
+	$group->get('/capture/trips/{tripId}/receipts/{receiptId}/image', [GrocyAiApiController::class, 'CaptureReceiptImage']);
+	$group->post('/capture/trips/{tripId}/receipts/{receiptId}/extract', [GrocyAiApiController::class, 'ExtractCaptureReceipt']);
+	$group->post('/capture/trips/{tripId}/receipts/{receiptId}/retry', [GrocyAiApiController::class, 'RetryCaptureReceipt']);
+	$group->put('/capture/trips/{tripId}/receipts/{receiptId}', [GrocyAiApiController::class, 'UpdateCaptureReceipt']);
+	$group->post('/capture/trips/{tripId}/receipts/{receiptId}/lines', [GrocyAiApiController::class, 'AddCaptureReceiptLine']);
+	$group->put('/capture/trips/{tripId}/receipts/{receiptId}/lines/{lineId}', [GrocyAiApiController::class, 'UpdateCaptureReceiptLine']);
+	$group->put('/capture/trips/{tripId}/receipts/{receiptId}/lines/{lineId}/allocation', [GrocyAiApiController::class, 'UpdateCaptureReceiptAllocation']);
+	$group->get('/capture/trips/{tripId}/receipts/{receiptId}/lines/{lineId}/matches', [GrocyAiApiController::class, 'SuggestCaptureReceiptMatches']);
+	$group->post('/capture/trips/{tripId}/receipts/{receiptId}/finish', [GrocyAiApiController::class, 'FinishCaptureReceipt']);
+	$group->post('/capture/trips/{tripId}/receipts/{receiptId}/reopen', [GrocyAiApiController::class, 'ReopenCaptureReceipt']);
 	$group->get('/images/{variant}/{token}', [GrocyAiApiController::class, 'FetchImage']);
 })->add(JsonMiddleware::class);
 
