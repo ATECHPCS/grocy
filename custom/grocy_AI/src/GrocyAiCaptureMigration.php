@@ -18,7 +18,7 @@ use PDO;
  */
 class GrocyAiCaptureMigration
 {
-	public const VERSION = 'v2';
+	public const VERSION = 'v3';
 
 	public static function Bootstrap(PDO $pdo): void
 	{
@@ -56,6 +56,9 @@ class GrocyAiCaptureMigration
 		// native purchase transaction id, the commit time, and the reviewed checksum (Q12/Q14). None of these
 		// are native Grocy rows.
 		$pdo->exec("CREATE TABLE IF NOT EXISTS grocy_ai_capture_trips (id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, created_by TEXT NULL, status TEXT NOT NULL CHECK (status IN ('open', 'reviewing', 'committed')), default_location_id INTEGER NULL, default_shopping_location_id INTEGER NULL, transaction_id TEXT NULL, committed_at TEXT NULL, checksum TEXT NULL, module_version TEXT NOT NULL)");
+		$pdo->exec('CREATE TABLE IF NOT EXISTS grocy_ai_capture_trip_cancellations (trip_id INTEGER NOT NULL PRIMARY KEY, actor TEXT NOT NULL, canceled_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (trip_id) REFERENCES grocy_ai_capture_trips(id))');
+		$pdo->exec("CREATE TRIGGER IF NOT EXISTS grocy_ai_capture_cancellation_no_update BEFORE UPDATE ON grocy_ai_capture_trip_cancellations BEGIN SELECT RAISE(ABORT, 'capture cancellation is append-only'); END");
+		$pdo->exec("CREATE TRIGGER IF NOT EXISTS grocy_ai_capture_cancellation_no_delete BEFORE DELETE ON grocy_ai_capture_trip_cancellations BEGIN SELECT RAISE(ABORT, 'capture cancellation is append-only'); END");
 
 		// Q6/Q7: each line is one coalesced scan bucket. It records the raw scanned barcode, its canonical
 		// GTIN and resolved owner (or null when unknown), the known/unknown/conflict status, the scan count as

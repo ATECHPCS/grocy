@@ -10,6 +10,7 @@ class GrocyAiReceiptMigration
 
 	public static function Bootstrap(PDO $pdo): void
 	{
+		GrocyAiCaptureMigration::Bootstrap($pdo);
 		if ((int)$pdo->query('PRAGMA foreign_keys')->fetchColumn() !== 1)
 		{
 			if ($pdo->inTransaction()) throw new \LogicException('Receipt migration requires SQLite foreign keys before a transaction');

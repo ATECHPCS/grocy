@@ -107,8 +107,8 @@ class GrocyAiReceiptImageStore
 	private function AssertTrip(int $tripId): void
 	{
 		if ($tripId < 1) throw new InvalidArgumentException('Invalid capture trip');
-		$statement = $this->Db->prepare('SELECT status FROM grocy_ai_capture_trips WHERE id = ?');
-		$statement->execute([$tripId]);
+		$statement = $this->Db->prepare('SELECT status FROM grocy_ai_capture_trips WHERE id = ? AND NOT EXISTS (SELECT 1 FROM grocy_ai_capture_trip_cancellations WHERE trip_id = ?)');
+		$statement->execute([$tripId, $tripId]);
 		$status = $statement->fetchColumn();
 		if ($status === false || $status === 'committed') throw new InvalidArgumentException('Capture trip is unavailable for receipt upload');
 	}

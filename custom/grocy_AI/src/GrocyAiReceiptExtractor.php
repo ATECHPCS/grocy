@@ -33,7 +33,7 @@ class GrocyAiReceiptExtractor
 	{
 		$receipt = $this->FindReceipt($tripId, $receiptId);
 		if ($receipt === null) throw new \InvalidArgumentException('Receipt not found');
-		if ($receipt['trip_status'] === 'committed') throw new \InvalidArgumentException('Committed trip is read only');
+		if ($receipt['trip_status'] === 'committed' || (int)$receipt['trip_canceled'] === 1) throw new \InvalidArgumentException('Closed trip is read only');
 		$view = $this->View($tripId, $receiptId);
 		if ($receipt['extraction_json'] !== null) return ['status' => $view['receipt']['status'], 'receipt' => $view];
 		if ($view['lines'] !== []) return ['status' => 'manual_entry', 'message' => 'Receipt already has manual entries', 'receipt' => $view];
@@ -55,7 +55,7 @@ class GrocyAiReceiptExtractor
 			if ($response['status'] !== 200) throw new RuntimeException('OCR unavailable');
 			$extraction = $this->ValidateResponse($response['body']);
 			$current = $this->FindReceipt($tripId, $receiptId);
-			if ($current === null || (int)$current['revision'] !== (int)$receipt['revision'] || $current['trip_status'] === 'committed') throw new RuntimeException('Receipt changed during OCR');
+			if ($current === null || (int)$current['revision'] !== (int)$receipt['revision'] || $current['trip_status'] === 'committed' || (int)$current['trip_canceled'] === 1) throw new RuntimeException('Receipt changed during OCR');
 			$view = $this->Receipts->ImportExtraction($receiptId, $extraction, null, (int)$receipt['revision']);
 			return ['status' => 'needs_review', 'receipt' => $view];
 		}
@@ -73,7 +73,7 @@ class GrocyAiReceiptExtractor
 
 	private function FindReceipt(int $tripId, int $receiptId): ?array
 	{
-		$statement = $this->Db->prepare('SELECT r.*, t.status AS trip_status FROM grocy_ai_receipts r JOIN grocy_ai_capture_trips t ON t.id = r.trip_id WHERE r.trip_id = ? AND r.id = ?');
+		$statement = $this->Db->prepare('SELECT r.*, t.status AS trip_status, EXISTS (SELECT 1 FROM grocy_ai_capture_trip_cancellations c WHERE c.trip_id = t.id) AS trip_canceled FROM grocy_ai_receipts r JOIN grocy_ai_capture_trips t ON t.id = r.trip_id WHERE r.trip_id = ? AND r.id = ?');
 		$statement->execute([$tripId, $receiptId]);
 		return $statement->fetch(PDO::FETCH_ASSOC) ?: null;
 	}

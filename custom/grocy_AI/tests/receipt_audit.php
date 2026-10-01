@@ -20,6 +20,8 @@ $pdo = new PDO('sqlite::memory:');
 $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 $pdo->exec('CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT)');
 $pdo->exec('CREATE TABLE stock (id INTEGER PRIMARY KEY)');
+$pdo->exec('CREATE TABLE shopping_locations (id INTEGER PRIMARY KEY, name TEXT)');
+$pdo->exec("INSERT INTO shopping_locations VALUES (1, 'ALDI'), (2, 'Store A'), (3, 'Store A '), (4, 'Store B')");
 $pdo->exec("INSERT INTO products VALUES (101, 'Milk'), (102, 'Bread')");
 GrocyAiCaptureMigration::Bootstrap($pdo);
 GrocyAiReceiptMigration::Bootstrap($pdo);
@@ -32,6 +34,7 @@ $first = $service->ImportExtraction(21, ['merchant' => 'Store A', 'lines' => [
 	['description' => 'Tax', 'line_total' => 0.5, 'kind' => 'tax']
 ]], 'test');
 checkReceipt($first['receipt']['merchant'] === 'Store A', 'OCR merchant retained');
+checkReceipt($first['receipt']['shopping_location_id'] === null, 'ambiguous merchant does not assign store');
 $initialRevision = (int)$first['receipt']['revision'];
 $retry = $service->ImportExtraction(21, ['merchant' => 'Store A', 'lines' => [
 	['description' => 'Milk', 'quantity' => 2, 'line_total' => 6.0, 'kind' => 'item'],
@@ -63,6 +66,8 @@ $second = $service->ImportExtraction(22, ['merchant' => 'Store B', 'lines' => [
 	['description' => 'Bread', 'quantity' => 1, 'line_total' => 2, 'kind' => 'item'],
 	['description' => 'Other household item', 'quantity' => 1, 'line_total' => 0, 'kind' => 'item']
 ]], 'test');
+$storeB = $second['receipt']['shopping_location_id'];
+checkReceipt((int)$storeB === 4, 'unique OCR merchant assigns existing store');
 $bread = (int)$second['lines'][0]['id']; $other = (int)$second['lines'][1]['id'];
 $service->UpdateLine(22, $bread, ['decision' => 'include'], 'test');
 $service->UpdateLine(22, $other, ['decision' => 'ignore'], 'test');
