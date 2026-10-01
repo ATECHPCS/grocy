@@ -506,3 +506,9 @@ Correct printed/line totals or explicitly accept the displayed difference, then 
 Receipt drafts are retained per section while moving between trips or saving another section in the current page. Finish, difference acceptance, OCR and removal actions require all edited sections to be saved first. When a photo batch partly fails, successful receipts remain visible and **Retry failed photos** resends only failed files with their original upload request IDs.
 
 Use **Discard receipt edits**, **Discard line edits**, or **Discard allocation edits** to reset only that section to its saved values. Other drafts remain intact. Saving Ignore (or Needs review) clears drafts for the allocation editors that it hides.
+
+### Receipt release and recovery
+
+Follow [`docs/PURCHASE-RECEIPT-ACCEPTANCE.md`](../../docs/PURCHASE-RECEIPT-ACCEPTANCE.md) before releasing receipt review. The companion supplies authenticated OCR suggestions through `POST /v1/receipts/extract`; Grocy stores receipt state and images and enforces readiness. Release the companion first, then the stable Grocy image. If OCR is unavailable, retain the uploaded receipt and enter or correct lines manually. A receipt still needs explicit line decisions, allocations, and a reconciled or accepted total before Finish; server readiness still gates Commit purchase.
+
+Receipt images live under `GROCY_DATAPATH/grocy_ai/receipts/<trip-id>/` with opaque file names. Their metadata, allocations, and append-only audit live in the same data path's SQLite database. Back up and restore the full persistent Grocy data path as one unit. The local no-stock-write rehearsal is `php8.5 custom/grocy_AI/tests/receipt_rehearsal.php`.
