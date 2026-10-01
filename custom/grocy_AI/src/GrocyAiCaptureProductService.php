@@ -26,9 +26,9 @@ class GrocyAiCaptureProductService
 		foreach (['product_group_id', 'parent_product_id'] as $key) if (array_key_exists($key, $fields) && $fields[$key] !== null && (!is_int($fields[$key]) || $fields[$key] < 1)) throw new \InvalidArgumentException('Invalid product reference');
 		$leaf = $fields['taxonomy_leaf_slug'] ?? null;
 		if ($leaf !== null && (!is_string($leaf) || preg_match('/^[a-z][a-z0-9-]{0,99}$/D', $leaf) !== 1)) throw new \InvalidArgumentException('Invalid taxonomy leaf');
-		if ($leaf !== null) GrocyAiTaxonomyMigration::Bootstrap($this->Db);
 		return $this->Finalize($tripId, $lineId, $revision, $actor, 'approved', function (array $line) use ($fields, $name, $leaf): int
 		{
+			if ($leaf !== null) GrocyAiTaxonomyMigration::Bootstrap($this->Db);
 			$this->RequireActive('locations', $fields['location_id']);
 			$this->RequireActive('quantity_units', $fields['qu_id_purchase']);
 			$this->RequireActive('quantity_units', $fields['qu_id_stock']);
@@ -38,6 +38,9 @@ class GrocyAiCaptureProductService
 				$parent = $this->Db->prepare('SELECT 1 FROM products WHERE id = ? AND active = 1 AND parent_product_id IS NULL');
 				$parent->execute([$fields['parent_product_id']]);
 				if ($parent->fetchColumn() === false) throw new \InvalidArgumentException('Invalid parent product');
+				$parentUnit = $this->Db->prepare('SELECT qu_id_stock FROM products WHERE id = ?');
+				$parentUnit->execute([$fields['parent_product_id']]);
+				if (!$this->UnitsCompatible($fields['parent_product_id'], (int)$parentUnit->fetchColumn(), $fields['qu_id_stock'])) throw new \InvalidArgumentException('Incompatible parent unit');
 			}
 			$nameQuery = $this->Db->prepare('SELECT id FROM products WHERE name = ? COLLATE NOCASE LIMIT 1');
 			$nameQuery->execute([$name]);
@@ -48,12 +51,15 @@ class GrocyAiCaptureProductService
 				'location_id' => $fields['location_id'],
 				'qu_id_purchase' => $fields['qu_id_purchase'],
 				'qu_id_stock' => $fields['qu_id_stock'],
-				'qu_factor_purchase_to_stock' => $factor,
 				'product_group_id' => $fields['product_group_id'] ?? null,
 				'parent_product_id' => $fields['parent_product_id'] ?? null
 			]);
 			$row->save();
 			$productId = (int)$row->id;
+			if ($fields['qu_id_purchase'] !== $fields['qu_id_stock'])
+			{
+				(new Database($this->Db))->quantity_unit_conversions()->createRow(['product_id' => $productId, 'from_qu_id' => $fields['qu_id_purchase'], 'to_qu_id' => $fields['qu_id_stock'], 'factor' => $factor])->save();
+			}
 			$this->AttachBarcode($productId, (string)$line['scanned_barcode']);
 			if ($leaf !== null)
 			{
@@ -87,6 +93,14 @@ class GrocyAiCaptureProductService
 			if (in_array($draft['outcome'], ['approved', 'linked'], true))
 			{
 				if ($draft['outcome'] !== $outcome || ($outcome === 'linked' && (int)$draft['final_product_id'] !== $confirmed['product_id'])) throw new \RuntimeException('Draft already finalized differently');
+				$audit = $this->Db->prepare('SELECT after_json FROM grocy_ai_capture_research_audit WHERE draft_id = ? AND action = ? ORDER BY id DESC LIMIT 1');
+				$audit->execute([$draft['id'], $outcome]);
+				$after = json_decode((string)$audit->fetchColumn(), true);
+				$original = is_array($after) ? ($after['confirmed'] ?? null) : null;
+				if (!is_array($original)) throw new \RuntimeException('Approval audit unavailable');
+				ksort($original);
+				ksort($confirmed);
+				if ($original !== $confirmed) throw new \RuntimeException('Confirmation changed');
 				$result = ['product_id' => (int)$draft['final_product_id'], 'outcome' => $outcome, 'revision' => (int)$draft['revision']];
 				$this->Db->commit();
 				return $result;
@@ -122,11 +136,19 @@ class GrocyAiCaptureProductService
 	private function UnitFactor(int $purchase, int $stock): float
 	{
 		if ($purchase === $stock) return 1.0;
-		$query = $this->Db->prepare('SELECT factor FROM quantity_unit_conversions_resolved WHERE from_qu_id = ? AND to_qu_id = ? AND product_id IS NULL AND factor > 0 LIMIT 1');
+		$query = $this->Db->prepare('SELECT factor FROM quantity_unit_conversions WHERE from_qu_id = ? AND to_qu_id = ? AND product_id IS NULL AND factor > 0 LIMIT 1');
 		$query->execute([$purchase, $stock]);
 		$factor = $query->fetchColumn();
 		if ($factor === false) throw new \InvalidArgumentException('Units need a conversion');
 		return (float)$factor;
+	}
+
+	private function UnitsCompatible(int $parentId, int $parentStock, int $childStock): bool
+	{
+		if ($parentStock === $childStock) return true;
+		$query = $this->Db->prepare('SELECT 1 FROM quantity_unit_conversions_resolved WHERE product_id = ? AND from_qu_id = ? AND to_qu_id = ? AND factor > 0 LIMIT 1');
+		$query->execute([$parentId, $parentStock, $childStock]);
+		return $query->fetchColumn() !== false;
 	}
 
 	private function BarcodeOwner(string $canonical): ?int
@@ -140,10 +162,19 @@ class GrocyAiCaptureProductService
 
 	private function AttachBarcode(int $productId, string $barcode): void
 	{
-		$owner = $this->BarcodeOwner((string)GrocyAiGtin::CanonicalOrNull($barcode));
-		if ($owner !== null)
+		$canonical = GrocyAiGtin::CanonicalOrNull($barcode);
+		if ($canonical === null) throw new \InvalidArgumentException('Invalid scanned barcode');
+		$query = $this->Db->prepare('SELECT id, product_id, barcode FROM product_barcodes WHERE ' . GrocyAiGtin::CanonicalSqlExpression('barcode') . ' = ? LIMIT 2');
+		$query->execute([$canonical]);
+		$owners = $query->fetchAll(PDO::FETCH_ASSOC);
+		if (count($owners) > 1 || ($owners !== [] && (int)$owners[0]['product_id'] !== $productId)) throw new \RuntimeException('Barcode already owned');
+		if ($owners !== [])
 		{
-			if ($owner !== $productId) throw new \RuntimeException('Barcode already owned');
+			if ($owners[0]['barcode'] !== $barcode)
+			{
+				// Canonical uniqueness permits one stored spelling; prefer the capture's original scan.
+				$this->Db->prepare('UPDATE product_barcodes SET barcode = ? WHERE id = ?')->execute([$barcode, $owners[0]['id']]);
+			}
 			return;
 		}
 		(new Database($this->Db))->product_barcodes()->createRow(['product_id' => $productId, 'barcode' => $barcode])->save();
