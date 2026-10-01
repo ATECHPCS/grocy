@@ -118,6 +118,12 @@ class GrocyAiCaptureResearchController extends BaseApiController
 		catch (\InvalidArgumentException) { return $this->GenericErrorResponse($response, 'Unknown trip', 404); }
 	}
 
+	public function Options(Request $request, Response $response, array $args): Response
+	{
+		User::CheckPermission($request, User::PERMISSION_STOCK_PURCHASE);
+		return $this->ApiResponse($response, $this->Service()->ReviewOptions());
+	}
+
 	public function Update(Request $request, Response $response, array $args): Response
 	{
 		return $this->ReviewMutation($request, $response, $args, 'update');

@@ -14,7 +14,7 @@ function rejectDraft(callable $operation): void { try { $operation(); } catch (I
 $db = new PDO('sqlite::memory:');
 $db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 $db->exec('PRAGMA foreign_keys = ON');
-$db->exec('CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1)');
+$db->exec('CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, parent_product_id INTEGER NULL, qu_id_stock INTEGER NOT NULL DEFAULT 1)');
 $db->exec('CREATE TABLE product_groups (id INTEGER PRIMARY KEY, name TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1)');
 $db->exec('CREATE TABLE product_barcodes (id INTEGER PRIMARY KEY, product_id INTEGER NOT NULL, barcode TEXT NOT NULL)');
 $db->exec('CREATE TABLE stock_log (id INTEGER PRIMARY KEY)');
@@ -23,7 +23,13 @@ $db->exec("INSERT INTO grocy_ai_capture_trips (id, status, module_version) VALUE
 $db->exec("INSERT INTO grocy_ai_capture_lines (id, trip_id, seq, scanned_barcode, canonical_gtin, status) VALUES (1, 1, 1, '4006381333931', '04006381333931', 'unknown'), (2, 2, 1, '96385074', '00000096385074', 'unknown'), (3, 3, 1, '012345678905', '00012345678905', 'unknown')");
 $db->exec("INSERT INTO product_groups (id, name, active) VALUES (1, 'Seafood', 1), (2, 'Produce', 1), (3, 'Other', 0)");
 $db->exec("INSERT INTO products (id, name) VALUES (1, 'Existing fish')");
+$db->exec("INSERT INTO products (id, name, parent_product_id) VALUES (90, 'Child product', 1)");
+$db->exec("INSERT INTO products (id, name, active) VALUES (91, 'Inactive parent', 0)");
+$initialProductCount = (int)$db->query('SELECT COUNT(*) FROM products')->fetchColumn();
 $service = new GrocyAiCaptureResearchService($db);
+$options = $service->ReviewOptions();
+checkDraft($options['contract_version'] === 1 && $options['taxonomy_version'] === 'v1' && array_column($options['product_groups'], 'id') === [2, 1] && array_column($options['generic_parents'], 'id') === [1], 'review options expose active local groups and top-level products');
+checkDraft(in_array('produce', array_column($options['taxonomy_leaves'], 'slug'), true), 'review options expose current taxonomy leaves');
 $service->EnqueueUnknown(1, 1, '4006381333931');
 $service->EnqueueUnknown(2, 2, '96385074');
 $service->EnqueueUnknown(3, 3, '012345678905');
@@ -97,5 +103,5 @@ checkDraft((int)$allocated['lines'][0]['allocations'][0]['capture_line_id'] === 
 $db->exec("INSERT INTO grocy_ai_capture_trip_cancellations (trip_id, actor) VALUES (1, 'tester')");
 rejectDraft(fn() => $service->UpdateDraft(1, 1, $edited['revision'], ['name' => 'No'], 'tester'));
 rejectDraft(fn() => $service->RetryJob(1, 1, 'tester'));
-checkDraft((int)$db->query('SELECT COUNT(*) FROM products')->fetchColumn() === 2 && (int)$db->query('SELECT COUNT(*) FROM stock_log')->fetchColumn() === 0, 'review never writes product or stock');
+checkDraft((int)$db->query('SELECT COUNT(*) FROM products')->fetchColumn() === $initialProductCount + 1 && (int)$db->query('SELECT COUNT(*) FROM stock_log')->fetchColumn() === 0, 'review never writes product or stock');
 echo "capture research drafts: PASS\n";

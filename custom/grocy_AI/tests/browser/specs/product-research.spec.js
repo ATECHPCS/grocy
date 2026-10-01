@@ -4,17 +4,18 @@ const trip = { id: 7, created_at: '', created_by: 1, status: 'reviewing', defaul
 const line = { id: 31, trip_id: 7, seq: 1, scanned_barcode: '012345678905', canonical_gtin: '00012345678905', resolved_product_id: null, status: 'unknown', quantity: 1, price: null, best_before_override: null, selected: true, applied_at: null, outcome: null, created_at: '', updated_at: '' };
 function draft(state = 'ready')
 {
-	return { id: 5, line_id: 31, seq: 1, revision: 2, outcome: state === 'ready' ? 'provisional' : 'needs_input', job_state: state, safe_error_code: state === 'retryable_failure' ? 'provider_unavailable' : null, scanned_barcode: line.scanned_barcode, canonical_gtin: line.canonical_gtin, selected: { name: 'Oat Milk', brand: 'Acme', package: '1 L' }, suggested: { sources: ['openfoodfacts'], categories: ['en:beverages'] }, name_alternatives: [{ value: 'Oat Milk', sources: ['bb-federation'], provenance: 'attributed' }, { value: 'Oat Drink', sources: ['openfoodfacts'], provenance: 'attributed' }], receipt_evidence: { receipt_line_id: 19, description: 'OAT MILK 1L' }, group_candidates: [{ id: 3, name: 'Beverages', source: 'openfoodfacts', provider_category: 'en:beverages' }], taxonomy_candidates: [{ slug: 'plant-milk', label: 'Plant milk', source: 'openfoodfacts', provider_category: 'en:beverages', ruleset_version: 1 }], possible_existing_products: [{ id: 82, name: 'Oat Milk', reason: 'exact_name' }], final_product_id: null };
+	return { id: 5, line_id: 31, seq: 1, revision: 2, outcome: state === 'ready' ? 'provisional' : 'needs_input', line_status: 'unknown', resolved_product_id: null, resolved_product_name: null, job_state: state, safe_error_code: state === 'retryable_failure' ? 'provider_unavailable' : null, scanned_barcode: line.scanned_barcode, canonical_gtin: line.canonical_gtin, selected: { name: 'Oat Milk', brand: 'Acme', package: '1 L' }, suggested: { sources: ['openfoodfacts'], categories: ['en:beverages'] }, name_alternatives: [{ value: 'Oat Milk', sources: ['bb-federation'], provenance: 'attributed' }, { value: 'Oat Drink', sources: ['openfoodfacts'], provenance: 'attributed' }], receipt_evidence: { receipt_line_id: 19, description: 'OAT MILK 1L' }, group_candidates: [{ id: 3, name: 'Beverages', source: 'openfoodfacts', provider_category: 'en:beverages' }], taxonomy_candidates: [{ slug: 'plant-milk', label: 'Plant milk', source: 'openfoodfacts', provider_category: 'en:beverages', ruleset_version: 1 }], possible_existing_products: [{ id: 82, name: 'Oat Milk', reason: 'exact_name' }], final_product_id: null };
 }
 async function setup(page, state = 'ready')
 {
-	const data = { draft: draft(state), writes: [], receipts: [], lines: [line], drafts: null, approved: false, evidenceReject: false, referenceGets: [] };
+	const data = { draft: draft(state), writes: [], receipts: [], lines: [line], drafts: null, approved: false, evidenceReject: false, referenceGets: [], catalogGets: 0, catalog: { contract_version: 1, taxonomy_version: 'v1', product_groups: [{ id: 3, name: 'Beverages' }, { id: 4, name: 'Pantry' }], taxonomy_leaves: [{ slug: 'plant-milk', label: 'Plant milk' }, { slug: 'produce', label: 'Produce' }], generic_parents: [{ id: 95, name: 'Generic Produce', qu_id_stock: 2 }] } };
 	await page.route('**/api/objects/**', route => { const path = new URL(route.request().url()).pathname; data.referenceGets.push(path); return route.fulfill({ json: path.endsWith('/locations') ? [{ id: 1, name: 'Pantry', active: 1 }] : path.endsWith('/products') ? [{ id: 82, name: 'Oat Milk', active: 1 }, { id: 91, name: 'Completely Different Pantry Item', active: 1 }] : [{ id: 2, name: 'Each', active: 1 }] }); });
 	await page.route('**/api/grocy-ai/capture/**', route =>
 	{
 		const path = new URL(route.request().url()).pathname;
 		const method = route.request().method();
 		if (method !== 'GET') data.writes.push({ path, body: route.request().postDataJSON() });
+		if (path.endsWith('/research/options')) { data.catalogGets++; return route.fulfill({ json: data.catalog }); }
 		if (path.endsWith('/trips')) return route.fulfill({ json: { trips: [trip] } });
 		if (path.endsWith('/trips/7')) return route.fulfill({ json: { trip, lines: data.approved ? data.lines.map(v => v.id === 31 ? { ...v, status: 'known', resolved_product_id: 82 } : v) : data.lines, checksum: 'a'.repeat(64) } });
 		if (path.endsWith('/receipt-readiness')) return route.fulfill({ json: { ready: false, reasons: [data.approved ? 'no_receipts' : 'unknown_product'], receipts: data.receipts } });
@@ -23,7 +24,7 @@ async function setup(page, state = 'ready')
 		if (path.endsWith('/receipt-evidence') && data.evidenceReject) return route.fulfill({ status: 400, json: { error_message: 'Invalid evidence' } });
 		if (path.endsWith('/receipt-evidence')) { data.draft.receipt_evidence = { receipt_line_id: 19, description: 'OAT MILK 1L' }; data.draft.revision++; return route.fulfill({ json: data.draft }); }
 		if (path.endsWith('/retry')) { data.draft.job_state = 'queued'; return route.fulfill({ json: data.draft }); }
-		if (path.endsWith('/approve') || path.endsWith('/link')) { data.approved = true; return route.fulfill({ json: { product_id: 82, outcome: 'linked', revision: 3 } }); }
+		if (path.endsWith('/approve') || path.endsWith('/link')) { data.approved = true; data.draft.outcome = path.endsWith('/approve') ? 'approved' : 'linked'; return route.fulfill({ json: { product_id: 82, outcome: data.draft.outcome, revision: 3 } }); }
 		return route.fulfill({ status: 404, json: {} });
 	});
 	await page.goto('/fixtures/capture-review.html');
@@ -171,6 +172,7 @@ test('product research cards stay beside their scan rows for fifteen unknowns', 
 	await expect(page.locator('.grocy-ai-product-research')).toHaveCount(15);
 	for (let seq = 1; seq <= 15; seq++) await expect(page.locator('.grocy-ai-capture-review-line[data-line-seq="' + seq + '"] > .grocy-ai-product-research')).toHaveCount(1);
 	await expect.poll(() => data.referenceGets.filter(path => path.endsWith('/quantity_units')).length).toBeLessThanOrEqual(3);
+	expect(data.catalogGets).toBeLessThanOrEqual(2);
 });
 
 test('product research evidence choices identify receipt and line, exclude unusable lines, and restore rejection', async ({ page }) =>
@@ -224,4 +226,72 @@ test('product research save sends only fields the reviewer changed', async ({ pa
 	await page.getByRole('button', { name: 'Save research draft' }).click();
 	await expect.poll(() => data.writes.some(w => w.path.endsWith('/research') && w.body?.changes)).toBe(true);
 	expect(data.writes.find(w => w.path.endsWith('/research') && w.body?.changes).body.changes).toEqual({ name: 'Corrected Oat Milk' });
+});
+
+test('known scan with an unfinished draft can only link to its current owner', async ({ page }) =>
+{
+	const data = await setup(page);
+	data.lines = [{ ...line, status: 'known', resolved_product_id: 82 }];
+	Object.assign(data.draft, { line_status: 'known', resolved_product_id: 82, resolved_product_name: 'Oat Milk' });
+	await page.locator('#grocyai-capture-review-trips button').click();
+	await expect(page.getByText(/Current product: Oat Milk.*#82/)).toBeVisible();
+	await expect(page.getByRole('button', { name: 'Approve new product' })).toHaveCount(0);
+	await expect(page.getByRole('button', { name: 'Link existing product' })).toHaveCount(0);
+	let prompts = [];
+	page.on('dialog', dialog => { prompts.push(dialog.message()); return dialog.accept(); });
+	await page.getByRole('button', { name: 'Link to current product' }).click();
+	await expect.poll(() => data.writes.some(w => w.path.endsWith('/link'))).toBe(true);
+	expect(data.writes.find(w => w.path.endsWith('/link')).body).toEqual({ revision: 2, product_id: 82 });
+	expect(prompts).toHaveLength(2);
+	await expect(page.locator('.grocy-ai-product-research')).toHaveCount(0);
+	await expect(page.getByRole('button', { name: 'Commit purchase' })).toBeDisabled();
+});
+
+test('known-owner link keeps recovery visible after a permission failure', async ({ page }) =>
+{
+	const data = await setup(page);
+	data.lines = [{ ...line, status: 'known', resolved_product_id: 82 }];
+	Object.assign(data.draft, { line_status: 'known', resolved_product_id: 82, resolved_product_name: 'Oat Milk' });
+	await page.route('**/research/link', route => route.fulfill({ status: 403, json: { error_message: 'Forbidden' } }));
+	await page.locator('#grocyai-capture-review-trips button').click();
+	page.on('dialog', dialog => dialog.accept());
+	await page.getByRole('button', { name: 'Link to current product' }).click();
+	await expect(page.getByText('You need product edit permission.')).toBeVisible();
+	await expect(page.getByRole('button', { name: 'Link to current product' })).toBeVisible();
+	await expect(page.getByRole('button', { name: 'Commit purchase' })).toBeDisabled();
+});
+
+test('provider miss allows local group, taxonomy leaf, and compatible generic parent', async ({ page }) =>
+{
+	const data = await setup(page);
+	Object.assign(data.draft, { job_state: 'needs_input', group_candidates: [], taxonomy_candidates: [], suggested: { sources: [], categories: [] } });
+	await page.locator('#grocyai-capture-review-trips button').click();
+	await page.getByLabel('Product group').selectOption('4');
+	await page.getByLabel('Food classification').selectOption('produce');
+	await page.getByLabel('Generic parent').selectOption('95');
+	await page.getByLabel('Purchase unit').selectOption('2');
+	await page.getByLabel('Stock unit').selectOption('2');
+	const prompts = [];
+	page.on('dialog', dialog => { prompts.push(dialog.message()); return dialog.accept(); });
+	await page.getByRole('button', { name: 'Approve new product' }).click();
+	await expect.poll(() => data.writes.some(w => w.path.endsWith('/approve'))).toBe(true);
+	const fields = data.writes.find(w => w.path.endsWith('/approve')).body.fields;
+	expect(fields).toMatchObject({ product_group_id: 4, taxonomy_leaf_slug: 'produce', parent_product_id: 95, location_id: 1, qu_id_purchase: 2, qu_id_stock: 2 });
+	expect(prompts).toHaveLength(2);
+	expect(prompts[1]).toContain('Pantry');
+	expect(prompts[1]).toContain('Produce');
+	expect(prompts[1]).toContain('Generic Produce');
+	expect(prompts[1]).toContain('Each');
+});
+
+test('saved local classification stays selected across reload despite another provider suggestion', async ({ page }) =>
+{
+	const data = await setup(page);
+	await page.getByLabel('Product group').selectOption('4');
+	await page.getByLabel('Food classification').selectOption('produce');
+	await page.getByRole('button', { name: 'Save research draft' }).click();
+	await expect.poll(() => data.writes.some(w => w.body?.changes?.taxonomy_leaf_slug === 'produce')).toBe(true);
+	await page.locator('#grocyai-capture-review-trips button').click();
+	await expect(page.getByLabel('Product group')).toHaveValue('4');
+	await expect(page.getByLabel('Food classification')).toHaveValue('produce');
 });

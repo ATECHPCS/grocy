@@ -54,30 +54,33 @@
 		var productList = null;
 		var productListPromise = null;
 		var referenceRequests = {};
+		var catalogPromise = request('/api/grocy-ai/capture/research/options', 'GET');
 		var canEditProducts = !window.Grocy || !Array.isArray(window.Grocy.UserPermissions) || window.Grocy.UserPermissions.some(function (permission) { return permission.permission_name === 'MASTER_DATA_EDIT' && Number(permission.has_permission) === 1; });
 		function load()
 		{
-			return request(base + '/research', 'GET').then(function (payload)
+			return Promise.all([request(base + '/research', 'GET'), catalogPromise]).then(function (results)
 			{
+				var payload = results[0], catalog = results[1];
 				if (!active) return;
 				if (!payload || payload.contract_version !== 1 || Number(payload.trip_id) !== Number(options.tripId) || !Array.isArray(payload.drafts)) throw new Error('Research review is unavailable.');
+				if (!catalog || catalog.contract_version !== 1 || !Array.isArray(catalog.product_groups) || !Array.isArray(catalog.taxonomy_leaves) || !Array.isArray(catalog.generic_parents)) throw new Error('Product choices are unavailable. Reload and try again.');
 				Array.prototype.forEach.call(host.querySelectorAll('.grocy-ai-product-research'), function (card) { card.remove(); });
 				if (options.errorHost) options.errorHost.textContent = '';
 				payload.drafts.forEach(function (draft)
 				{
-					var line = options.lines.find(function (candidate) { return candidate.id === draft.line_id && candidate.selected && candidate.status === 'unknown'; });
-					if (line) render(draft, line);
+					var line = options.lines.find(function (candidate) { return candidate.id === draft.line_id && candidate.selected && (candidate.status === 'unknown' || candidate.status === 'known' && draft.line_status === 'known' && Number(draft.resolved_product_id) > 0 && Number(candidate.resolved_product_id) === Number(draft.resolved_product_id)); });
+					if (line && draft.outcome !== 'approved' && draft.outcome !== 'linked') render(draft, line, catalog);
 				});
-			}).catch(function (error) { if (active && options.errorHost) options.errorHost.textContent = error.message; });
+			}).catch(function (error) { if (active && options.errorHost) options.errorHost.textContent = error.message === 'You need product edit permission.' ? 'You need purchase permission to review product research.' : error.message; });
 		}
-		function render(draft, line)
+		function render(draft, line, catalog)
 		{
 			var card = node('section', 'grocy-ai-product-research');
 			card.setAttribute('data-line-seq', String(line.seq));
 			card.appendChild(node('h4', null, 'Scan #' + line.seq + ' · Product research · ' + draft.scanned_barcode));
 			var status = draft.job_state === 'ready' ? 'Ready to review' : draft.job_state === 'queued' || draft.job_state === 'leased' ? 'Researching' : draft.job_state === 'retryable_failure' ? 'Provider unavailable' : 'Needs details';
 			card.appendChild(node('p', 'grocy-ai-product-research-status', status));
-			card.appendChild(node('p', 'text-muted', 'Provisional research only. No product or stock has been saved.'));
+			card.appendChild(node('p', 'text-muted', line.status === 'known' ? 'The scan now resolves to a product. This research draft still needs an explicit link.' : 'Provisional research only. No product or stock has been saved.'));
 			if (draft.safe_error_code) card.appendChild(node('p', 'text-muted', 'Research service could not finish. You can retry or enter details.'));
 			var path = base + '/lines/' + encodeURIComponent(String(line.seq));
 			var message = node('p', 'grocy-ai-product-research-message');
@@ -86,6 +89,33 @@
 			{
 				message.textContent = 'Saving…';
 				return request(url, method, body).then(function () { message.textContent = 'Saved.'; return reloadTrip ? options.reload() : load(); }).catch(function (error) { if (onFailure) onFailure(); message.textContent = error.message; });
+			}
+			function finishCard()
+			{
+				card.appendChild(message);
+				if (!canEditProducts)
+				{
+					card.appendChild(node('p', 'text-muted', 'Product edit permission is required to approve or link.'));
+					Array.prototype.forEach.call(card.querySelectorAll('.permission-MASTER_DATA_EDIT'), function (control) { control.disabled = true; });
+				}
+				if (options.readOnly) Array.prototype.forEach.call(card.querySelectorAll('input, select, button'), function (control) { control.disabled = true; });
+				var row = host.querySelector('.grocy-ai-capture-review-line[data-line-seq="' + String(line.seq) + '"]');
+				if (row) row.appendChild(card);
+			}
+			if (line.status === 'known')
+			{
+				card.appendChild(node('p', null, 'Current product: ' + (draft.resolved_product_name || 'Product') + ' (#' + draft.resolved_product_id + ')'));
+				var knownControls = node('div', 'grocy-ai-product-research-actions');
+				card.appendChild(knownControls);
+				button(knownControls, 'Link to current product', function ()
+				{
+					var summary = (draft.resolved_product_name || 'Product') + ' (#' + draft.resolved_product_id + ') · barcode ' + draft.scanned_barcode;
+					if (!window.confirm('Review link: ' + summary + '. Continue?')) return;
+					if (!window.confirm('Final confirmation: ' + summary + '. This links the research draft to the current product. Confirm?')) return;
+					mutate(path + '/research/link', 'POST', { revision: draft.revision, product_id: Number(draft.resolved_product_id) }, true);
+				}, true);
+				finishCard();
+				return;
 			}
 			if (draft.name_alternatives.length)
 			{
@@ -106,9 +136,18 @@
 			if (draft.suggested && draft.suggested.package) card.appendChild(node('p', 'grocy-ai-product-research-package-source', draft.suggested.package + ' — Open Food Facts'));
 			var brand = field(card, 'Brand research note', draft.selected.brand == null ? draft.suggested.brand : draft.selected.brand);
 			var packageField = field(card, 'Package research note', draft.selected.package == null ? draft.suggested.package : draft.selected.package);
-			var groups = [{ value: '', label: 'No product group' }].concat(draft.group_candidates.map(function (group) { return { value: group.id, label: group.name + ' · exact Open Food Facts category' }; }));
+			var groups = [{ value: '', label: 'No product group' }].concat(catalog.product_groups.map(function (groupOption)
+			{
+				var suggested = draft.group_candidates.some(function (candidate) { return Number(candidate.id) === Number(groupOption.id); });
+				return { value: groupOption.id, label: groupOption.name + (suggested ? ' · Open Food Facts suggestion' : '') };
+			}));
 			var group = select(card, 'Product group', groups, draft.selected.product_group_id);
-			var taxonomy = select(card, 'Food classification', [{ value: '', label: 'Unclassified' }].concat(draft.taxonomy_candidates.map(function (leaf) { return { value: leaf.slug, label: leaf.label + ' · Open Food Facts mapping v' + leaf.ruleset_version }; })), draft.selected.taxonomy_leaf_slug);
+			var taxonomy = select(card, 'Food classification', [{ value: '', label: 'Unclassified' }].concat(catalog.taxonomy_leaves.map(function (leafOption)
+			{
+				var suggested = draft.taxonomy_candidates.some(function (candidate) { return candidate.slug === leafOption.slug; });
+				return { value: leafOption.slug, label: leafOption.label + (suggested ? ' · Open Food Facts suggestion' : '') };
+			})), draft.selected.taxonomy_leaf_slug);
+			var parent = select(card, 'Generic parent', [{ value: '', label: 'No generic parent' }].concat(catalog.generic_parents.map(function (product) { return { value: product.id, label: product.name + ' (#' + product.id + ')' }; })), '');
 			var savedEvidenceId = draft.receipt_evidence ? String(draft.receipt_evidence.receipt_line_id) : '';
 			var evidenceChoices = (options.receipts || []).flatMap(function (receipt)
 			{
@@ -164,7 +203,8 @@
 				if (!fields.name || !fields.location_id || !fields.qu_id_purchase || !fields.qu_id_stock) { message.textContent = 'Enter a name, location, purchase unit, and stock unit first.'; return; }
 				if (group.value) fields.product_group_id = Number(group.value);
 				if (taxonomy.value) fields.taxonomy_leaf_slug = taxonomy.value;
-				confirmWrite('approve', fields.name + ' · barcode ' + draft.scanned_barcode + ' · group ' + (group.selectedOptions[0] || {}).textContent + ' · classification ' + (taxonomy.selectedOptions[0] || {}).textContent, { revision: draft.revision, fields: fields });
+				if (parent.value) fields.parent_product_id = Number(parent.value);
+				confirmWrite('approve', fields.name + ' · barcode ' + draft.scanned_barcode + ' · location ' + (location.selectedOptions[0] || {}).textContent + ' · purchase unit ' + (purchaseUnit.selectedOptions[0] || {}).textContent + ' · stock unit ' + (stockUnit.selectedOptions[0] || {}).textContent + ' · group ' + (group.selectedOptions[0] || {}).textContent + ' · classification ' + (taxonomy.selectedOptions[0] || {}).textContent + ' · parent ' + (parent.selectedOptions[0] || {}).textContent, { revision: draft.revision, fields: fields });
 			}, true);
 			var search = field(card, 'Search existing products', '');
 			var products = select(card, 'Existing product', [{ value: '', label: 'Choose an existing product' }].concat(draft.possible_existing_products.map(function (product) { return { value: product.id, label: product.name + ' (#' + product.id + '; exact name suggestion)' }; })), '');
@@ -190,15 +230,7 @@
 				if (!products.value) { message.textContent = 'Choose an existing product first.'; return; }
 				confirmWrite('link', products.selectedOptions[0].textContent + ' · barcode ' + draft.scanned_barcode, { revision: draft.revision, product_id: Number(products.value) });
 			}, true);
-			card.appendChild(message);
-			if (!canEditProducts)
-			{
-				card.appendChild(node('p', 'text-muted', 'Product edit permission is required to approve or link.'));
-				Array.prototype.forEach.call(card.querySelectorAll('.permission-MASTER_DATA_EDIT'), function (control) { control.disabled = true; });
-			}
-			if (options.readOnly) Array.prototype.forEach.call(card.querySelectorAll('input, select, button'), function (control) { control.disabled = true; });
-			var row = host.querySelector('.grocy-ai-capture-review-line[data-line-seq=\"' + String(line.seq) + '\"]');
-			if (row) row.appendChild(card);
+			finishCard();
 		}
 		load();
 		return { dispose: function () { active = false; } };

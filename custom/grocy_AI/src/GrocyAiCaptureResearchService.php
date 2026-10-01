@@ -88,6 +88,23 @@ class GrocyAiCaptureResearchService
 		return ['contract_version' => 1, 'trip_id' => $tripId, 'drafts' => $drafts];
 	}
 
+	/** @return array<string, mixed> */
+	public function ReviewOptions(): array
+	{
+		GrocyAiTaxonomyMigration::Bootstrap($this->Db);
+		$groups = $this->Db->query('SELECT id, name FROM product_groups WHERE active = 1 ORDER BY name, id')->fetchAll(PDO::FETCH_ASSOC);
+		$leaves = $this->Db->prepare('SELECT slug, label FROM grocy_ai_taxonomy_nodes WHERE version = ? AND depth = 2 ORDER BY label, slug');
+		$leaves->execute([GrocyAiTaxonomyMigration::VERSION]);
+		$parents = $this->Db->query('SELECT id, name, qu_id_stock FROM products WHERE active = 1 AND parent_product_id IS NULL ORDER BY name, id')->fetchAll(PDO::FETCH_ASSOC);
+		return [
+			'contract_version' => 1,
+			'taxonomy_version' => GrocyAiTaxonomyMigration::VERSION,
+			'product_groups' => array_map(static fn(array $row): array => ['id' => (int)$row['id'], 'name' => $row['name']], $groups),
+			'taxonomy_leaves' => $leaves->fetchAll(PDO::FETCH_ASSOC),
+			'generic_parents' => array_map(static fn(array $row): array => ['id' => (int)$row['id'], 'name' => $row['name'], 'qu_id_stock' => (int)$row['qu_id_stock']], $parents)
+		];
+	}
+
 	/** @param array<string, mixed> $changes */
 	public function UpdateDraft(int $tripId, int $lineId, int $revision, array $changes, string $actor): array
 	{
