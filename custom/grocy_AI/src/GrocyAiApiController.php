@@ -1206,6 +1206,11 @@ class GrocyAiApiController extends BaseApiController
 		});
 	}
 
+	public function CaptureReceiptReadiness(Request $request, Response $response, array $args): Response
+	{
+		return $this->ReceiptEndpoint($request, $response, $args, fn(GrocyAiReceiptService $service, array $ids): Response => $this->ApiResponse($response, $service->Readiness($ids['tripId'])));
+	}
+
 	public function ListCaptureReceipts(Request $request, Response $response, array $args): Response
 	{
 		return $this->ReceiptEndpoint($request, $response, $args, fn(GrocyAiReceiptService $service, array $ids): Response => $this->ApiResponse($response, ['receipts' => $service->ListForTrip($ids['tripId'])]));

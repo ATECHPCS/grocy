@@ -496,3 +496,9 @@ Perform this smoke only after the portable and adapter commits exist in `/Users/
 ## Next phase
 
 Attach the reviewed transient barcode through Grocy's normal Save boundary and enforce canonical uniqueness only after the migration and rollback gates pass.
+
+### Receipt review on a phone
+
+Open Purchase capture review, attach receipt photos (JPEG, PNG or WebP), and choose Read receipt or enter lines manually. Save each section before moving on. Each line needs an Include or Ignore decision; included lines require explicit product/scanned-item allocations with confirmed quantity and unit price. Add multiple allocations to split a line. Remove allocations before ignoring an included line. Ignored purchases and adjustments remain in receipt totals without entering stock.
+
+Correct printed/line totals or explicitly accept the displayed difference, then Finish receipt. Any edit reopens review and clears difference acceptance. The purchase button stays disabled until server readiness passes; only Commit purchase writes stock. Receipt store applies to inherited allocations. Product creation opens the existing product form in a new tab; return to receipt review and request suggestions after saving the product.

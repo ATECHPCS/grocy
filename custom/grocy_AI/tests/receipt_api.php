@@ -22,7 +22,7 @@ function receiptApiCall(GrocyAiApiController $controller, string $method, array 
 	return $controller->$method($request, (new Slim\Psr7\Factory\ResponseFactory())->createResponse(), $args);
 }
 $routes = (string)file_get_contents(__DIR__ . '/../routes.php');
-foreach (['UploadCaptureReceipt', 'ListCaptureReceipts', 'CaptureReceipt', 'CaptureReceiptImage', 'ExtractCaptureReceipt', 'RetryCaptureReceipt', 'UpdateCaptureReceipt', 'AddCaptureReceiptLine', 'UpdateCaptureReceiptLine', 'UpdateCaptureReceiptAllocation', 'FinishCaptureReceipt', 'ReopenCaptureReceipt', 'SuggestCaptureReceiptMatches'] as $method)
+foreach (['CaptureReceiptReadiness', 'UploadCaptureReceipt', 'ListCaptureReceipts', 'CaptureReceipt', 'CaptureReceiptImage', 'ExtractCaptureReceipt', 'RetryCaptureReceipt', 'UpdateCaptureReceipt', 'AddCaptureReceiptLine', 'UpdateCaptureReceiptLine', 'UpdateCaptureReceiptAllocation', 'FinishCaptureReceipt', 'ReopenCaptureReceipt', 'SuggestCaptureReceiptMatches'] as $method)
 {
 	receiptApiCheck(method_exists(GrocyAiApiController::class, $method) && str_contains($routes, "'" . $method . "'"), $method . ' route/controller missing');
 }
@@ -40,6 +40,8 @@ foreach (['DbConnectionRaw' => $pdo, 'DbConnection' => new LessQL\Database($pdo)
 $controller = (new ReflectionClass(GrocyAiApiController::class))->newInstanceWithoutConstructor();
 $list = receiptApiCall($controller, 'ListCaptureReceipts', ['tripId' => '1']);
 receiptApiCheck($list->getStatusCode() === 200 && count(json_decode((string)$list->getBody(), true)['receipts']) === 1, 'trip-scoped receipt list');
+$readiness = receiptApiCall($controller, 'CaptureReceiptReadiness', ['tripId' => '2']);
+receiptApiCheck($readiness->getStatusCode() === 200 && json_decode((string)$readiness->getBody(), true)['reasons'] === ['no_receipts'], 'readiness returns authoritative blockers');
 $wrong = receiptApiCall($controller, 'CaptureReceipt', ['tripId' => '2', 'receiptId' => '10']);
 receiptApiCheck($wrong->getStatusCode() === 404, 'wrong-trip receipt is hidden');
 $missingUpload = receiptApiCall($controller, 'UploadCaptureReceipt', ['tripId' => '1']);
@@ -79,6 +81,8 @@ receiptApiCheck($blocked->getStatusCode() === 409, 'committed trip is read only'
 $committedUpload = receiptApiCall($controller, 'UploadCaptureReceipt', ['tripId' => '1'], null, ['image' => new Slim\Psr7\UploadedFile((new Slim\Psr7\Factory\StreamFactory())->createStream($png), 'receipt.png', 'image/png', strlen($png))]);
 receiptApiCheck($committedUpload->getStatusCode() === 409, 'committed trip rejects upload');
 $pdo->exec('DELETE FROM user_permissions_resolved');
+try { receiptApiCall($controller, 'CaptureReceiptReadiness', ['tripId' => '1']); throw new RuntimeException('readiness permission allowed'); }
+catch (Grocy\Controllers\Users\PermissionMissingException $expected) {}
 try { receiptApiCall($controller, 'ListCaptureReceipts', ['tripId' => '1']); throw new RuntimeException('permission allowed'); }
 catch (Grocy\Controllers\Users\PermissionMissingException $expected) {}
 unlink($receiptApiPath . '/grocy_ai/receipts/1/' . $createdView['receipt']['image_id']);
