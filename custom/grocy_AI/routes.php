@@ -28,6 +28,7 @@ require_once __DIR__ . '/src/GrocyAiReceiptService.php';
 require_once __DIR__ . '/src/GrocyAiReceiptExtractor.php';
 require_once __DIR__ . '/src/GrocyAiCaptureResearchMigration.php';
 require_once __DIR__ . '/src/GrocyAiCaptureResearchService.php';
+require_once __DIR__ . '/src/GrocyAiCaptureProductService.php';
 require_once __DIR__ . '/src/GrocyAiCaptureService.php';
 require_once __DIR__ . '/src/GrocyAiApiController.php';
 require_once __DIR__ . '/src/GrocyAiConversionController.php';
@@ -66,6 +67,8 @@ $app->group('/api/grocy-ai', function (RouteCollectorProxy $group)
 	$group->put('/capture/trips/{tripId}/lines/{seq}/research', [GrocyAiCaptureResearchController::class, 'Update']);
 	$group->put('/capture/trips/{tripId}/lines/{seq}/receipt-evidence', [GrocyAiCaptureResearchController::class, 'ReceiptEvidence']);
 	$group->post('/capture/trips/{tripId}/lines/{seq}/retry', [GrocyAiCaptureResearchController::class, 'Retry']);
+	$group->post('/capture/trips/{tripId}/lines/{seq}/research/approve', [GrocyAiCaptureResearchController::class, 'Approve']);
+	$group->post('/capture/trips/{tripId}/lines/{seq}/research/link', [GrocyAiCaptureResearchController::class, 'Link']);
 	$group->get('/capture/trips/{tripId}', [GrocyAiApiController::class, 'CaptureTrip']);
 	$group->put('/capture/trips/{tripId}', [GrocyAiApiController::class, 'UpdateCaptureTrip']);
 	$group->put('/capture/trips/{tripId}/lines/{seq}', [GrocyAiApiController::class, 'UpdateCaptureLine']);

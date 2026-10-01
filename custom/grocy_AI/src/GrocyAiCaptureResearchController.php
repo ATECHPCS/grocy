@@ -7,6 +7,7 @@ use Grocy\Services\ApiKeyService;
 use Grocy\Services\DatabaseService;
 use Grocy\Controllers\Users\User;
 use GrocyAI\Services\GrocyAiCaptureResearchService;
+use GrocyAI\Services\GrocyAiCaptureProductService;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 
@@ -130,6 +131,36 @@ class GrocyAiCaptureResearchController extends BaseApiController
 	public function Retry(Request $request, Response $response, array $args): Response
 	{
 		return $this->ReviewMutation($request, $response, $args, 'retry');
+	}
+
+	public function Approve(Request $request, Response $response, array $args): Response
+	{
+		return $this->ProductMutation($request, $response, $args, 'approve');
+	}
+
+	public function Link(Request $request, Response $response, array $args): Response
+	{
+		return $this->ProductMutation($request, $response, $args, 'link');
+	}
+
+	private function ProductMutation(Request $request, Response $response, array $args, string $kind): Response
+	{
+		User::CheckPermission($request, User::PERMISSION_STOCK_PURCHASE);
+		User::CheckPermission($request, User::PERMISSION_MASTER_DATA_EDIT);
+		$ids = $this->CaptureIds($args, true);
+		$body = $this->Body($request);
+		if ($ids === null || $body === null) return $this->GenericErrorResponse($response, 'Invalid product approval', 400);
+		$lineId = $this->CaptureLineId($ids['trip_id'], $ids['seq']);
+		if ($lineId === null) return $this->GenericErrorResponse($response, 'Unknown capture line', 404);
+		try
+		{
+			$service = new GrocyAiCaptureProductService(DatabaseService::GetInstance()->GetDbConnectionRaw());
+			if ($kind === 'approve' && $this->HasFields($body, ['revision', 'fields']) && is_int($body['revision']) && is_array($body['fields'])) return $this->ApiResponse($response, $service->ApproveDraft($ids['trip_id'], $lineId, $body['revision'], $body['fields'], (string)GROCY_USER_ID));
+			if ($kind === 'link' && $this->HasFields($body, ['revision', 'product_id']) && is_int($body['revision']) && is_int($body['product_id'])) return $this->ApiResponse($response, $service->LinkDraft($ids['trip_id'], $lineId, $body['revision'], $body['product_id'], (string)GROCY_USER_ID));
+			return $this->GenericErrorResponse($response, 'Invalid product approval', 400);
+		}
+		catch (\InvalidArgumentException) { return $this->GenericErrorResponse($response, 'Invalid product approval', 400); }
+		catch (\RuntimeException|\PDOException) { return $this->GenericErrorResponse($response, 'Product review conflict', 409); }
 	}
 
 	private function ReviewMutation(Request $request, Response $response, array $args, string $kind): Response

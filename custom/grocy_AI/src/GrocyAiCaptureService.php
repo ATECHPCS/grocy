@@ -143,6 +143,20 @@ class GrocyAiCaptureService
 		return ['trip' => $this->FetchTrip($tripId), 'lines' => $this->FetchLines($tripId)];
 	}
 
+	/** Re-resolve matching active capture lines after a product has acquired this canonical GTIN. */
+	public function ReresolveBarcode(string $canonical, ?string $actor = null): void
+	{
+		$query = $this->Db->prepare("SELECT l.* FROM grocy_ai_capture_lines l JOIN grocy_ai_capture_trips t ON t.id = l.trip_id WHERE l.canonical_gtin = ? AND l.status IN ('unknown', 'conflict') AND t.status != 'committed' AND NOT EXISTS (SELECT 1 FROM grocy_ai_capture_trip_cancellations c WHERE c.trip_id = t.id)");
+		$query->execute([$canonical]);
+		foreach ($query->fetchAll(PDO::FETCH_ASSOC) as $before)
+		{
+			$resolution = $this->Resolve((string)$before['scanned_barcode']);
+			if ($resolution['status'] !== 'known') continue;
+			$this->Db->prepare("UPDATE grocy_ai_capture_lines SET status = 'known', resolved_product_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")->execute([$resolution['resolved_product_id'], $before['id']]);
+			$this->WriteAudit((int)$before['trip_id'], (int)$before['id'], $actor, 'reresolve_line', $before, $this->FetchLineById((int)$before['id']));
+		}
+	}
+
 	/**
 	 * List all capture trips, newest first, as closed trip DTOs. Read-only; writes nothing.
 	 *
