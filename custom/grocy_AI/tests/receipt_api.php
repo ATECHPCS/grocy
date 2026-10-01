@@ -48,6 +48,8 @@ $canvas = imagecreatetruecolor(1, 1);
 ob_start(); imagepng($canvas); $png = ob_get_clean(); imagedestroy($canvas);
 $stream = (new Slim\Psr7\Factory\StreamFactory())->createStream($png);
 $upload = new Slim\Psr7\UploadedFile($stream, 'receipt.png', 'image/png', strlen($png));
+$nestedUpload = receiptApiCall($controller, 'UploadCaptureReceipt', ['tripId' => '1'], null, ['image' => [$upload]]);
+receiptApiCheck($nestedUpload->getStatusCode() === 400, 'nested multipart image rejected as invalid upload');
 $created = receiptApiCall($controller, 'UploadCaptureReceipt', ['tripId' => '1'], null, ['image' => $upload]);
 receiptApiCheck($created->getStatusCode() === 201, 'valid upload created receipt: ' . $created->getStatusCode() . ' ' . (string)$created->getBody());
 $createdView = json_decode((string)$created->getBody(), true, 512, JSON_THROW_ON_ERROR);

@@ -19,6 +19,7 @@ use GrocyAI\Services\GrocyAiTaxonomyService;
 use GrocyAI\Services\GrocyAiConversionService;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
+use Psr\Http\Message\UploadedFileInterface;
 
 class GrocyAiApiController extends BaseApiController
 {
@@ -1195,7 +1196,7 @@ class GrocyAiApiController extends BaseApiController
 			$body = $this->ReceiptBody($request, ['request_id'], true);
 			if (array_key_exists('request_id', $body) && !is_string($body['request_id'])) throw new \InvalidArgumentException('Invalid receipt request ID');
 			$files = $request->getUploadedFiles();
-			if (array_keys($files) !== ['image']) throw new \InvalidArgumentException('Receipt image required');
+			if (array_keys($files) !== ['image'] || !$files['image'] instanceof UploadedFileInterface) throw new \InvalidArgumentException('Receipt image required');
 			$stored = (new GrocyAiReceiptImageStore(DatabaseService::GetInstance()->GetDbConnectionRaw()))->Save($ids['tripId'], $files['image'], $body['request_id'] ?? null, (string)GROCY_USER_ID);
 			return $this->ApiResponse($response->withStatus(201), $this->ReceiptView($service, $ids['tripId'], $stored['receipt_id']));
 		});
