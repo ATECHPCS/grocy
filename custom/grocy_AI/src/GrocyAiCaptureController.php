@@ -4,6 +4,8 @@ namespace GrocyAI\Controllers;
 
 use Grocy\Controllers\BaseController;
 use Grocy\Controllers\Users\User;
+use Grocy\Services\DatabaseService;
+use GrocyAI\Services\GrocyAiCaptureService;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 
@@ -19,7 +21,15 @@ class GrocyAiCaptureController extends BaseController
 	{
 		User::CheckPermission($request, User::PERMISSION_STOCK_PURCHASE);
 
-		return $this->RenderPage($response, 'grocyai_capture', []);
+		$db = DatabaseService::GetInstance()->GetDbConnectionRaw();
+		new GrocyAiCaptureService($db);
+		$statement = $db->prepare("SELECT t.id FROM grocy_ai_capture_trips t JOIN grocy_ai_capture_lines l ON l.trip_id = t.id WHERE t.created_by = ? AND t.status = 'open' GROUP BY t.id ORDER BY t.id DESC LIMIT 1");
+		$statement->execute([(string)GROCY_USER_ID]);
+		$defaultTripId = $statement->fetchColumn();
+
+		return $this->RenderPage($response, 'grocyai_capture', [
+			'defaultTripId' => $defaultTripId === false ? null : (int)$defaultTripId
+		]);
 	}
 
 	/**

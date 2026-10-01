@@ -257,6 +257,16 @@ async function expectNoForbiddenWrites(page)
 
 test.describe('purchase capture — scan loop', function ()
 {
+	test('@cap @mob main capture resumes the saved nonempty trip when the URL has no trip query', async function ({ page })
+	{
+		const state = await installScanApi(page);
+		await page.goto('/fixtures/capture.html?saved=12');
+		await expect(page.locator('#grocyai-capture-status')).toContainText('Trip #12 resumed');
+		await expect(page.locator('.grocy-ai-capture-line')).toHaveCount(1);
+		await expect(page.locator('#grocyai-capture-review-link')).toHaveAttribute('href', '/grocyai/capture/review?trip=12');
+		expect(state.tripCreations).toBe(0);
+	});
+
 	test('@cap @mob resumes an existing open trip without creating a new one', async function ({ page })
 	{
 		const state = await installScanApi(page);

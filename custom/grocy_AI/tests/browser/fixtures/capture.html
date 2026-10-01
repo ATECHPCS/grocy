@@ -90,6 +90,12 @@
 	</main>
 
 	<script src="/fixtures/capture-harness.js"></script>
+	<script>
+		if (new URLSearchParams(window.location.search).get('saved') === '12')
+		{
+			document.getElementById('grocyai-capture').setAttribute('data-default-trip-id', '12');
+		}
+	</script>
 	<script src="/assets/capture.js?v=2.5.4"></script>
 </body>
 </html>

@@ -448,6 +448,7 @@
 
 		var requestedTrip = typeof window !== 'undefined' && window.location
 			? new URLSearchParams(window.location.search).get('trip') : null;
+		if (requestedTrip === null) requestedTrip = root.getAttribute('data-default-trip-id') || null;
 		if (requestedTrip === null) startTrip();
 		else if (/^[1-9][0-9]{0,9}$/.test(requestedTrip)) resumeTrip(requestedTrip);
 		else setStatus(copy.resumeError);
