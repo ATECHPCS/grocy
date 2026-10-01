@@ -99,3 +99,36 @@ try
 	print "Receipt extractor tests passed\n";
 }
 finally { extractionCleanup($path); }
+
+// Exercise the companion's full independent limits through transport and persistence.
+foreach ([[200, 1, 0, true], [200, 50, JSON_UNESCAPED_UNICODE, true], [200, 50, 0, true], [201, 0, 0, false], [1, 51, 0, false]] as [$items, $adjustments, $flags, $accepted])
+{
+	[$pdo, $path] = extractionFixture();
+	try
+	{
+		$value = json_decode(extractionResponse(), true);
+		$value['merchant'] = str_repeat($adjustments === 1 ? 'a' : '😀', 160);
+		$value['lines'][0]['description'] = str_repeat($adjustments === 1 ? 'a' : '😀', 240);
+		$value['adjustments'][0]['description'] = str_repeat($adjustments === 1 ? 'a' : '😀', 240);
+		$value['lines'] = array_fill(0, $items, $value['lines'][0]);
+		$value['adjustments'] = array_fill(0, $adjustments, $value['adjustments'][0]);
+		$body = json_encode($value, $flags | JSON_THROW_ON_ERROR);
+		$result = (new GrocyAiReceiptExtractor($pdo, $path, 'http://companion.local', 'test', fn() => ['status' => 200, 'body' => $body]))->Extract(1, 21);
+		extractionCheck($result['status'] === ($accepted ? 'needs_review' : 'manual_entry'), "Companion row boundary $items + $adjustments, flags $flags");
+		extractionCheck(count($result['receipt']['lines']) === ($accepted ? $items + $adjustments : 0), 'All accepted rows persist without truncation');
+	}
+	finally { extractionCleanup($path); }
+}
+// Valid JSON plus padding proves the byte guard independently of schema validation.
+foreach ([1048576 => true, 1048577 => false] as $bytes => $accepted)
+{
+	[$pdo, $path] = extractionFixture();
+	try
+	{
+		$body = str_pad(extractionResponse(), $bytes, ' ');
+		$result = (new GrocyAiReceiptExtractor($pdo, $path, 'http://companion.local', 'test', fn() => ['status' => 200, 'body' => $body]))->Extract(1, 21);
+		extractionCheck($result['status'] === ($accepted ? 'needs_review' : 'manual_entry'), "Response byte boundary $bytes");
+	}
+	finally { extractionCleanup($path); }
+}
+print "Receipt extraction boundary tests passed\n";

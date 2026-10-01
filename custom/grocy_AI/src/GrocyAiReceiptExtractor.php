@@ -9,7 +9,9 @@ use RuntimeException;
 class GrocyAiReceiptExtractor
 {
 	private const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
-	private const MAX_RESPONSE_BYTES = 128 * 1024;
+	// Covers 200 items + 50 adjustments with 240 Unicode characters each,
+	// including JSON surrogate escapes (12 bytes per character) and field overhead.
+	private const MAX_RESPONSE_BYTES = 1024 * 1024;
 	private PDO $Db;
 	private GrocyAiReceiptImageStore $Images;
 	private GrocyAiReceiptService $Receipts;
@@ -95,7 +97,7 @@ class GrocyAiReceiptExtractor
 		if (!is_array($value) || array_diff(array_keys($value), ['merchant', 'purchase_date', 'printed_total', 'currency', 'lines', 'adjustments', 'diagnostics']) !== [] || count($value) !== 7) throw new RuntimeException('Invalid OCR response');
 		foreach (['merchant', 'purchase_date', 'printed_total', 'currency'] as $key) if (!array_key_exists($key, $value)) throw new RuntimeException('Invalid OCR response');
 		if (!$this->Text($value['merchant'], 160, true) || !$this->Date($value['purchase_date']) || !$this->Decimal($value['printed_total'], true) || ($value['currency'] !== null && (!is_string($value['currency']) || !preg_match('/^[A-Z]{3}$/D', $value['currency'])))) throw new RuntimeException('Invalid OCR response');
-		if (!is_array($value['lines']) || !array_is_list($value['lines']) || count($value['lines']) > 200 || !is_array($value['adjustments']) || !array_is_list($value['adjustments']) || count($value['adjustments']) > 50 || count($value['lines']) + count($value['adjustments']) > 200) throw new RuntimeException('Invalid OCR response');
+		if (!is_array($value['lines']) || !array_is_list($value['lines']) || count($value['lines']) > 200 || !is_array($value['adjustments']) || !array_is_list($value['adjustments']) || count($value['adjustments']) > 50) throw new RuntimeException('Invalid OCR response');
 		if (!is_array($value['diagnostics']) || !$this->Keys($value['diagnostics'], ['provider', 'warnings']) || !$this->Text($value['diagnostics']['provider'], 80, false) || !is_array($value['diagnostics']['warnings']) || !array_is_list($value['diagnostics']['warnings']) || count($value['diagnostics']['warnings']) > 20) throw new RuntimeException('Invalid OCR response');
 		foreach ($value['diagnostics']['warnings'] as $warning) if (!$this->Text($warning, 240, false)) throw new RuntimeException('Invalid OCR response');
 		foreach ($value['lines'] as $line)

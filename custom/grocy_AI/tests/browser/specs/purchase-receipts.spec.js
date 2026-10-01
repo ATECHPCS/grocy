@@ -19,6 +19,7 @@ async function setup(page)
 {
 	const state = {
 		receipts: [],
+		lines: [],
 		writes: []
 	};
 	await page.route('**/api/objects/**', r => r.fulfill(
@@ -49,7 +50,7 @@ async function setup(page)
 			json:
 			{
 				trip,
-				lines: [],
+				lines: state.lines,
 				checksum: 'a'.repeat(64)
 			}
 		});
@@ -496,4 +497,31 @@ test('saving Ignore removes hidden allocation drafts and preserves unrelated rec
 	await page.getByRole('button', { name: 'Save receipt details' }).click();
 	await page.getByRole('button', { name: 'Finish receipt', exact: true }).click();
 	await expect(page.getByRole('button', { name: 'Reopen receipt' })).toBeVisible();
+});
+
+
+test('finished receipts own price and store corrections while capture retains inventory location', async ({ page }) =>
+{
+	const state = await seedEditableReceipt(page, true);
+	state.lines = [{ id: 100, trip_id: 7, seq: 1, scanned_barcode: '', canonical_gtin: null, resolved_product_id: 101, status: 'known', quantity: 1, price: 9, best_before_override: null, selected: 1, applied_at: null, outcome: null, created_at: '', updated_at: '' }];
+	state.receipts[0].receipt.status = 'finished';
+	await page.route('**/api/objects/shopping_locations', r => r.fulfill({ json: [{ id: 99, name: 'Corrected store' }] }));
+	await page.reload();
+	await page.locator('#grocyai-capture-review-trips button').click();
+	await expect(page.locator('#grocyai-capture-review-commit')).toBeEnabled();
+	await expect(page.locator('#grocyai-capture-review-store')).toHaveCount(0);
+	await expect(page.getByText('Price (optional)', { exact: true })).toHaveCount(0);
+	await expect(page.locator('#grocyai-capture-review-location')).toBeVisible();
+	await expect(page.getByText('Correct purchase prices and stores in the receipts below.')).toBeVisible();
+	await page.getByRole('button', { name: 'Reopen receipt' }).click();
+	await page.getByRole('combobox', { name: 'Receipt store', exact: true }).selectOption('99');
+	await page.getByRole('button', { name: 'Save receipt details' }).click();
+	await expect(page.getByRole('combobox', { name: 'Receipt store', exact: true })).toHaveValue('99');
+	const allocation = page.locator('.grocy-ai-receipt-allocation').first();
+	await allocation.getByLabel('Confirmed unit price').fill('9');
+	await allocation.getByRole('button', { name: 'Save allocation', exact: true }).click();
+	await expect(allocation.getByLabel('Confirmed unit price')).toHaveValue('9');
+	expect(state.writes.at(-1)).toMatchObject({ path: '/api/grocy-ai/capture/trips/7/receipts/1/lines/1/allocation', body: { unit_price: 9 } });
+	expect(state.writes.some(w => w.path.endsWith('/receipts/1') && w.body.shopping_location_id === 99)).toBe(true);
+	expect(state.writes.every(w => w.path.includes('/receipts'))).toBe(true);
 });

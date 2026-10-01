@@ -53,7 +53,7 @@ class GrocyAiReceiptService
 		{
 			if ($expectedRevision !== null && (int)$receipt['revision'] !== $expectedRevision) throw new InvalidArgumentException('Receipt changed during OCR');
 			if ($this->Scalar("SELECT 1 FROM grocy_ai_receipt_audit WHERE receipt_id = ? AND action = 'update_receipt' LIMIT 1", [(int)$receipt['id']]) !== false) throw new InvalidArgumentException('Receipt has manual header edits');
-			if (!isset($suggestions['lines']) || !is_array($suggestions['lines']) || !is_array($suggestions['adjustments'] ?? []) || count($suggestions['lines']) + count($suggestions['adjustments'] ?? []) > 200)
+			if (!isset($suggestions['lines']) || !is_array($suggestions['lines']) || !is_array($suggestions['adjustments'] ?? []) || count($suggestions['lines']) + count($suggestions['adjustments'] ?? []) > 250)
 			{
 				throw new InvalidArgumentException('Invalid receipt extraction lines');
 			}

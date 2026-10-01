@@ -36,9 +36,7 @@
 		deleteLabel: 'Delete',
 		selected: 'Include in purchase',
 		quantity: 'Quantity',
-		price: 'Price (optional)',
 		location: 'Default location',
-		store: 'Default store',
 		none: '(none)',
 		markReviewing: 'Finish scanning',
 		finishFirst: 'Finish scanning this trip and open review? This will not change stock.',
@@ -123,9 +121,7 @@
 			deleteLabel: d.labelDelete || DEFAULT_COPY.deleteLabel,
 			selected: d.labelSelected || DEFAULT_COPY.selected,
 			quantity: d.labelQuantity || DEFAULT_COPY.quantity,
-			price: d.labelPrice || DEFAULT_COPY.price,
 			location: d.labelLocation || DEFAULT_COPY.location,
-			store: d.labelStore || DEFAULT_COPY.store,
 			none: d.labelNone || DEFAULT_COPY.none,
 			markReviewing: d.labelMarkReviewing || DEFAULT_COPY.markReviewing,
 			finishFirst: d.labelFinishFirst || DEFAULT_COPY.finishFirst,
@@ -435,17 +431,14 @@
 			}
 			detailEl.appendChild(statusRow);
 
-			// Trip-level defaults (Q11): location + store only.
+			// Inventory location remains a trip default; purchase stores belong to receipts.
 			var defaults = element('div', 'grocy-ai-capture-review-defaults row');
 			var locCol = element('div', 'form-group col-12 col-sm-6');
 			locCol.appendChild(element('label', null, copy.location));
 			locCol.appendChild(locationSelect('grocyai-capture-review-location', currentTrip.default_location_id, locations, function (value) { putTrip({ default_location_id: value }); }));
-			var storeCol = element('div', 'form-group col-12 col-sm-6');
-			storeCol.appendChild(element('label', null, copy.store));
-			storeCol.appendChild(locationSelect('grocyai-capture-review-store', currentTrip.default_shopping_location_id, shoppingLocations, function (value) { putTrip({ default_shopping_location_id: value }); }));
 			defaults.appendChild(locCol);
-			defaults.appendChild(storeCol);
 			detailEl.appendChild(defaults);
+			detailEl.appendChild(element('p', 'text-muted', 'Correct purchase prices and stores in the receipts below.'));
 
 			// Lines.
 			var linesList = element('ul', 'list-group grocy-ai-capture-review-lines');
@@ -602,22 +595,6 @@
 			qtyRow.appendChild(appendGroup(plus));
 			qtyGroup.appendChild(qtyRow);
 			controls.appendChild(qtyGroup);
-
-			// Optional price.
-			var priceGroup = element('div', 'form-group mr-3 mb-0');
-			priceGroup.appendChild(element('label', 'small mb-0', copy.price));
-			var priceInput = element('input', 'form-control form-control-sm');
-			priceInput.type = 'number';
-			priceInput.step = '0.01';
-			priceInput.min = '0';
-			priceInput.value = line.price === null || line.price === undefined ? '' : String(line.price);
-			priceInput.addEventListener('change', function ()
-			{
-				var raw = priceInput.value.trim();
-				putLine(line.seq, { price: raw === '' ? null : parseFloat(raw) });
-			});
-			priceGroup.appendChild(priceInput);
-			controls.appendChild(priceGroup);
 
 			// Selection.
 			var selectGroup = element('div', 'form-group form-check mr-3 mb-0 align-self-center');
