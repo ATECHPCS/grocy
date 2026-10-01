@@ -37,6 +37,8 @@ Do not commit the API key. The status route only reports whether one is configur
 
 Product enrichment always uses a 12-second total request limit and a 2-second connect limit, even when the legacy `AI_REQUEST_TIMEOUT_SECONDS` setting is larger. Redirects are disabled so neither the API key nor owned trace context can be forwarded to another host. No automatic retry is performed.
 
+Receipt OCR uses the same companion URL and server-held API key. `GrocyAiReceiptExtractor` sends private stored image bytes to `POST /v1/receipts/extract` with a stable request ID for the receipt revision. It accepts JPEG, PNG, and WebP images up to 5 MiB, limits the response to 128 KiB, and uses a 28-second total timeout with a 2-second connect limit. A valid response imports suggestions into `needs_review`; failures return a generic manual-entry state while retaining the stored image and editable receipt. The extractor does not add stock or expose the API key or receipt text in failure messages. Receipt API routes and review controls are added separately.
+
 ## Grocy routes
 
 - `GET /api/grocy-ai/status`

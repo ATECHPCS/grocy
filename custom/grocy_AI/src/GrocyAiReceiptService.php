@@ -47,10 +47,11 @@ class GrocyAiReceiptService
 		return ['capture_lines' => array_slice($captures, 0, 20), 'products' => array_slice($products, 0, 20)];
 	}
 
-	public function ImportExtraction(int $receiptId, array $suggestions, ?string $actor = null): array
+	public function ImportExtraction(int $receiptId, array $suggestions, ?string $actor = null, ?int $expectedRevision = null): array
 	{
-		return $this->Mutate($receiptId, function (array $receipt) use ($suggestions, $actor): void
+		return $this->Mutate($receiptId, function (array $receipt) use ($suggestions, $actor, $expectedRevision): void
 		{
+			if ($expectedRevision !== null && (int)$receipt['revision'] !== $expectedRevision) throw new InvalidArgumentException('Receipt changed during OCR');
 			if (!isset($suggestions['lines']) || !is_array($suggestions['lines']) || !is_array($suggestions['adjustments'] ?? []) || count($suggestions['lines']) + count($suggestions['adjustments'] ?? []) > 200)
 			{
 				throw new InvalidArgumentException('Invalid receipt extraction lines');
