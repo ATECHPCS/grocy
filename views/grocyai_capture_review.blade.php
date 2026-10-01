@@ -1,7 +1,7 @@
 @extends('layout.default')
 
 @php
-$grocyAiAssetVersion = '2.6.0';
+$grocyAiAssetVersion = '2.6.1';
 @endphp
 @push('pageStyles')
 <link rel="stylesheet"
@@ -36,6 +36,7 @@ $grocyAiAssetVersion = '2.6.0';
 	id="grocyai-capture-review"
 	data-trips-endpoint="{{ $U('/api/grocy-ai/capture/trips', true) }}"
 	data-product-new-url="{{ $U('/product/new', true) }}"
+	data-capture-url="{{ $U('/grocyai/capture', true) }}"
 	data-trip-id="{{ $tripId !== null ? $tripId : '' }}"
 	data-label-known="{{ $__t('Known') }}"
 	data-label-unknown="{{ $__t('Unknown — needs product') }}"
@@ -54,6 +55,7 @@ $grocyAiAssetVersion = '2.6.0';
 	data-label-store="{{ $__t('Default store') }}"
 	data-label-none="{{ $__t('(none)') }}"
 	data-label-mark-reviewing="{{ $__t('Finish scanning') }}"
+	data-label-continue-scanning="{{ $__t('Continue scanning') }}"
 	data-label-finish-first="{{ $__t('Finish scanning this trip and open review? This will not change stock.') }}"
 	data-label-finish-second="{{ $__t('Confirm again: Are you finished scanning this trip?') }}"
 	data-label-status="{{ $__t('Status') }}"

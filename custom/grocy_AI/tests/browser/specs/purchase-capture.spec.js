@@ -90,7 +90,7 @@ async function installReferenceApi(page)
 async function installScanApi(page, options)
 {
 	const settings = options || {};
-	const state = { seq: 0, byBarcode: {}, scans: 0, tripId: 6, finishUpdates: 0 };
+	const state = { seq: 0, byBarcode: {}, scans: 0, tripId: 6, tripCreations: 0, finishUpdates: 0 };
 	await page.route('**/api/grocy-ai/capture/**', function (route)
 	{
 		const request = route.request();
@@ -99,8 +99,18 @@ async function installScanApi(page, options)
 
 		if (method === 'POST' && /\/capture\/trips$/.test(pathname))
 		{
+			state.tripCreations++;
 			state.tripId++;
 			return json(route, makeTrip({ id: state.tripId, status: 'open' }));
+		}
+
+		if (method === 'GET' && /\/capture\/trips\/12$/.test(pathname))
+		{
+			if (settings.resumeUnavailable) return json(route, { error_message: 'Unknown trip' }, 404);
+			return json(route, {
+				trip: makeTrip({ id: 12, status: settings.resumeClosed ? 'reviewing' : 'open' }),
+				lines: [makeLine({ id: 201, trip_id: 12, seq: 1, status: 'known', resolved_product_id: 101, quantity: 2, selected: 1 })]
+			});
 		}
 
 		if (method === 'POST' && /\/capture\/trips\/\d+\/scan$/.test(pathname))
@@ -247,6 +257,29 @@ async function expectNoForbiddenWrites(page)
 
 test.describe('purchase capture — scan loop', function ()
 {
+	test('@cap @mob resumes an existing open trip without creating a new one', async function ({ page })
+	{
+		const state = await installScanApi(page);
+		await page.goto('/fixtures/capture.html?trip=12');
+		await expect(page.locator('#grocyai-capture-status')).toContainText('Trip #12');
+		await expect(page.locator('.grocy-ai-capture-line')).toHaveCount(1);
+		await expect(page.locator('.grocy-ai-capture-line-quantity')).toHaveText('× 2');
+		await expect(page.locator('#grocyai-capture-review-link')).toHaveAttribute('href', '/grocyai/capture/review?trip=12');
+		expect(state.tripCreations).toBe(0);
+		await expectNoForbiddenWrites(page);
+	});
+
+	test('@cap @mob refuses a closed or missing resume trip without creating a replacement', async function ({ page })
+	{
+		const state = await installScanApi(page, { resumeClosed: true });
+		await page.goto('/fixtures/capture.html?trip=12');
+		await expect(page.locator('#grocyai-capture-status')).toContainText('cannot be resumed');
+		expect(state.tripCreations).toBe(0);
+		await page.locator('#grocyai-capture-new-trip-button').click();
+		await expect(page.locator('#grocyai-capture-review-link')).toHaveAttribute('href', '/grocyai/capture/review?trip=7');
+		expect(state.tripCreations).toBe(1);
+	});
+
 	test('@cap @mob Finish scanning requires two confirmations, writes no stock, then opens review', async function ({ page })
 	{
 		const state = await installScanApi(page);
@@ -381,6 +414,16 @@ test.describe('purchase capture — scan loop', function ()
 
 test.describe('purchase capture — review and commit', function ()
 {
+	test('@cap @mob open trip offers Continue scanning back to the same trip', async function ({ page })
+	{
+		await installReviewApi(page, { open: true });
+		await page.goto('/fixtures/capture-review.html?trip=7');
+		await page.locator('#grocyai-capture-review-trips button').first().click();
+		const link = page.getByRole('link', { name: 'Continue scanning' });
+		await expect(link).toHaveAttribute('href', '/grocyai/capture?trip=7');
+		await expectNoForbiddenWrites(page);
+	});
+
 	test('@cap @mob an existing open trip also requires two confirms to finish scanning', async function ({ page })
 	{
 		const state = await installReviewApi(page, { open: true });
