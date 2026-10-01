@@ -392,3 +392,59 @@ test('photo upload works on LAN browsers without randomUUID', async (
 	await page.getByLabel('Add receipt photos').setInputFiles(photo);
 	await expect(page.locator('.grocy-ai-receipt')).toHaveCount(1);
 });
+test('unsaved drafts survive another section save and block finish or acceptance', async ({ page }) =>
+{
+	const state = await setup(page);
+	await page.getByLabel('Add receipt photos').setInputFiles(photo);
+	await expect(page.locator('.grocy-ai-receipt')).toHaveCount(1);
+	state.receipts[0].lines = [{ id: 1, description: 'Milk', quantity: 1, line_total: 2, decision: 'include', allocations: [{ id: 1, active: 1, product_id: 101, capture_line_id: null, quantity: 1, unit_price: 2 }] }];
+	state.receipts[0].totals = { entered_total: 2, printed_total: 3, difference: 1 };
+	state.receipts[0].receipt.printed_total = 3;
+	await page.locator('#grocyai-capture-review-trips button').click();
+	const price = page.getByLabel('Confirmed unit price').first();
+	await price.fill('1.50');
+	await page.getByLabel('Merchant', { exact: true }).fill('Corrected store');
+	const writesBefore = state.writes.length;
+	await page.getByRole('button', { name: 'Finish receipt', exact: true }).click();
+	await expect(page.getByText('Save all edited sections before this action.')).toBeVisible();
+	await page.getByRole('button', { name: 'Accept difference and leave as is' }).click();
+	expect(state.writes.length).toBe(writesBefore);
+	await expect(price).toHaveValue('1.50');
+	await page.getByRole('button', { name: 'Save receipt details' }).click();
+	await expect(page.getByText('Saved.')).toBeVisible();
+	await expect(price).toHaveValue('1.50');
+	await expect(page.locator('#grocyai-capture-review-commit')).toBeDisabled();
+	await page.getByRole('button', { name: 'Finish receipt', exact: true }).click();
+	expect(state.receipts[0].receipt.status).toBe('needs_review');
+	await page.getByRole('button', { name: 'Save allocation', exact: true }).click();
+	await expect(price).toHaveValue('1.5');
+	await page.getByRole('button', { name: 'Accept difference and leave as is' }).click();
+	await page.getByRole('button', { name: 'Finish receipt', exact: true }).click();
+	await expect(page.getByRole('button', { name: 'Reopen receipt' })).toBeVisible();
+	expect(state.receipts[0].lines[0].allocations[0].unit_price).toBe(1.5);
+});
+
+test('partial photo upload shows success and retries only failed photo with the same request id', async ({ page }) =>
+{
+	const state = await setup(page);
+	const uploads = [];
+	await page.route('**/trips/7/receipts', route =>
+	{
+		if (route.request().method() !== 'POST') return route.fallback();
+		const body = route.request().postDataBuffer().toString();
+		const id = body.match(/name="request_id"\r\n\r\n([^\r]+)/)[1];
+		uploads.push(id);
+		if (uploads.length === 2) return route.fulfill({ status: 503, json: { error_message: 'Temporary upload failure' } });
+		return route.fallback();
+	});
+	await page.getByLabel('Add receipt photos').setInputFiles([photo, { ...photo, name: 'second.png' }]);
+	await expect(page.locator('.grocy-ai-receipt')).toHaveCount(1);
+	await expect(page.getByRole('button', { name: 'Retry failed photos' })).toBeVisible();
+	await expect(page.getByText('Photo 1: uploaded', { exact: true })).toBeVisible();
+	await expect(page.getByText('Photo 2: failed — Temporary upload failure', { exact: true })).toBeVisible();
+	await page.getByRole('button', { name: 'Retry failed photos' }).click();
+	await expect(page.locator('.grocy-ai-receipt')).toHaveCount(2);
+	expect(uploads).toHaveLength(3);
+	expect(uploads[2]).toBe(uploads[1]);
+	expect(state.receipts).toHaveLength(2);
+});

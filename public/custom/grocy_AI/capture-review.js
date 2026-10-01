@@ -162,6 +162,7 @@
 		var receiptBusy = false;
 		var commitMessage = '';
 		var receiptNotice = '';
+		var receiptStates = {};
 		var loadRevision = 0;
 		var productNames = {};
 		var locations = [];
@@ -459,7 +460,8 @@
 			detailEl.appendChild(receiptsHost);
 			if (window.GrocyAIReceipts && receiptReadiness && Array.isArray(receiptReadiness.receipts))
 			{
-				window.GrocyAIReceipts(receiptsHost, { url: tripUrl(currentTripId), receipts: receiptReadiness.receipts, lines: currentLines, names: productNames, stores: shoppingLocations, productNew: productNewBase, readOnly: currentTrip.status === 'committed', notice: receiptNotice, reload: function (notice) { receiptNotice = notice; return loadTrip(currentTripId); }, onBusy: function (value) { receiptBusy = value; var button = document.getElementById('grocyai-capture-review-commit'); if (button) button.disabled = value || !receiptReadiness || receiptReadiness.ready !== true; } });
+				receiptStates[currentTripId] = receiptStates[currentTripId] || { drafts: {}, uploads: [] };
+				window.GrocyAIReceipts(receiptsHost, { state: receiptStates[currentTripId], url: tripUrl(currentTripId), receipts: receiptReadiness.receipts, lines: currentLines, names: productNames, stores: shoppingLocations, productNew: productNewBase, readOnly: currentTrip.status === 'committed', notice: receiptNotice, reload: function (notice) { receiptNotice = notice; return loadTrip(currentTripId); }, onBusy: function (value) { receiptBusy = value; var button = document.getElementById('grocyai-capture-review-commit'); if (button) button.disabled = value || !receiptReadiness || receiptReadiness.ready !== true; } });
 			}
 			var readiness = element('div', 'alert alert-info');
 			readiness.id = 'grocyai-receipt-readiness';

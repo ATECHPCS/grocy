@@ -29,7 +29,8 @@
 	root.GrocyAIReceipts = function (host, options)
 	{
 		var busy = false;
-		var dirty = false;
+		var state = options.state;
+		var dirty = Object.keys(state.drafts).length > 0;
 		var readOnly = options.readOnly;
 		var status;
 		var notice = options.notice || '';
@@ -40,6 +41,23 @@
 			node.textContent = text || '';
 			if (className) node.className = className;
 			return node;
+		}
+
+		function restoreDraft(input, parent, label)
+		{
+			var scope = parent.getAttribute('data-draft-scope');
+			if (!scope || input.type === 'file') return;
+			input.setAttribute('data-draft-scope', scope);
+			input.setAttribute('data-draft-field', label);
+			var draft = state.drafts[scope] && state.drafts[scope][label];
+			if (!draft) return;
+			if (input.tagName === 'SELECT' && !Array.prototype.some.call(input.options, function (option) { return option.value === draft.value; }))
+			{
+				var option = el('option', draft.text);
+				option.value = draft.value;
+				input.appendChild(option);
+			}
+			input.value = draft.value;
 		}
 
 		function field(parent, label, value, type)
@@ -53,6 +71,7 @@
 				input.step = 'any';
 				input.inputMode = 'decimal';
 			}
+			restoreDraft(input, parent, label);
 			wrapper.appendChild(input);
 			parent.appendChild(wrapper);
 			return input;
@@ -69,6 +88,7 @@
 				input.appendChild(option);
 			});
 			input.value = value;
+			restoreDraft(input, parent, label);
 			wrapper.appendChild(input);
 			parent.appendChild(wrapper);
 			return input;
@@ -119,14 +139,22 @@
 			});
 		}
 
-		function run(action)
+		function run(action, scope)
 		{
 			if (busy || readOnly) return;
+			if (dirty && !scope)
+			{
+				status.textContent = 'Save all edited sections before this action.';
+				return;
+			}
+			var savedDraft = scope ? state.drafts[scope] : null;
 			lock(true);
 			status.textContent = 'Saving…';
 			Promise.resolve().then(action).then(function (result)
 			{
-				return options.reload(result && result.status === 'manual_entry' ? result.message : 'Saved.');
+				if (scope && state.drafts[scope] === savedDraft) delete state.drafts[scope];
+				dirty = Object.keys(state.drafts).length > 0;
+				return options.reload(result && result.message ? result.message : 'Saved.');
 			}).catch(function (error)
 			{
 				status.textContent = error.message;
@@ -136,12 +164,12 @@
 			});
 		}
 
-		function save(path, method, body)
+		function save(path, method, body, scope)
 		{
 			run(function ()
 			{
 				return request(path, method, body);
-			});
+			}, scope);
 		}
 
 		function number(input)
@@ -152,6 +180,7 @@
 		function allocation(parent, path, line, existing)
 		{
 			var box = el('div', '', 'grocy-ai-receipt-allocation');
+			box.setAttribute('data-draft-scope', path + '/allocation/' + (existing ? existing.id : 'new'));
 			parent.appendChild(box);
 			box.appendChild(el('h5', existing ? 'Confirmed purchase allocation' : 'Match and confirm purchase'));
 			var choices = [
@@ -202,7 +231,7 @@
 					unit_price: number(price)
 				};
 				if (existing) body.id = Number(existing.id);
-				save(path + '/allocation', 'PUT', body);
+				save(path + '/allocation', 'PUT', body, box.getAttribute('data-draft-scope'));
 			});
 			if (existing) button(box, 'Remove allocation', function ()
 			{
@@ -220,6 +249,7 @@
 			box.appendChild(el('legend', 'Receipt line #' + line.id));
 			parent.appendChild(box);
 			var path = receiptPath + '/lines/' + line.id;
+			box.setAttribute('data-draft-scope', path);
 			var description = field(box, 'Description', line.description);
 			var quantity = field(box, 'Receipt quantity', line.quantity, 'number');
 			var total = field(box, 'Line total', line.line_total, 'number');
@@ -236,7 +266,7 @@
 					quantity: number(quantity),
 					line_total: number(total),
 					decision: decision.value
-				});
+				}, path);
 			});
 			if (line.decision === 'ignore') box.appendChild(el('p', 'Ignored — retained on the receipt, excluded from stock.'));
 			if (line.decision === 'include')
@@ -263,6 +293,7 @@
 			var receipt = view.receipt,
 				path = '/receipts/' + receipt.id;
 			var card = el('section', '', 'grocy-ai-receipt');
+			card.setAttribute('data-draft-scope', path);
 			host.appendChild(card);
 			card.appendChild(el('h4', 'Receipt #' + receipt.id + ' — ' + receipt.status.replace(/_/g, ' ')));
 			var image = el('img');
@@ -299,7 +330,7 @@
 					purchase_date: date.value || null,
 					printed_total: number(printed),
 					shopping_location_id: store.value ? Number(store.value) : null
-				});
+				}, path);
 			});
 			card.appendChild(el('p', 'Entered total: ' + view.totals.entered_total + ' · Difference: ' + (view.totals.difference === null ? 'enter printed total' : view.totals.difference)));
 			if (receipt.difference_accepted_amount !== null && receipt.difference_accepted_amount !== undefined) card.appendChild(el('p', 'Difference accepted: ' + receipt.difference_accepted_amount));
@@ -348,25 +379,75 @@
 		camera.accept = upload.accept;
 		camera.setAttribute('capture', 'environment');
 
-		function uploadFiles(input)
+		var uploadProgress = el('ul');
+		host.appendChild(uploadProgress);
+		function renderUploadProgress()
 		{
-			var files = Array.prototype.slice.call(input.files);
+			uploadProgress.textContent = '';
+			state.uploads.forEach(function (job, index)
+			{
+				uploadProgress.appendChild(el('li', 'Photo ' + (index + 1) + ': ' + job.status + (job.status === 'failed' ? ' — ' + job.error : '')));
+			});
+		}
+		renderUploadProgress();
+
+		function uploadPending()
+		{
 			run(function ()
 			{
-				return files.reduce(function (chain, file)
+				return state.uploads.filter(function (job) { return job.status !== 'uploaded'; }).reduce(function (chain, job)
 				{
 					return chain.then(function ()
 					{
+						job.status = 'uploading';
+						renderUploadProgress();
+						status.textContent = 'Uploading receipt photo…';
 						var data = new FormData();
-						data.append('image', file);
-						data.append('request_id', Array.prototype.map.call(root.crypto.getRandomValues(new Uint8Array(16)), function (value)
+						data.append('image', job.file);
+						data.append('request_id', job.id);
+						return request('/receipts', 'POST', data).then(function ()
 						{
-							return value.toString(16).padStart(2, '0');
-						}).join(''));
-						return request('/receipts', 'POST', data);
+							job.status = 'uploaded';
+							job.file = null;
+							renderUploadProgress();
+						}).catch(function (error)
+						{
+							job.status = 'failed';
+							job.error = error.message;
+							renderUploadProgress();
+						});
 					});
-				}, Promise.resolve());
+				}, Promise.resolve()).then(function ()
+				{
+					var failed = state.uploads.filter(function (job) { return job.status === 'failed'; }).length;
+					return { message: failed ? 'Uploaded photos are shown below. ' + failed + ' photo(s) failed; retry failed photos.' : 'Receipt photos saved.' };
+				});
 			});
+		}
+
+		function uploadFiles(input)
+		{
+			if (dirty)
+			{
+				status.textContent = 'Save all edited sections before this action.';
+				input.value = '';
+				return;
+			}
+			Array.prototype.forEach.call(input.files, function (file)
+			{
+				var key = JSON.stringify([file.name, file.size, file.type, file.lastModified]);
+				if (state.uploads.some(function (job) { return job.key === key; })) return;
+				var id = Array.prototype.map.call(root.crypto.getRandomValues(new Uint8Array(16)), function (value)
+				{
+					return value.toString(16).padStart(2, '0');
+				}).join('');
+				state.uploads.push({ key: key, id: id, file: file, status: 'pending' });
+			});
+			uploadPending();
+		}
+		if (state.uploads.some(function (job) { return job.status !== 'uploaded'; }))
+		{
+			button(host, 'Retry failed photos', uploadPending);
 		}
 		upload.addEventListener('change', function ()
 		{
@@ -381,6 +462,11 @@
 		{
 			if (event.target.type !== 'file')
 			{
+				var scope = event.target.getAttribute('data-draft-scope');
+				var label = event.target.getAttribute('data-draft-field');
+				if (!scope || !label) return;
+				state.drafts[scope] = Object.assign({}, state.drafts[scope] || {});
+				state.drafts[scope][label] = { value: event.target.value, text: event.target.tagName === 'SELECT' && event.target.selectedIndex >= 0 ? event.target.options[event.target.selectedIndex].text : '' };
 				dirty = true;
 				options.onBusy(true);
 				status.textContent = 'Unsaved changes — save this section before committing.';
