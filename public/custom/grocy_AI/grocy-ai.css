@@ -875,3 +875,9 @@ details.grocy-ai-diagnostics:not([open]) > .grocy-ai-diagnostic-body {
 .grocy-ai-receipt-line { min-width: 0; border: 1px solid #ced4da; padding: .75rem; margin: 1rem 0; }
 .grocy-ai-receipt-line legend { width: auto; font-size: 1rem; }
 .grocy-ai-receipt-allocation { border-top: 1px solid #ced4da; padding-top: .5rem; margin-top: .75rem; }
+
+.grocy-ai-product-research { border: 1px solid #ced4da; border-radius: .4rem; padding: .85rem; margin: 1rem 0; overflow-wrap: anywhere; }
+.grocy-ai-product-research-field { display: block; width: 100%; margin: .65rem 0; }
+.grocy-ai-product-research input, .grocy-ai-product-research select, .grocy-ai-product-research button { min-height: 44px; font-size: 16px; max-width: 100%; }
+.grocy-ai-product-research-actions { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0; }
+.grocy-ai-product-research-status { font-weight: 600; }

@@ -161,6 +161,7 @@
 		var commitMessage = '';
 		var receiptNotice = '';
 		var receiptStates = {};
+		var researchComponent = null;
 		var loadRevision = 0;
 		var productNames = {};
 		var locations = [];
@@ -400,6 +401,8 @@
 			{
 				return;
 			}
+			if (researchComponent) researchComponent.dispose();
+			researchComponent = null;
 			detailEl.textContent = '';
 			if (currentTrip === null)
 			{
@@ -453,6 +456,9 @@
 			}
 			currentLines.forEach(function (line) { linesList.appendChild(renderLine(line)); });
 			detailEl.appendChild(linesList);
+			var researchHost = element('div', 'grocy-ai-product-research-list');
+			detailEl.appendChild(researchHost);
+			if (window.GrocyAIProductResearch) researchComponent = window.GrocyAIProductResearch(researchHost, { tripId: currentTripId, lines: currentLines, receipts: receiptReadiness ? receiptReadiness.receipts : [], locationId: currentTrip.default_location_id, readOnly: currentTrip.status === 'committed', reload: function () { return loadTrip(currentTripId); } });
 
 			var receiptsHost = element('div', 'grocy-ai-receipts');
 			detailEl.appendChild(receiptsHost);

@@ -85,6 +85,8 @@ The capture and review views now link an open trip back to `/grocyai/capture?tri
 
 Receipt persistence is namespaced under `grocy_ai_receipt_*` in the Grocy SQLite data path; private images are under `GROCY_DATAPATH/grocy_ai/receipts/`. This adds no new upstream hook beyond the purchase review view, module routes/controller, and `Dockerfile.atech` overlay already listed above. The receipt release and recovery procedure is in [`docs/PURCHASE-RECEIPT-ACCEPTANCE.md`](docs/PURCHASE-RECEIPT-ACCEPTANCE.md).
 
+The purchase review view also loads `capture-product-research.js` between the receipt editor and `capture-review.js`. It reads the separate versioned research DTO and mounts a card for each selected unknown line; the existing capture and receipt DTOs and their stock commit gate stay separate. The review asset version is `2.6.2`.
+
 ## Capture research worker boundary
 
 The module registers three worker-only capture research routes for bounded job claim, completion, and failure. Grocy's existing API authentication runs before these routes, and the module also checks the server-held `GROCY_AI_RESEARCH_WORKER_KEY` with a timing-safe comparison. The only upstream configuration edit is the empty `AI_RESEARCH_WORKER_KEY` default in `config-dist.php`; deployments provide its secret outside Git. `custom/grocy_AI/version.json` advances to `ATECHPCS-grocy_AI-23` so the persisted route cache includes the new endpoints. Worker leases and raw results do not enter capture browser DTOs.
