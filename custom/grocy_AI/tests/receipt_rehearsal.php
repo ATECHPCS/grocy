@@ -19,7 +19,7 @@ register_shutdown_function(static function () use ($dataPath): void
 	@rmdir($dataPath);
 });
 require_once dirname(__DIR__, 3) . '/packages/autoload.php';
-foreach (['GrocyAiGtin', 'GrocyAiBarcodeService', 'GrocyAiCaptureMigration', 'GrocyAiReceiptMigration', 'GrocyAiReceiptImageStore', 'GrocyAiReceiptService', 'GrocyAiReceiptExtractor', 'GrocyAiCaptureService', 'GrocyAiApiController'] as $class)
+foreach (['GrocyAiGtin', 'GrocyAiBarcodeService', 'GrocyAiCaptureMigration', 'GrocyAiReceiptMigration', 'GrocyAiReceiptImageStore', 'GrocyAiReceiptService', 'GrocyAiReceiptExtractor', 'GrocyAiCaptureResearchMigration', 'GrocyAiCaptureResearchService', 'GrocyAiCaptureService', 'GrocyAiApiController'] as $class)
 {
 	require_once __DIR__ . '/../src/' . $class . '.php';
 }

@@ -23,6 +23,16 @@ class GrocyAiReceiptService
 		return array_map(fn(array $row) => $this->View((int)$row['id']), $rows);
 	}
 
+	/** A receipt description is evidence only after an explicit, same-trip line choice. */
+	public function ResearchEvidence(int $tripId, int $receiptLineId): array
+	{
+		$query = $this->Db->prepare("SELECT l.id, l.description, l.kind, l.decision, r.id AS receipt_id FROM grocy_ai_receipt_lines l JOIN grocy_ai_receipts r ON r.id = l.receipt_id WHERE l.id = ? AND r.trip_id = ?");
+		$query->execute([$receiptLineId, $tripId]);
+		$line = $query->fetch(PDO::FETCH_ASSOC);
+		if ($line === false || $line['kind'] !== 'item' || $line['decision'] === 'ignore' || trim((string)$line['description']) === '') throw new InvalidArgumentException('Receipt line is not usable research evidence');
+		return ['receipt_line_id' => (int)$line['id'], 'receipt_id' => (int)$line['receipt_id'], 'description' => mb_substr(trim((string)$line['description']), 0, 200), 'source' => 'receipt_ocr'];
+	}
+
 	public function SuggestMatches(int $receiptId, int $lineId): array
 	{
 		$receipt = $this->Receipt($receiptId);
@@ -152,10 +162,32 @@ class GrocyAiReceiptService
 			}
 			$this->ValidateLineAllocations($before, array_merge($before, $fields));
 			$this->Apply('grocy_ai_receipt_lines', $lineId, $fields + ['revision' => (int)$before['revision'] + 1]);
+			$this->SyncResearchEvidence($receipt, $lineId);
 			$this->Apply('grocy_ai_receipts', $receiptId, $this->Invalidation());
 			$this->Revision($receiptId);
 			$this->Audit($receipt, $lineId, null, $actor, 'update_line', $before, $this->Line($receiptId, $lineId));
 		});
+	}
+
+	private function SyncResearchEvidence(array $receipt, int $lineId): void
+	{
+		if ($this->Scalar("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'grocy_ai_capture_research_drafts'", []) === false) return;
+		$line = $this->Line((int)$receipt['id'], $lineId);
+		$usable = $line['kind'] === 'item' && $line['decision'] !== 'ignore' && trim((string)$line['description']) !== '';
+		$name = $usable ? mb_substr(trim((string)$line['description']), 0, 200) : null;
+		$drafts = $this->Rows("SELECT * FROM grocy_ai_capture_research_drafts WHERE trip_id = ? AND receipt_line_id = ? AND outcome NOT IN ('approved', 'linked')", [(int)$receipt['trip_id'], $lineId]);
+		foreach ($drafts as $draft)
+		{
+			$selected = json_decode($draft['selected_json'], true, 512, JSON_THROW_ON_ERROR);
+			$edits = json_decode($draft['user_edits_json'], true, 512, JSON_THROW_ON_ERROR);
+			$suggested = json_decode($draft['suggested_json'], true, 512, JSON_THROW_ON_ERROR);
+			if (empty($edits['name']) && ($suggested['name_candidates'] ?? []) === [])
+			{
+				if ($name === null) unset($selected['name']); else $selected['name'] = $name;
+			}
+			$this->Db->prepare('UPDATE grocy_ai_capture_research_drafts SET receipt_evidence = ?, selected_json = ?, revision = revision + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?')->execute([$name, json_encode($selected, JSON_THROW_ON_ERROR), $draft['id']]);
+			$this->Db->prepare("INSERT INTO grocy_ai_capture_research_audit (trip_id, draft_id, actor, action, before_json, after_json) VALUES (?, ?, 'receipt-review', 'receipt_correction', ?, ?)")->execute([$receipt['trip_id'], $draft['id'], json_encode(['receipt_evidence' => $draft['receipt_evidence'], 'selected' => json_decode($draft['selected_json'], true)], JSON_THROW_ON_ERROR), json_encode(['receipt_evidence' => $name, 'selected' => $selected], JSON_THROW_ON_ERROR)]);
+		}
 	}
 
 	public function UpdateAllocation(int $receiptId, int $lineId, array $change, ?string $actor = null): array

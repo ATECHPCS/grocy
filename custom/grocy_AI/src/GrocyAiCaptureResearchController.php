@@ -5,6 +5,7 @@ namespace GrocyAI\Controllers\Api;
 use Grocy\Controllers\BaseApiController;
 use Grocy\Services\ApiKeyService;
 use Grocy\Services\DatabaseService;
+use Grocy\Controllers\Users\User;
 use GrocyAI\Services\GrocyAiCaptureResearchService;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
@@ -89,5 +90,67 @@ class GrocyAiCaptureResearchController extends BaseApiController
 	{
 		$value = $args['jobId'] ?? null;
 		return is_string($value) && preg_match('/^[1-9][0-9]{0,9}$/D', $value) === 1 ? (int)$value : null;
+	}
+
+	private function CaptureIds(array $args, bool $line): ?array
+	{
+		$trip = $args['tripId'] ?? null;
+		$seq = $args['seq'] ?? null;
+		if (!is_string($trip) || preg_match('/^[1-9][0-9]{0,9}$/D', $trip) !== 1 || ($line && (!is_string($seq) || preg_match('/^[1-9][0-9]{0,9}$/D', $seq) !== 1))) return null;
+		return ['trip_id' => (int)$trip, 'seq' => $line ? (int)$seq : null];
+	}
+
+	private function CaptureLineId(int $tripId, int $seq): ?int
+	{
+		$query = DatabaseService::GetInstance()->GetDbConnectionRaw()->prepare('SELECT id FROM grocy_ai_capture_lines WHERE trip_id = ? AND seq = ?');
+		$query->execute([$tripId, $seq]);
+		$id = $query->fetchColumn();
+		return $id === false ? null : (int)$id;
+	}
+
+	public function Review(Request $request, Response $response, array $args): Response
+	{
+		User::CheckPermission($request, User::PERMISSION_STOCK_PURCHASE);
+		$ids = $this->CaptureIds($args, false);
+		if ($ids === null) return $this->GenericErrorResponse($response, 'Invalid trip', 400);
+		try { return $this->ApiResponse($response, $this->Service()->ReviewForTrip($ids['trip_id'])); }
+		catch (\InvalidArgumentException) { return $this->GenericErrorResponse($response, 'Unknown trip', 404); }
+	}
+
+	public function Update(Request $request, Response $response, array $args): Response
+	{
+		return $this->ReviewMutation($request, $response, $args, 'update');
+	}
+
+	public function ReceiptEvidence(Request $request, Response $response, array $args): Response
+	{
+		return $this->ReviewMutation($request, $response, $args, 'evidence');
+	}
+
+	public function Retry(Request $request, Response $response, array $args): Response
+	{
+		return $this->ReviewMutation($request, $response, $args, 'retry');
+	}
+
+	private function ReviewMutation(Request $request, Response $response, array $args, string $kind): Response
+	{
+		User::CheckPermission($request, User::PERMISSION_STOCK_PURCHASE);
+		$ids = $this->CaptureIds($args, true);
+		$body = $this->Body($request);
+		if ($kind === 'retry' && $body === null && (string)$request->getBody() === '') $body = [];
+		if ($ids === null || $body === null) return $this->GenericErrorResponse($response, 'Invalid research request', 400);
+		$lineId = $this->CaptureLineId($ids['trip_id'], $ids['seq']);
+		if ($lineId === null) return $this->GenericErrorResponse($response, 'Unknown capture line', 404);
+		$actor = (string)GROCY_USER_ID;
+		try
+		{
+			$service = $this->Service();
+			if ($kind === 'update' && $this->HasFields($body, ['revision', 'changes']) && is_int($body['revision']) && is_array($body['changes'])) return $this->ApiResponse($response, $service->UpdateDraft($ids['trip_id'], $lineId, $body['revision'], $body['changes'], $actor));
+			if ($kind === 'evidence' && $this->HasFields($body, ['receipt_line_id']) && ($body['receipt_line_id'] === null || is_int($body['receipt_line_id']))) return $this->ApiResponse($response, $service->SetReceiptEvidence($ids['trip_id'], $lineId, $body['receipt_line_id'], $actor));
+			if ($kind === 'retry' && $body === []) return $this->ApiResponse($response, $service->RetryJob($ids['trip_id'], $lineId, $actor));
+			return $this->GenericErrorResponse($response, 'Invalid research request', 400);
+		}
+		catch (\InvalidArgumentException) { return $this->GenericErrorResponse($response, 'Invalid research request', 400); }
+		catch (\RuntimeException) { return $this->GenericErrorResponse($response, 'Research draft conflict', 409); }
 	}
 }

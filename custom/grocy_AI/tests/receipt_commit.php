@@ -5,7 +5,7 @@ declare(strict_types=1);
 use GrocyAI\Services\GrocyAiCaptureService;
 use GrocyAI\Services\GrocyAiReceiptService;
 
-foreach (['GrocyAiGtin', 'GrocyAiBarcodeService', 'GrocyAiCaptureMigration', 'GrocyAiReceiptMigration', 'GrocyAiReceiptService', 'GrocyAiCaptureService'] as $class) require_once __DIR__ . '/../src/' . $class . '.php';
+foreach (['GrocyAiGtin', 'GrocyAiBarcodeService', 'GrocyAiCaptureMigration', 'GrocyAiReceiptMigration', 'GrocyAiReceiptService', 'GrocyAiCaptureResearchMigration', 'GrocyAiCaptureResearchService', 'GrocyAiCaptureService'] as $class) require_once __DIR__ . '/../src/' . $class . '.php';
 require_once __DIR__ . '/capture.php';
 require_once dirname(__DIR__, 3) . '/packages/autoload.php';
 if (!defined('GROCY_USER_ID')) define('GROCY_USER_ID', 1);

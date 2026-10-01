@@ -1,0 +1,69 @@
+<?php
+
+declare(strict_types=1);
+
+use GrocyAI\Services\GrocyAiCaptureMigration;
+use GrocyAI\Services\GrocyAiCaptureResearchService;
+
+require_once __DIR__ . '/../../../packages/autoload.php';
+foreach (['GrocyAiGtin', 'GrocyAiCaptureMigration', 'GrocyAiReceiptMigration', 'GrocyAiReceiptService', 'GrocyAiCaptureResearchMigration', 'GrocyAiTaxonomyMigration', 'GrocyAiCaptureResearchService'] as $file) require_once __DIR__ . '/../src/' . $file . '.php';
+
+function checkDraft(bool $ok, string $message): void { if (!$ok) throw new RuntimeException($message); }
+function rejectDraft(callable $operation): void { try { $operation(); } catch (InvalidArgumentException|RuntimeException $expected) { return; } throw new RuntimeException('Expected rejection'); }
+
+$db = new PDO('sqlite::memory:');
+$db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+$db->exec('PRAGMA foreign_keys = ON');
+$db->exec('CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1)');
+$db->exec('CREATE TABLE product_groups (id INTEGER PRIMARY KEY, name TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1)');
+$db->exec('CREATE TABLE product_barcodes (id INTEGER PRIMARY KEY, product_id INTEGER NOT NULL, barcode TEXT NOT NULL)');
+$db->exec('CREATE TABLE stock_log (id INTEGER PRIMARY KEY)');
+GrocyAiCaptureMigration::Bootstrap($db);
+$db->exec("INSERT INTO grocy_ai_capture_trips (id, status, module_version) VALUES (1, 'reviewing', 'test'), (2, 'reviewing', 'test'), (3, 'reviewing', 'test')");
+$db->exec("INSERT INTO grocy_ai_capture_lines (id, trip_id, seq, scanned_barcode, canonical_gtin, status) VALUES (1, 1, 1, '4006381333931', '04006381333931', 'unknown'), (2, 2, 1, '96385074', '00000096385074', 'unknown'), (3, 3, 1, '012345678905', '00012345678905', 'unknown')");
+$db->exec("INSERT INTO product_groups (id, name, active) VALUES (1, 'Seafood', 1), (2, 'Produce', 1), (3, 'Other', 0)");
+$db->exec("INSERT INTO products (id, name) VALUES (1, 'Existing fish')");
+$service = new GrocyAiCaptureResearchService($db);
+$service->EnqueueUnknown(1, 1, '4006381333931');
+$service->EnqueueUnknown(2, 2, '96385074');
+$service->EnqueueUnknown(3, 3, '012345678905');
+$db->exec("UPDATE grocy_ai_capture_trips SET status = 'committed' WHERE id = 3");
+$db->exec("INSERT INTO grocy_ai_receipts (id, trip_id, image_id, mime_type, image_bytes) VALUES (1, 1, 'one', 'image/jpeg', 1), (2, 2, 'two', 'image/jpeg', 1)");
+$db->exec("INSERT INTO grocy_ai_receipt_lines (id, receipt_id, seq, description, kind, decision) VALUES (1, 1, 1, 'Receipt Granola', 'item', 'needs_review'), (2, 1, 2, 'Other cereal', 'item', 'needs_review'), (3, 2, 1, 'Wrong trip', 'item', 'needs_review')");
+$claim = $service->ClaimJobs(1, 'draft-test')[0];
+$miss = ['contract_version' => 1, 'canonical_gtin' => '04006381333931', 'outcome' => 'miss', 'name_candidates' => [], 'brand' => null, 'package' => null, 'categories' => [], 'sources' => []];
+$service->CompleteJob((int)$claim['id'], $claim['lease_token'], $miss);
+checkDraft(($service->ReviewForTrip(1)['drafts'][0]['selected']['name'] ?? null) === null, 'ambiguous OCR cannot provide a name');
+rejectDraft(fn() => $service->SetReceiptEvidence(1, 1, 3, 'tester'));
+$paired = $service->SetReceiptEvidence(1, 1, 1, 'tester');
+checkDraft($paired['selected']['name'] === 'Receipt Granola' && $paired['receipt_evidence']['source'] === 'receipt_ocr', 'explicit same-trip receipt gives provisional name');
+$receiptService = new GrocyAI\Services\GrocyAiReceiptService($db);
+$receiptService->UpdateLine(1, 1, ['description' => 'Corrected Granola'], 'tester');
+$corrected = $service->ReviewForTrip(1)['drafts'][0];
+checkDraft($corrected['selected']['name'] === 'Corrected Granola', 'receipt correction refreshes unedited proposal');
+$edited = $service->UpdateDraft(1, 1, $corrected['revision'], ['name' => 'My granola'], 'tester');
+rejectDraft(fn() => $service->UpdateDraft(1, 1, $paired['revision'], ['name' => 'Stale'], 'tester'));
+checkDraft($edited['selected']['name'] === 'My granola', 'manual name selected');
+$receiptService->UpdateLine(1, 1, ['description' => 'Later correction'], 'tester');
+checkDraft($service->ReviewForTrip(1)['drafts'][0]['selected']['name'] === 'My granola', 'receipt correction preserves user edit');
+$service->RetryJob(1, 1, 'tester');
+checkDraft($service->ReviewForTrip(1)['drafts'][0]['selected']['name'] === 'My granola', 'retry preserves manual edit');
+$reclaim = $service->ClaimJobs(1, 'draft-retry')[0];
+$service->CompleteJob((int)$reclaim['id'], $reclaim['lease_token'], ['contract_version' => 1, 'canonical_gtin' => '04006381333931', 'outcome' => 'found', 'name_candidates' => ['Existing fish'], 'brand' => 'Brand', 'package' => '1 kg', 'categories' => ['Seafood'], 'sources' => ['bb-federation', 'openfoodfacts']]);
+$review = $service->ReviewForTrip(1)['drafts'][0];
+checkDraft($review['selected']['name'] === 'My granola' && $review['name_alternatives'][0]['sources'] === ['bb-federation', 'openfoodfacts'], 'provider retry cannot overwrite user edit and sources remain labeled');
+checkDraft($review['group_candidates'][0]['id'] === 1 && $review['taxonomy_candidates'][0]['slug'] === 'meat-seafood', 'exact active group and versioned taxonomy rule proposed');
+checkDraft($review['possible_existing_products'][0]['id'] === 1 && !isset($review['selected']['product_group_id']), 'existing match and group remain unapplied');
+$db->exec("UPDATE grocy_ai_capture_research_drafts SET suggested_json = '{\"contract_version\":1,\"outcome\":\"found\",\"name_candidates\":[\"Existing fish\"],\"categories\":[\"Seafood\",\"Produce\"],\"sources\":[\"openfoodfacts\"]}' WHERE line_id = 1");
+$ambiguous = $service->ReviewForTrip(1)['drafts'][0];
+checkDraft($ambiguous['group_candidates'] === [] && $ambiguous['taxonomy_candidates'] === [], 'ambiguous categories remain unset');
+$db->exec("UPDATE grocy_ai_capture_research_drafts SET suggested_json = '{\"contract_version\":1,\"outcome\":\"found\",\"name_candidates\":[\"Existing fish\"],\"categories\":[],\"sources\":[\"bb-federation\"]}' WHERE line_id = 1");
+$federation = $service->ReviewForTrip(1)['drafts'][0];
+checkDraft($federation['taxonomy_candidates'] === [] && $federation['group_candidates'] === [], 'Federation-only name gives no OFF category');
+rejectDraft(fn() => $service->UpdateDraft(2, 1, 1, ['name' => 'wrong'], 'tester'));
+rejectDraft(fn() => $service->UpdateDraft(3, 3, 1, ['name' => 'No'], 'tester'));
+$db->exec("INSERT INTO grocy_ai_capture_trip_cancellations (trip_id, actor) VALUES (1, 'tester')");
+rejectDraft(fn() => $service->UpdateDraft(1, 1, $edited['revision'], ['name' => 'No'], 'tester'));
+rejectDraft(fn() => $service->RetryJob(1, 1, 'tester'));
+checkDraft((int)$db->query('SELECT COUNT(*) FROM products')->fetchColumn() === 1 && (int)$db->query('SELECT COUNT(*) FROM stock_log')->fetchColumn() === 0, 'review never writes product or stock');
+echo "capture research drafts: PASS\n";

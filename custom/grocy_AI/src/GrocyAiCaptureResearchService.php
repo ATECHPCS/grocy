@@ -77,6 +77,205 @@ class GrocyAiCaptureResearchService
 		return $query->fetchAll(PDO::FETCH_ASSOC);
 	}
 
+	/** @return array<string, mixed> */
+	public function ReviewForTrip(int $tripId): array
+	{
+		$this->RequireTrip($tripId, false);
+		$query = $this->Db->prepare('SELECT d.line_id FROM grocy_ai_capture_research_drafts d JOIN grocy_ai_capture_lines l ON l.id = d.line_id AND l.trip_id = d.trip_id WHERE d.trip_id = ? ORDER BY l.seq');
+		$query->execute([$tripId]);
+		$drafts = [];
+		foreach ($query->fetchAll(PDO::FETCH_COLUMN) as $lineId) $drafts[] = $this->ReviewDraft($tripId, (int)$lineId);
+		return ['contract_version' => 1, 'trip_id' => $tripId, 'drafts' => $drafts];
+	}
+
+	/** @param array<string, mixed> $changes */
+	public function UpdateDraft(int $tripId, int $lineId, int $revision, array $changes, string $actor): array
+	{
+		if ($revision < 1 || $changes === [] || array_diff(array_keys($changes), ['name', 'brand', 'package', 'product_group_id', 'taxonomy_leaf_slug']) !== []) throw new \InvalidArgumentException('Invalid draft changes');
+		foreach ($changes as $key => $value)
+		{
+			if (in_array($key, ['name', 'brand', 'package'], true) && $value !== null && (!is_string($value) || trim($value) !== $value || $value === '' || mb_strlen($value) > 200)) throw new \InvalidArgumentException('Invalid draft field');
+			if ($key === 'name' && $value === null) throw new \InvalidArgumentException('Name is required');
+			if ($key === 'product_group_id' && $value !== null && (!is_int($value) || $value < 1)) throw new \InvalidArgumentException('Invalid group');
+			if ($key === 'taxonomy_leaf_slug' && $value !== null && (!is_string($value) || preg_match('/^[a-z0-9_-]{1,100}$/D', $value) !== 1)) throw new \InvalidArgumentException('Invalid taxonomy leaf');
+		}
+		if (isset($changes['product_group_id']))
+		{
+			$query = $this->Db->prepare('SELECT 1 FROM product_groups WHERE id = ? AND active = 1');
+			$query->execute([$changes['product_group_id']]);
+			if ($query->fetchColumn() === false) throw new \InvalidArgumentException('Inactive group');
+		}
+		if (isset($changes['taxonomy_leaf_slug']))
+		{
+			GrocyAiTaxonomyMigration::Bootstrap($this->Db);
+			$query = $this->Db->prepare('SELECT 1 FROM grocy_ai_taxonomy_nodes WHERE slug = ? AND version = ? AND depth = 2');
+			$query->execute([$changes['taxonomy_leaf_slug'], GrocyAiTaxonomyMigration::VERSION]);
+			if ($query->fetchColumn() === false) throw new \InvalidArgumentException('Unknown taxonomy leaf');
+		}
+		return $this->MutateDraft($tripId, $lineId, $actor, 'draft_edit', function (array $draft) use ($revision, $changes): array
+		{
+			if ((int)$draft['revision'] !== $revision) throw new \RuntimeException('Stale research draft');
+			$selected = json_decode($draft['selected_json'], true, 512, JSON_THROW_ON_ERROR);
+			$edits = json_decode($draft['user_edits_json'], true, 512, JSON_THROW_ON_ERROR);
+			foreach ($changes as $key => $value)
+			{
+				if ($value === null) unset($selected[$key]); else $selected[$key] = $value;
+				$edits[$key] = true;
+			}
+			return ['selected_json' => json_encode($selected, JSON_THROW_ON_ERROR), 'user_edits_json' => json_encode($edits, JSON_THROW_ON_ERROR)];
+		});
+	}
+
+	public function SetReceiptEvidence(int $tripId, int $lineId, ?int $receiptLineId, string $actor): array
+	{
+		if ($receiptLineId !== null && $receiptLineId < 1) throw new \InvalidArgumentException('Invalid receipt line');
+		return $this->MutateDraft($tripId, $lineId, $actor, 'receipt_evidence', function (array $draft) use ($tripId, $receiptLineId): array
+		{
+			$evidence = $receiptLineId === null ? null : (new GrocyAiReceiptService($this->Db))->ResearchEvidence($tripId, $receiptLineId);
+			$selected = json_decode($draft['selected_json'], true, 512, JSON_THROW_ON_ERROR);
+			$edits = json_decode($draft['user_edits_json'], true, 512, JSON_THROW_ON_ERROR);
+			$suggested = json_decode($draft['suggested_json'], true, 512, JSON_THROW_ON_ERROR);
+			if (empty($edits['name']) && ($suggested['name_candidates'] ?? []) === [])
+			{
+				if ($evidence === null) unset($selected['name']); else $selected['name'] = $evidence['description'];
+			}
+			return ['receipt_line_id' => $receiptLineId, 'receipt_evidence' => $evidence === null ? null : $evidence['description'], 'selected_json' => json_encode($selected, JSON_THROW_ON_ERROR)];
+		});
+	}
+
+	public function RetryJob(int $tripId, int $lineId, string $actor): array
+	{
+		return $this->MutateDraft($tripId, $lineId, $actor, 'retry', function (array $draft): array
+		{
+			$job = $this->Db->prepare('SELECT state FROM grocy_ai_capture_research_jobs WHERE id = ?');
+			$job->execute([$draft['job_id']]);
+			if (!in_array($job->fetchColumn(), ['needs_input', 'retryable_failure'], true)) throw new \InvalidArgumentException('Research is not retryable');
+			$this->Db->prepare("UPDATE grocy_ai_capture_research_jobs SET state = 'queued', attempts = 0, next_retry_at = NULL, lease_hash = NULL, lease_expires_at = NULL, safe_error_code = NULL, revision = revision + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?")->execute([$draft['job_id']]);
+			return [];
+		});
+	}
+
+	private function MutateDraft(int $tripId, int $lineId, string $actor, string $action, callable $change): array
+	{
+		if ($actor === '' || strlen($actor) > 128) throw new \InvalidArgumentException('Invalid actor');
+		$this->Db->exec('BEGIN IMMEDIATE');
+		try
+		{
+			$this->RequireTrip($tripId, true);
+			$draft = $this->DraftRow($tripId, $lineId);
+			if (in_array($draft['outcome'], ['approved', 'linked'], true)) throw new \InvalidArgumentException('Finalized research draft');
+			$updates = $change($draft);
+			$sets = [];
+			$params = [];
+			foreach ($updates as $key => $value)
+			{
+				if (!in_array($key, ['selected_json', 'user_edits_json', 'receipt_line_id', 'receipt_evidence'], true)) throw new \LogicException('Invalid draft update');
+				$sets[] = $key . ' = ?';
+				$params[] = $value;
+			}
+			$sets[] = 'revision = revision + 1';
+			$sets[] = 'updated_at = CURRENT_TIMESTAMP';
+			$params[] = $draft['id'];
+			$this->Db->prepare('UPDATE grocy_ai_capture_research_drafts SET ' . implode(', ', $sets) . ' WHERE id = ?')->execute($params);
+			$after = $this->DraftRow($tripId, $lineId);
+			$this->Db->prepare('INSERT INTO grocy_ai_capture_research_audit (trip_id, draft_id, actor, action, before_json, after_json) VALUES (?, ?, ?, ?, ?, ?)')->execute([$tripId, $draft['id'], $actor, $action, json_encode($this->AuditState($draft), JSON_THROW_ON_ERROR), json_encode($this->AuditState($after), JSON_THROW_ON_ERROR)]);
+			$this->Db->commit();
+			return $this->ReviewDraft($tripId, $lineId);
+		}
+		catch (\Throwable $ex)
+		{
+			if ($this->Db->inTransaction()) $this->Db->rollBack();
+			throw $ex;
+		}
+	}
+
+	private function RequireTrip(int $tripId, bool $mutable): void
+	{
+		$query = $this->Db->prepare('SELECT t.status, EXISTS (SELECT 1 FROM grocy_ai_capture_trip_cancellations c WHERE c.trip_id = t.id) AS canceled FROM grocy_ai_capture_trips t WHERE t.id = ?');
+		$query->execute([$tripId]);
+		$trip = $query->fetch(PDO::FETCH_ASSOC);
+		if ($trip === false) throw new \InvalidArgumentException('Unknown trip');
+		if ($mutable && ($trip['status'] === 'committed' || (int)$trip['canceled'] === 1)) throw new \InvalidArgumentException('Trip is closed');
+	}
+
+	private function DraftRow(int $tripId, int $lineId): array
+	{
+		$query = $this->Db->prepare('SELECT d.*, l.seq FROM grocy_ai_capture_research_drafts d JOIN grocy_ai_capture_lines l ON l.id = d.line_id AND l.trip_id = d.trip_id WHERE d.trip_id = ? AND d.line_id = ?');
+		$query->execute([$tripId, $lineId]);
+		return $query->fetch(PDO::FETCH_ASSOC) ?: throw new \InvalidArgumentException('Unknown research draft');
+	}
+
+	private function AuditState(array $draft): array
+	{
+		return ['revision' => (int)$draft['revision'], 'selected' => json_decode($draft['selected_json'], true), 'user_edits' => json_decode($draft['user_edits_json'], true), 'receipt_line_id' => $draft['receipt_line_id'] === null ? null : (int)$draft['receipt_line_id']];
+	}
+
+	private function ReviewDraft(int $tripId, int $lineId): array
+	{
+		$draft = $this->DraftRow($tripId, $lineId);
+		$job = $this->Db->prepare('SELECT canonical_gtin, state, safe_error_code FROM grocy_ai_capture_research_jobs WHERE id = ?');
+		$job->execute([$draft['job_id']]);
+		$job = $job->fetch(PDO::FETCH_ASSOC);
+		$suggested = json_decode($draft['suggested_json'], true, 512, JSON_THROW_ON_ERROR);
+		$selected = json_decode($draft['selected_json'], true, 512, JSON_THROW_ON_ERROR);
+		$names = [];
+		foreach ($suggested['name_candidates'] ?? [] as $name) $names[] = ['value' => $name, 'sources' => $suggested['sources'] ?? []];
+		$evidence = null;
+		if ($draft['receipt_line_id'] !== null)
+		{
+			try { $evidence = (new GrocyAiReceiptService($this->Db))->ResearchEvidence($tripId, (int)$draft['receipt_line_id']); }
+			catch (\InvalidArgumentException) { $evidence = null; }
+		}
+		if ($evidence !== null) $names[] = ['value' => $evidence['description'], 'sources' => ['receipt_ocr']];
+		return ['id' => (int)$draft['id'], 'line_id' => $lineId, 'seq' => (int)$draft['seq'], 'revision' => (int)$draft['revision'], 'outcome' => $draft['outcome'], 'job_state' => $job['state'], 'safe_error_code' => $job['safe_error_code'], 'scanned_barcode' => $draft['scanned_barcode'], 'canonical_gtin' => $job['canonical_gtin'], 'selected' => $selected, 'suggested' => $suggested, 'name_alternatives' => $names, 'receipt_evidence' => $evidence, 'group_candidates' => $this->GroupCandidates($suggested), 'taxonomy_candidates' => $this->TaxonomyCandidates($suggested), 'possible_existing_products' => $this->PossibleProducts($selected, $suggested), 'final_product_id' => $draft['final_product_id'] === null ? null : (int)$draft['final_product_id']];
+	}
+
+	private function GroupCandidates(array $suggested): array
+	{
+		if (!in_array('openfoodfacts', $suggested['sources'] ?? [], true) || empty($suggested['categories'])) return [];
+		$groups = $this->Db->query('SELECT id, name FROM product_groups WHERE active = 1 ORDER BY id')->fetchAll(PDO::FETCH_ASSOC);
+		$matches = [];
+		foreach ($suggested['categories'] as $category)
+		{
+			$key = self::CategoryKey($category);
+			foreach ($groups as $group) if (self::CategoryKey($group['name']) === $key) $matches[(int)$group['id']] = ['id' => (int)$group['id'], 'name' => $group['name'], 'source' => 'openfoodfacts', 'provider_category' => $category];
+		}
+		return count($matches) === 1 ? array_values($matches) : [];
+	}
+
+	private function TaxonomyCandidates(array $suggested): array
+	{
+		if (!in_array('openfoodfacts', $suggested['sources'] ?? [], true) || empty($suggested['categories'])) return [];
+		GrocyAiTaxonomyMigration::Bootstrap($this->Db);
+		$query = $this->Db->prepare("SELECT n.slug, n.label, r.provider_category FROM grocy_ai_taxonomy_mapping_rules r JOIN grocy_ai_taxonomy_nodes n ON n.slug = r.target_slug AND n.version = r.version AND n.depth = 2 WHERE r.provider_category = ? AND r.version = ? AND r.disposition = 'mapped'");
+		$matches = [];
+		foreach ($suggested['categories'] as $category)
+		{
+			$query->execute([self::CategoryKey($category), GrocyAiTaxonomyMigration::VERSION]);
+			foreach ($query->fetchAll(PDO::FETCH_ASSOC) as $row) $matches[$row['slug']] = ['slug' => $row['slug'], 'label' => $row['label'], 'source' => 'openfoodfacts', 'provider_category' => $category, 'ruleset_version' => GrocyAiTaxonomyMigration::VERSION];
+		}
+		return count($matches) === 1 ? array_values($matches) : [];
+	}
+
+	private static function CategoryKey(string $category): string
+	{
+		return strtolower((string)preg_replace('/[^a-z0-9]+/i', '_', preg_replace('/^en:/i', '', trim($category))));
+	}
+
+	private function PossibleProducts(array $selected, array $suggested): array
+	{
+		$names = array_unique(array_map(static fn(string $name): string => mb_strtolower(trim($name)), array_filter(array_merge([$selected['name'] ?? null], $suggested['name_candidates'] ?? []), 'is_string')));
+		if ($names === []) return [];
+		$query = $this->Db->prepare('SELECT id, name FROM products WHERE active = 1 AND lower(trim(name)) IN (' . implode(', ', array_fill(0, count($names), '?')) . ') ORDER BY id LIMIT 20');
+		$query->execute(array_values($names));
+		$matches = [];
+		foreach ($query->fetchAll(PDO::FETCH_ASSOC) as $product)
+		{
+			$matches[] = ['id' => (int)$product['id'], 'name' => $product['name'], 'reason' => 'exact_name'];
+		}
+		return $matches;
+	}
+
 	/** @return array<int, array<string, mixed>> */
 	public function ClaimJobs(int $limit, string $workerId): array
 	{
@@ -172,6 +371,11 @@ class GrocyAiCaptureResearchService
 				if (empty($edits['name']))
 				{
 					if ($normalized['outcome'] === 'found') $selected['name'] = $normalized['name_candidates'][0];
+					elseif ($draft['receipt_line_id'] !== null)
+					{
+						try { $selected['name'] = (new GrocyAiReceiptService($this->Db))->ResearchEvidence((int)$draft['trip_id'], (int)$draft['receipt_line_id'])['description']; }
+						catch (\InvalidArgumentException) { unset($selected['name']); }
+					}
 					else unset($selected['name']);
 				}
 				$selectedJson = json_encode($selected, JSON_THROW_ON_ERROR);
