@@ -519,6 +519,10 @@ Follow [`docs/PURCHASE-RECEIPT-ACCEPTANCE.md`](../../docs/PURCHASE-RECEIPT-ACCEP
 
 Receipt images live under `GROCY_DATAPATH/grocy_ai/receipts/<trip-id>/` with opaque file names. Their metadata, allocations, and append-only audit live in the same data path's SQLite database. Back up and restore the full persistent Grocy data path as one unit. The isolated controller rehearsal is `php8.5 custom/grocy_AI/tests/receipt_rehearsal.php`; it proves zero writes before an explicit fixture commit and an idempotent retry afterward. Live provider and physical-phone acceptance remain separate release gates.
 
+### Pending research after a barcode becomes known
+
+The research review DTO includes `line_status`, `resolved_product_id`, and `resolved_product_name` for each draft. A scan can become known when another trip approves the same canonical GTIN or when a product is created through Grocy's ordinary flow. Its draft remains unfinalized, so receipt readiness continues to report `capture_line_<id>_product_review_required`. The user must explicitly link that draft to the displayed owner with its current revision. The link endpoint verifies the canonical owner and resolved line together under `BEGIN IMMEDIATE`; it creates no product and books no stock. Receipt completion and allocation checks remain independent.
+
 ### Capture research backfill
 
 After the companion research worker and Grocy release are configured, preview the existing trip from the deployed Grocy checkout with its persistent data path:

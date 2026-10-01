@@ -88,7 +88,7 @@ class GrocyAiCaptureProductService
 		$this->Db->exec('BEGIN IMMEDIATE');
 		try
 		{
-			$query = $this->Db->prepare('SELECT d.*, l.scanned_barcode AS original_barcode, l.canonical_gtin, l.status AS line_status, l.selected, t.status AS trip_status FROM grocy_ai_capture_research_drafts d JOIN grocy_ai_capture_lines l ON l.id = d.line_id AND l.trip_id = d.trip_id JOIN grocy_ai_capture_trips t ON t.id = d.trip_id WHERE d.trip_id = ? AND d.line_id = ? AND NOT EXISTS (SELECT 1 FROM grocy_ai_capture_trip_cancellations c WHERE c.trip_id = t.id)');
+			$query = $this->Db->prepare('SELECT d.*, l.scanned_barcode AS original_barcode, l.canonical_gtin, l.status AS line_status, l.resolved_product_id, l.selected, t.status AS trip_status FROM grocy_ai_capture_research_drafts d JOIN grocy_ai_capture_lines l ON l.id = d.line_id AND l.trip_id = d.trip_id JOIN grocy_ai_capture_trips t ON t.id = d.trip_id WHERE d.trip_id = ? AND d.line_id = ? AND NOT EXISTS (SELECT 1 FROM grocy_ai_capture_trip_cancellations c WHERE c.trip_id = t.id)');
 			$query->execute([$tripId, $lineId]);
 			$draft = $query->fetch(PDO::FETCH_ASSOC);
 			if ($draft === false || $draft['trip_status'] === 'committed') throw new \InvalidArgumentException('Inactive capture trip');
@@ -107,12 +107,13 @@ class GrocyAiCaptureProductService
 				$this->Db->commit();
 				return $result;
 			}
-			if ((int)$draft['revision'] !== $revision || (int)$draft['selected'] !== 1 || $draft['line_status'] !== 'unknown') throw new \RuntimeException('Research draft changed');
+			if ((int)$draft['revision'] !== $revision || (int)$draft['selected'] !== 1 || !in_array($draft['line_status'], ['unknown', 'known'], true)) throw new \RuntimeException('Research draft changed');
 			$barcode = (string)$draft['original_barcode'];
 			$canonical = GrocyAiGtin::CanonicalOrNull($barcode);
 			if ($canonical === null || $canonical !== $draft['canonical_gtin'] || $barcode !== $draft['scanned_barcode']) throw new \RuntimeException('Scanned barcode changed');
 			$owner = $this->BarcodeOwner($canonical);
 			if ($owner !== null && ($outcome === 'approved' || $owner !== ($confirmed['product_id'] ?? null))) throw new \RuntimeException('Barcode already owned');
+			if ($draft['line_status'] === 'known' && ($outcome !== 'linked' || $owner === null || (int)$draft['resolved_product_id'] !== $owner)) throw new \RuntimeException('Known capture requires owner link');
 			$line = ['scanned_barcode' => $barcode, 'canonical_gtin' => $canonical];
 			$productId = $persist($line);
 			$this->Db->prepare('UPDATE grocy_ai_capture_research_drafts SET outcome = ?, final_product_id = ?, revision = revision + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?')->execute([$outcome, $productId, $draft['id']]);

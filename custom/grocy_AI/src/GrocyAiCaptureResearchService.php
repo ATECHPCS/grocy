@@ -209,7 +209,7 @@ class GrocyAiCaptureResearchService
 
 	private function DraftRow(int $tripId, int $lineId): array
 	{
-		$query = $this->Db->prepare('SELECT d.*, l.seq FROM grocy_ai_capture_research_drafts d JOIN grocy_ai_capture_lines l ON l.id = d.line_id AND l.trip_id = d.trip_id WHERE d.trip_id = ? AND d.line_id = ?');
+		$query = $this->Db->prepare('SELECT d.*, l.seq, l.status AS line_status, l.resolved_product_id, p.name AS resolved_product_name FROM grocy_ai_capture_research_drafts d JOIN grocy_ai_capture_lines l ON l.id = d.line_id AND l.trip_id = d.trip_id LEFT JOIN products p ON p.id = l.resolved_product_id WHERE d.trip_id = ? AND d.line_id = ?');
 		$query->execute([$tripId, $lineId]);
 		return $query->fetch(PDO::FETCH_ASSOC) ?: throw new \InvalidArgumentException('Unknown research draft');
 	}
@@ -241,7 +241,7 @@ class GrocyAiCaptureResearchService
 			catch (\InvalidArgumentException) { $evidence = null; }
 		}
 		if ($evidence !== null) $names[] = ['value' => $evidence['description'], 'sources' => ['receipt_ocr'], 'provenance' => 'attributed'];
-		return ['id' => (int)$draft['id'], 'line_id' => $lineId, 'seq' => (int)$draft['seq'], 'revision' => (int)$draft['revision'], 'outcome' => $draft['outcome'], 'job_state' => $job['state'], 'safe_error_code' => $job['safe_error_code'], 'scanned_barcode' => $draft['scanned_barcode'], 'canonical_gtin' => $job['canonical_gtin'], 'selected' => $selected, 'suggested' => $suggested, 'name_alternatives' => $names, 'receipt_evidence' => $evidence, 'group_candidates' => $this->GroupCandidates($suggested), 'taxonomy_candidates' => $this->TaxonomyCandidates($suggested), 'possible_existing_products' => $this->PossibleProducts($selected, $suggested), 'final_product_id' => $draft['final_product_id'] === null ? null : (int)$draft['final_product_id']];
+		return ['id' => (int)$draft['id'], 'line_id' => $lineId, 'seq' => (int)$draft['seq'], 'revision' => (int)$draft['revision'], 'outcome' => $draft['outcome'], 'line_status' => $draft['line_status'], 'resolved_product_id' => $draft['resolved_product_id'] === null ? null : (int)$draft['resolved_product_id'], 'resolved_product_name' => $draft['resolved_product_name'], 'job_state' => $job['state'], 'safe_error_code' => $job['safe_error_code'], 'scanned_barcode' => $draft['scanned_barcode'], 'canonical_gtin' => $job['canonical_gtin'], 'selected' => $selected, 'suggested' => $suggested, 'name_alternatives' => $names, 'receipt_evidence' => $evidence, 'group_candidates' => $this->GroupCandidates($suggested), 'taxonomy_candidates' => $this->TaxonomyCandidates($suggested), 'possible_existing_products' => $this->PossibleProducts($selected, $suggested), 'final_product_id' => $draft['final_product_id'] === null ? null : (int)$draft['final_product_id']];
 	}
 
 	private function GroupCandidates(array $suggested): array
