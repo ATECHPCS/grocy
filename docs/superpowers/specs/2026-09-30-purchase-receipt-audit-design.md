@@ -13,6 +13,7 @@ This extends the deployed Phase 8 purchase capture flow. It does not change the 
 - Each receipt line is explicitly **Include**, **Ignore**, or **Needs review**. Receipt-only lines default to excluded from Grocy and need an explicit inclusion action.
 - Ignored receipt lines remain visible and auditable; they do not create a product or stock entry.
 - Users can correct OCR text, matching, price, and quantity before commit. Stock changes only through the existing explicit Commit purchase action.
+- A receipt total difference does not force the user to change the receipt. The user can reconcile the entries or explicitly accept the remaining difference and leave it as is.
 
 ## Architecture
 
@@ -26,7 +27,7 @@ Each receipt carries its own merchant and optional Grocy shopping location. This
 
 ## State and commit rules
 
-Receipt upload starts a receipt in `processing` or `needs_review`; extraction may populate suggestions but never approves a line. A user finishes a receipt only after all its lines have an explicit Include or Ignore decision and its monetary reconciliation is acknowledged. Editing a finished receipt reopens its audit. A trip is ready only when at least one receipt exists, all attached receipts are finished, no included line is unresolved, and each selected stock allocation has a confirmed positive quantity, nonnegative price, and known product. A user may enter or correct values manually when OCR cannot read them. The review UI shows blocking issues and the server repeats the same checks at commit.
+Receipt upload starts a receipt in `processing` or `needs_review`; extraction may populate suggestions but never approves a line. The review shows the printed receipt total, the sum of entered line amounts and recognized adjustments, and their difference. If a difference remains, the user can correct the extracted or entered values to reconcile it, or choose **Accept difference and leave as is**. That choice records the amount, actor, and time in the receipt audit; it never changes a line price or quantity automatically. A user finishes a receipt only after all its lines have an explicit Include or Ignore decision and its total is reconciled or the current difference is explicitly accepted. Editing a finished receipt reopens its audit and clears a prior difference acceptance so the changed values must be reviewed again. A trip is ready only when at least one receipt exists, all attached receipts are finished, no included line is unresolved, and each selected stock allocation has a confirmed positive quantity, nonnegative price, and known product. A user may enter or correct values manually when OCR cannot read them. The review UI shows blocking issues and the server repeats the same checks at commit.
 
 The existing trip checksum must cover the selected stock allocations, confirmed prices and quantities, receipt IDs and revision numbers, matching decisions, and receipt completion state. `CommitTrip` verifies readiness and checksum before and after acquiring its SQLite write lock. Receipt OCR and other network work happen before the lock. Receipt events and stock writes stay auditable. The existing idempotent/partial commit behavior remains, but unresolved receipt audit never starts a new stock write. Already committed trips remain read-only; existing uncommitted trips must attach and audit receipts before their next commit.
 
@@ -38,7 +39,7 @@ The existing `grocy-mcp` instance has no receipt OCR endpoint today. Deploy the 
 
 ## Verification and rollout
 
-Contract tests cover multiple receipts, duplicate/partial matches, receipt-only Ignore and Include, missing price, manual OCR fallback, reopen after edit, multi-store allocations, checksum changes, and the server-side commit guard. Browser tests cover iPhone-sized capture/review controls, photo upload, correction, ignored lines, and blocked/ready commit states. Run PHP syntax and module contract tests in a runtime with `pdo_sqlite`; the local PHP environment previously lacked that extension. Check that receipt images and SQLite data survive a container rebuild through `/etc/komodo/grocy`. Verify a real phone receipt, including one purchased item deliberately excluded from Grocy, before production release.
+Contract tests cover multiple receipts, duplicate/partial matches, receipt-only Ignore and Include, missing price, manual OCR fallback, total reconciliation and explicit difference acceptance, acceptance invalidation after an edit, reopen after edit, multi-store allocations, checksum changes, and the server-side commit guard. Browser tests cover iPhone-sized capture/review controls, photo upload, correction, ignored lines, visible total differences, and blocked/ready commit states. Run PHP syntax and module contract tests in a runtime with `pdo_sqlite`; the local PHP environment previously lacked that extension. Check that receipt images and SQLite data survive a container rebuild through `/etc/komodo/grocy`. Verify a real phone receipt, including one purchased item deliberately excluded from Grocy, before production release.
 
 ## Scope boundary
 
