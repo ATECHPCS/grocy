@@ -93,3 +93,23 @@ writers, preserve the current full-data copy for investigation, and restore the
 verified full backup as one unit; never restore just SQLite while retaining
 mismatched receipt/storage files. Recheck integrity, trip/receipt presence and
 native counts before reopening the household UI.
+
+### Settled provider misses: bounded web-search requeue
+
+The enrollment backfill (`capture-research-backfill.php`) only enrolls missing drafts. It does not requeue settled provisional jobs. Use the separate tool below for trip #12 after deploying the tested worker/fallback. Before apply, take and verify a **full Grocy data-directory backup**, including SQLite, uploaded files, and configuration. This is an operator runbook gate; the CLI does not create a backup.
+
+```sh
+GROCY_DATAPATH=/etc/komodo/grocy php8.5 custom/grocy_AI/bin/capture-web-search-requeue.php --trip=12 --dry-run
+GROCY_DATAPATH=/etc/komodo/grocy php8.5 custom/grocy_AI/bin/capture-web-search-requeue.php --trip=12 --apply --checksum=<SHA256_FROM_REQUEUE_DRY_RUN>
+# Explicit fixture/deployment database paths are also supported:
+php8.5 custom/grocy_AI/bin/capture-web-search-requeue.php --trip=12 --dry-run --db=/absolute/path/grocy.db
+php8.5 custom/grocy_AI/bin/capture-web-search-requeue.php --trip=12 --apply --checksum=<SHA256_FROM_REQUEUE_DRY_RUN> --db=/absolute/path/grocy.db
+```
+
+Review exact candidate job IDs, safe blocker codes, UTC day, daily reservation count, remaining slots, and `max_chargeable_calls` before apply. Trips over 100 lines are refused; apply requires 1–20 eligible jobs. The daily limit follows configuration constants in the database data directory's `config.php`, then `settingoverrides/AI_CAPTURE_WEB_SEARCH_DAILY_LIMIT.txt`, then `GROCY_AI_CAPTURE_WEB_SEARCH_DAILY_LIMIT`, with default 20. Invalid values fail closed; accepted values are integers from 0 through 100000. Zero disables new paid reservations. The shown maximum is based on current UTC slots; other workers can consume slots before queued work runs.
+
+The **requeue checksum is distinct** from enrollment, capture booking, and receipt approval checksums. It covers the full trip/cancellation and relevant line/draft/job state (including revisions and user edits), related drafts/trip activity, existing reservations and their generations, today's reservation IDs/count, UTC day, candidate IDs, and configured limit. Changes require a new preview. Dry-run uses SQLite query-only mode and emits no barcodes or receipt text.
+
+Eligible jobs are unreserved generation-zero settled `needs_input` jobs with a definitive stored v1 provider miss, linked to selected unapplied checksum-valid unresolved unknown lines in the active trip. Finalized drafts, provider errors, and jobs shared with active drafts in another trip are excluded. Apply uses `BEGIN IMMEDIATE`, resets attempts/retry timing/lease/safe error, increments job revision, and appends `grocy_ai:web_search_requeue` audits with actor and job ID. It preserves draft edits, receipt evidence, native rows, and stock, makes no OpenAI request, and does not advance the paid retry generation or reserve payment. Repeated apply is refused. The worker still controls paid reservations and explicit review controls product/link/stock writes.
+
+Fixture verification: `php8.5 custom/grocy_AI/tests/capture_web_search_requeue.php`.
