@@ -70,9 +70,14 @@ jobs. Its `--apply` enrolls drafts and is not a paid-requeue command. Before
 paid backfill, a separately tested bounded procedure must preview unique job
 IDs, active/selected/unapproved eligibility, retry generation, existing
 reservations, UTC remaining capacity and maximum additional chargeable calls.
-Apply only the reviewed set with an auditable actor and revalidate eligibility;
-use the service retry boundary, never direct SQL queue updates. Keep the worker
-paused until preview is approved. Do not use enrollment apply for settled jobs.
+The paid-requeue dry-run must produce a checksum binding the exact bounded job
+set and this relevant state. This checksum is distinct from the enrollment
+checksum. Apply must require the reviewed paid-requeue checksum, revalidate the
+bound job set and state before mutation, and reject any mismatch; obtain a new
+dry-run and review after a mismatch. Apply only that reviewed set with an
+auditable actor through the service retry boundary, never direct SQL queue
+updates. Keep the worker paused until preview is approved. Do not use enrollment
+apply for settled jobs.
 
 At 375px on a physical phone verify source title/domain, safe external links,
 “OpenAI web suggestion — verify UPC”, and “Verify against package”. Compare
