@@ -67,11 +67,12 @@ checkRequeue($db->query('SELECT COUNT(*) FROM grocy_ai_capture_web_search_reserv
 foreach ($preserved as $table=>$rows) checkRequeue($db->query('SELECT * FROM '.$table)->fetchAll(PDO::FETCH_ASSOC)===$rows,'preserve '.$table);
 rejectRequeue(fn()=>captureWebSearchRequeueApply($db,12,$p['checksum']));
 $f=fixtureRequeue(); $f->exec("CREATE TRIGGER fail_audit BEFORE INSERT ON grocy_ai_capture_research_audit BEGIN SELECT RAISE(ABORT,'test failure'); END"); $fp=captureWebSearchRequeuePreview($f,12); rejectRequeue(fn()=>captureWebSearchRequeueApply($f,12,$fp['checksum'])); checkRequeue($f->query('SELECT state FROM grocy_ai_capture_research_jobs')->fetchColumn()==='needs_input','atomic rollback');
-$path=tempnam(sys_get_temp_dir(),'requeue-'); unlink($path); $f=fixtureRequeue(); $f->exec('VACUUM INTO '.$f->quote($path));
+$dir=sys_get_temp_dir().'/requeue-'.bin2hex(random_bytes(6)); mkdir($dir,0700); $path=$dir.'/grocy.db'; $f=fixtureRequeue(); $f->exec('VACUUM INTO '.$f->quote($path));
+file_put_contents($dir.'/config.php', "<?php\nSetting('AI_CAPTURE_WEB_SEARCH_DAILY_LIMIT', 3);\n");
 $cmd=escapeshellarg(PHP_BINARY).' '.escapeshellarg(__DIR__.'/../bin/capture-web-search-requeue.php').' --trip=12 --db='.escapeshellarg($path);
 $fixtureBytes=file_get_contents($path);
-exec($cmd.' --dry-run 2>&1',$output,$status); $cli=json_decode(implode("\n",$output),true); checkRequeue($status===0 && $cli['candidate_ids']===[1],'CLI preview'); checkRequeue(file_get_contents($path)===$fixtureBytes,'CLI dry run leaves database bytes unchanged');
-$output=[]; exec($cmd.' --apply --checksum='.escapeshellarg($cli['checksum']).' 2>&1',$output,$status); checkRequeue($status===0 && json_decode(implode("\n",$output),true)['requeued_ids']===[1],'CLI apply'); unlink($path);
+exec($cmd.' --dry-run 2>&1',$output,$status); $cli=json_decode(implode("\n",$output),true); checkRequeue($status===0 && $cli['candidate_ids']===[1] && $cli['daily_limit']===3,'CLI preview loads Grocy config'); checkRequeue(file_get_contents($path)===$fixtureBytes,'CLI dry run leaves database bytes unchanged');
+$output=[]; exec($cmd.' --apply --checksum='.escapeshellarg($cli['checksum']).' 2>&1',$output,$status); checkRequeue($status===0 && json_decode(implode("\n",$output),true)['requeued_ids']===[1],'CLI apply'); unlink($path); unlink($dir.'/config.php'); rmdir($dir);
 // Daily reservations for unrelated jobs still consume the UTC budget and invalidate previews.
 $f=fixtureRequeue(); $before=captureWebSearchRequeuePreview($f,12);
 for ($i=2;$i<=22;$i++)

@@ -126,7 +126,12 @@ if (isset($_SERVER['SCRIPT_FILENAME']) && realpath((string)$_SERVER['SCRIPT_FILE
 		$dbPath = $options['db'] ?? ($dataPath !== false && str_starts_with($dataPath, '/') ? rtrim($dataPath, '/') . '/grocy.db' : null);
 		if (!is_string($dbPath) || !str_starts_with($dbPath, '/') || !is_file($dbPath)) throw new RuntimeException('Set an absolute database path');
 		$configPath = dirname($dbPath) . '/config.php';
-		if (is_file($configPath)) require $configPath;
+		if (is_file($configPath))
+		{
+			define('GROCY_DATAPATH', dirname($dbPath));
+			require_once __DIR__ . '/../../../helpers/extensions.php';
+			require $configPath;
+		}
 		$override = dirname($dbPath) . '/settingoverrides/AI_CAPTURE_WEB_SEARCH_DAILY_LIMIT.txt';
 		if (!defined('GROCY_AI_CAPTURE_WEB_SEARCH_DAILY_LIMIT') && is_file($override)) define('GROCY_AI_CAPTURE_WEB_SEARCH_DAILY_LIMIT', trim((string)file_get_contents($override)));
 		$db = new PDO('sqlite:' . $dbPath, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
