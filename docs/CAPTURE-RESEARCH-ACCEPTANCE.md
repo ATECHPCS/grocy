@@ -63,11 +63,11 @@ The existing enrollment preview remains read-only:
 GROCY_DATAPATH=/etc/komodo/grocy php8.5 custom/grocy_AI/bin/capture-research-backfill.php --trip=12 --dry-run
 ```
 
-**Release blocker for paid trip #12 requeue:** this command previews eligible
+**Paid trip #12 requeue:** the enrollment command above previews eligible
 unknown capture **line IDs** and enrollment checksum. It does not list existing
 provisional job IDs, calculate remaining paid reservations, or retry settled
-jobs. Its `--apply` enrolls drafts and is not a paid-requeue command. Before
-paid backfill, a separately tested bounded procedure must preview unique job
+jobs. Its `--apply` enrolls drafts and is not a paid-requeue command. For
+paid backfill, the dedicated requeue CLI previews unique job
 IDs, active/selected/unapproved eligibility, retry generation, existing
 reservations, UTC remaining capacity and maximum additional chargeable calls.
 The paid-requeue dry-run must produce a checksum binding the exact bounded job
@@ -75,9 +75,14 @@ set and this relevant state. This checksum is distinct from the enrollment
 checksum. Apply must require the reviewed paid-requeue checksum, revalidate the
 bound job set and state before mutation, and reject any mismatch; obtain a new
 dry-run and review after a mismatch. Apply only that reviewed set with an
-auditable actor through the service retry boundary, never direct SQL queue
-updates. Keep the worker paused until preview is approved. Do not use enrollment
-apply for settled jobs.
+auditable actor using `custom/grocy_AI/bin/capture-web-search-requeue.php`
+`--trip=12 --dry-run`, then `--apply --checksum=<REVIEWED_SHA256>` against the
+same deployment database. This dedicated CLI performs bounded transactional
+queue updates and append-only audits while preserving generation zero. Do not
+use the normal service `RetryJob` boundary for this rollout: it advances the paid
+retry generation and would consume the explicit additional paid retry allowance.
+Keep the worker paused until preview is approved. Do not use enrollment apply
+for settled jobs.
 
 At 375px on a physical phone verify source title/domain, safe external links,
 “OpenAI web suggestion — verify UPC”, and “Verify against package”. Compare

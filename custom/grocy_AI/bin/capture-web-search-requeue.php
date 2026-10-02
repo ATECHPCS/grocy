@@ -11,6 +11,24 @@ function captureWebSearchRequeueDailyLimit(): int
 	return (int)$value;
 }
 
+function captureWebSearchRequeueIsDefinitiveProviderMiss(mixed $result, string $canonical): bool
+{
+	if (!is_array($result)) return false;
+	$required = ['contract_version', 'canonical_gtin', 'outcome', 'name_candidates', 'brand', 'package', 'categories', 'sources'];
+	$allowed = array_merge($required, ['name_candidate_sources']);
+	if (array_diff($required, array_keys($result)) !== [] || array_diff(array_keys($result), $allowed) !== []) return false;
+
+	return $result['contract_version'] === 1
+		&& $result['canonical_gtin'] === $canonical
+		&& $result['outcome'] === 'miss'
+		&& $result['name_candidates'] === []
+		&& $result['brand'] === null
+		&& $result['package'] === null
+		&& $result['categories'] === []
+		&& $result['sources'] === []
+		&& (!array_key_exists('name_candidate_sources', $result) || $result['name_candidate_sources'] === []);
+}
+
 function captureWebSearchRequeuePreview(PDO $db, int $tripId): array
 {
 	if ($tripId < 1) throw new InvalidArgumentException('Trip ID must be positive');
@@ -48,7 +66,7 @@ function captureWebSearchRequeuePreview(PDO $db, int $tripId): array
 		elseif ($job['canonical_gtin'] !== $canonical || GrocyAI\Services\GrocyAiGtin::CanonicalOrNull($draft['scanned_barcode']) !== $canonical) $reason = 'invalid_gtin';
 		elseif ($draft['final_product_id'] !== null || $draft['outcome'] !== 'needs_input') $reason = 'finalized_or_unsettled_draft';
 		elseif ($job['state'] !== 'needs_input' || $job['safe_error_code'] !== null || (int)$job['result_revision'] < 1 || (int)$job['retry_generation'] !== 0) $reason = 'unsettled_or_retried_job';
-		elseif (!is_array($result) || ($result['contract_version'] ?? null) !== 1 || ($result['canonical_gtin'] ?? null) !== $canonical || ($result['outcome'] ?? null) !== 'miss' || ($result['name_candidates'] ?? null) !== [] || ($result['sources'] ?? null) !== [] || array_key_exists('error_code', $result) || array_diff(['brand', 'package', 'categories'], array_keys($result)) || $result['brand'] !== null || $result['package'] !== null || $result['categories'] !== [] || array_diff(array_keys($result), ['contract_version', 'canonical_gtin', 'outcome', 'name_candidates', 'brand', 'package', 'categories', 'sources', 'name_candidate_sources']) || (array_key_exists('name_candidate_sources', $result) && $result['name_candidate_sources'] !== [])) $reason = 'not_definitive_provider_miss';
+		elseif (!captureWebSearchRequeueIsDefinitiveProviderMiss($result, $canonical)) $reason = 'not_definitive_provider_miss';
 		elseif ($reservations !== []) $reason = 'paid_reservation';
 		if ($reason === null)
 		{

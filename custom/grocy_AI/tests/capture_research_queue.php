@@ -7,6 +7,21 @@ use GrocyAI\Services\GrocyAiCaptureResearchMigration;
 use GrocyAI\Services\GrocyAiCaptureResearchService;
 use GrocyAI\Services\GrocyAiCaptureService;
 
+// The concurrency assertion is a required gate, so unsupported runtimes fail explicitly.
+$requiredFunctions = ['pcntl_fork', 'pcntl_waitpid', 'pcntl_wexitstatus', 'stream_socket_pair'];
+if (PHP_OS_FAMILY === 'Windows' || !defined('STREAM_PF_UNIX') || array_filter($requiredFunctions, static fn(string $name): bool => !function_exists($name)) !== [])
+{
+	fwrite(STDERR, "capture research queue requires pcntl_fork, pcntl_waitpid, pcntl_wexitstatus and Unix stream sockets; run on a supported Unix PHP CLI runtime\n");
+	exit(1);
+}
+$prerequisiteSockets = @stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, 0);
+if ($prerequisiteSockets === false)
+{
+	fwrite(STDERR, "capture research queue requires working Unix stream sockets\n");
+	exit(1);
+}
+foreach ($prerequisiteSockets as $socket) fclose($socket);
+
 foreach (['GrocyAiGtin', 'GrocyAiBarcodeService', 'GrocyAiCaptureMigration', 'GrocyAiReceiptMigration', 'GrocyAiReceiptService', 'GrocyAiCaptureResearchMigration', 'GrocyAiCaptureResearchService', 'GrocyAiCaptureService'] as $file)
 {
 	$path = __DIR__ . '/../src/' . $file . '.php';
@@ -139,6 +154,11 @@ $db->exec("UPDATE grocy_ai_capture_lines SET scanned_barcode = '4006381333931' W
 $db->exec("UPDATE grocy_ai_capture_research_drafts SET outcome = 'approved' WHERE line_id = " . $otherLineId);
 checkResearch(!$research->ReserveWebSearch($a['id'], $a['lease_token'], 'worker')['allowed'], 'finalized draft denied even if stale line remains unknown');
 $db->exec("UPDATE grocy_ai_capture_research_drafts SET outcome = 'pending' WHERE line_id = " . $otherLineId);
+// A failed eligibility query is infrastructure failure, never a normal denial.
+$db->exec('ALTER TABLE grocy_ai_capture_lines RENAME TO unavailable_capture_lines');
+rejectsResearch(fn() => $research->ReserveWebSearch($a['id'], $a['lease_token'], 'worker'), 'eligibility database error must propagate');
+checkResearch(!$db->inTransaction(), 'eligibility database error rolls back reservation transaction');
+$db->exec('ALTER TABLE unavailable_capture_lines RENAME TO grocy_ai_capture_lines');
 $reservation = $research->ReserveWebSearch($a['id'], $a['lease_token'], 'worker');
 checkResearch($reservation['allowed'] && is_int($reservation['reservation_id']), 'first generation reserves');
 // Race two processes for the final daily slot using independent SQLite connections.
@@ -152,6 +172,7 @@ $children = [];
 foreach ([$b, $c] as $index => $claim)
 {
 	$pair = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, 0);
+	checkResearch($pair !== false, 'reservation race Unix socket pair succeeds');
 	$pid = pcntl_fork();
 	checkResearch($pid >= 0, 'reservation race fork succeeds');
 	if ($pid === 0)

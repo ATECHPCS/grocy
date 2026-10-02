@@ -326,6 +326,10 @@ class GrocyAiCaptureResearchService
 			$this->RequireLiveLease($job);
 			$decision = ['allowed' => false, 'reason' => 'ineligible', 'reservation_id' => null];
 			try { $this->LookupBarcodeForJob($jobId, $job['canonical_gtin']); }
+			catch (\PDOException $ex)
+			{
+				throw $ex;
+			}
 			catch (\RuntimeException)
 			{
 				$this->Db->commit();

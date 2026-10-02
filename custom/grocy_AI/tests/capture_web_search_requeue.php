@@ -4,6 +4,27 @@ foreach (['GrocyAiGtin', 'GrocyAiBarcodeService', 'GrocyAiCaptureMigration', 'Gr
 function checkRequeue(bool $ok, string $message): void { if (!$ok) throw new RuntimeException($message); }
 checkRequeue(is_file(__DIR__ . '/../bin/capture-web-search-requeue.php'), 'Missing bounded settled-job requeue CLI');
 require_once __DIR__ . '/../bin/capture-web-search-requeue.php';
+checkRequeue(function_exists('captureWebSearchRequeueIsDefinitiveProviderMiss'), 'named conservative provider miss predicate exists');
+$miss = ['contract_version' => 1, 'canonical_gtin' => '04006381333931', 'outcome' => 'miss', 'name_candidates' => [], 'brand' => null, 'package' => null, 'categories' => [], 'sources' => []];
+checkRequeue(captureWebSearchRequeueIsDefinitiveProviderMiss($miss, $miss['canonical_gtin']), 'complete v1 miss accepted');
+foreach (array_keys($miss) as $field)
+{
+	$bad = $miss; unset($bad[$field]);
+	checkRequeue(!captureWebSearchRequeueIsDefinitiveProviderMiss($bad, $miss['canonical_gtin']), 'missing miss field denied: ' . $field);
+	$bad = $miss; $bad[$field] = 'unexpected';
+	checkRequeue(!captureWebSearchRequeueIsDefinitiveProviderMiss($bad, $miss['canonical_gtin']), 'wrong miss field denied: ' . $field);
+}
+foreach (['error_code', 'web_evidence', 'extra'] as $field)
+{
+	$bad = $miss; $bad[$field] = null;
+	checkRequeue(!captureWebSearchRequeueIsDefinitiveProviderMiss($bad, $miss['canonical_gtin']), 'extra miss field denied: ' . $field);
+}
+$miss['name_candidate_sources'] = [];
+checkRequeue(captureWebSearchRequeueIsDefinitiveProviderMiss($miss, $miss['canonical_gtin']), 'optional empty provenance accepted');
+$miss['name_candidate_sources'] = ['openfoodfacts'];
+checkRequeue(!captureWebSearchRequeueIsDefinitiveProviderMiss($miss, $miss['canonical_gtin']), 'nonempty provenance denied');
+foreach ([null, false, 'miss', []] as $bad) checkRequeue(!captureWebSearchRequeueIsDefinitiveProviderMiss($bad, '04006381333931'), 'non-result denied');
+
 function fixtureRequeue(): PDO
 {
 	$db = new PDO('sqlite::memory:', null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
