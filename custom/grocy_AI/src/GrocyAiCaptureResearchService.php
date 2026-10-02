@@ -250,7 +250,12 @@ class GrocyAiCaptureResearchService
 		{
 			$sources = $suggested['name_candidate_sources'][$index] ?? [];
 			if (!is_array($sources)) $sources = [];
-			$names[] = ['value' => $name, 'sources' => $sources, 'provenance' => $sources === [] ? 'unknown' : 'attributed'];
+			$candidate = ['value' => $name, 'sources' => $sources, 'provenance' => $sources === [] ? 'unknown' : 'attributed'];
+			foreach ($suggested['web_evidence'] ?? [] as $webEvidence)
+			{
+				if ($webEvidence['candidate_index'] === $index) $candidate['web_evidence'] = ['exact_gtin_claim' => $webEvidence['exact_gtin_claim'], 'citations' => $webEvidence['citations']];
+			}
+			$names[] = $candidate;
 		}
 		$evidence = null;
 		if ($draft['receipt_line_id'] !== null)
@@ -529,19 +534,32 @@ class GrocyAiCaptureResearchService
 		return ['id' => (int)$job['id'], 'state' => $job['state'], 'result_revision' => (int)$job['result_revision']];
 	}
 
+	private static function CitationDomain(mixed $url): string
+	{
+		// Links only: never fetch citation pages. The companion also validates resolved addresses.
+		if (!is_string($url) || strlen($url) > 2048 || preg_match('/[\s\\\\]|\p{C}|%(?![0-9a-f]{2})|%(?:0[0-9a-f]|1[0-9a-f]|7f)/iu', $url)) throw new \InvalidArgumentException('Invalid citation URL');
+		$parts = parse_url($url);
+		$host = strtolower($parts['host'] ?? '');
+		if ($parts === false || ($parts['scheme'] ?? '') !== 'https' || isset($parts['user']) || isset($parts['pass']) || isset($parts['port']) && $parts['port'] !== 443 || !preg_match('/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/D', $host) || strlen($host) > 253 || preg_match('/\.(?:local|localhost|internal|lan|test|invalid|example)$/D', $host)) throw new \InvalidArgumentException('Invalid citation host');
+		return $host;
+	}
+
 	private static function NormalizeResult(array $result, string $canonical): array
 	{
 		$required = ['contract_version', 'canonical_gtin', 'outcome', 'name_candidates', 'brand', 'package', 'categories', 'sources'];
+		$v2 = ($result['contract_version'] ?? null) === 2;
+		if ($v2) $required[] = 'web_evidence';
 		$allowed = array_merge($required, ['error_code', 'name_candidate_sources']);
-		if (array_diff($required, array_keys($result)) || array_diff(array_keys($result), $allowed) || $result['contract_version'] !== 1 || $result['canonical_gtin'] !== $canonical || !in_array($result['outcome'], ['found', 'miss', 'retryable_failure'], true)) throw new \InvalidArgumentException('Invalid research result');
+		$allowedSources = $v2 ? ['bb-federation', 'openfoodfacts', 'openai-web'] : ['bb-federation', 'openfoodfacts'];
+		if (array_diff($required, array_keys($result)) || array_diff(array_keys($result), $allowed) || !in_array($result['contract_version'], [1, 2], true) || $result['canonical_gtin'] !== $canonical || !in_array($result['outcome'], ['found', 'miss', 'retryable_failure'], true)) throw new \InvalidArgumentException('Invalid research result');
 		foreach (['name_candidates' => [8, 200], 'categories' => [3, 100], 'sources' => [2, 32]] as $field => [$count, $length])
 		{
 			if (!is_array($result[$field]) || !array_is_list($result[$field]) || count($result[$field]) > $count) throw new \InvalidArgumentException('Invalid research result');
-			foreach ($result[$field] as $value) if (!is_string($value) || trim($value) !== $value || $value === '' || mb_strlen($value) > $length) throw new \InvalidArgumentException('Invalid research result');
+			foreach ($result[$field] as $value) if (!is_string($value) || trim($value) !== $value || $value === '' || mb_strlen($value) > $length || preg_match('/\p{C}/u', $value)) throw new \InvalidArgumentException('Invalid research result');
 			if (count(array_unique($result[$field])) !== count($result[$field])) throw new \InvalidArgumentException('Invalid research result');
 		}
-		foreach (['brand', 'package'] as $field) if ($result[$field] !== null && (!is_string($result[$field]) || trim($result[$field]) !== $result[$field] || $result[$field] === '' || mb_strlen($result[$field]) > 200)) throw new \InvalidArgumentException('Invalid research result');
-		foreach ($result['sources'] as $source) if (!in_array($source, ['bb-federation', 'openfoodfacts'], true)) throw new \InvalidArgumentException('Invalid research result');
+		foreach (['brand', 'package'] as $field) if ($result[$field] !== null && (!is_string($result[$field]) || trim($result[$field]) !== $result[$field] || $result[$field] === '' || mb_strlen($result[$field]) > 200 || preg_match('/\p{C}/u', $result[$field]))) throw new \InvalidArgumentException('Invalid research result');
+		foreach ($result['sources'] as $source) if (!in_array($source, $allowedSources, true)) throw new \InvalidArgumentException('Invalid research result');
 		if (array_key_exists('name_candidate_sources', $result))
 		{
 			$attribution = $result['name_candidate_sources'];
@@ -549,7 +567,7 @@ class GrocyAiCaptureResearchService
 			foreach ($attribution as $candidateSources)
 			{
 				if (!is_array($candidateSources) || !array_is_list($candidateSources) || count($candidateSources) > 2) throw new \InvalidArgumentException('Invalid name candidate sources');
-				foreach ($candidateSources as $source) if (!is_string($source) || !in_array($source, ['bb-federation', 'openfoodfacts'], true) || !in_array($source, $result['sources'], true)) throw new \InvalidArgumentException('Invalid name candidate source');
+				foreach ($candidateSources as $source) if (!is_string($source) || !in_array($source, $allowedSources, true) || !in_array($source, $result['sources'], true)) throw new \InvalidArgumentException('Invalid name candidate source');
 				if (count(array_unique($candidateSources)) !== count($candidateSources)) throw new \InvalidArgumentException('Duplicate name candidate source');
 			}
 		}
@@ -561,6 +579,24 @@ class GrocyAiCaptureResearchService
 			if (($result['error_code'] ?? null) !== 'provider_unavailable') throw new \InvalidArgumentException('Invalid research result');
 		}
 		elseif (array_key_exists('error_code', $result)) throw new \InvalidArgumentException('Invalid research result');
+		if ($v2)
+		{
+			$web = $result['web_evidence'];
+			if (!is_array($web) || !array_is_list($web) || count($web) > 1) throw new \InvalidArgumentException('Invalid web evidence');
+			$isWeb = in_array('openai-web', $result['sources'], true);
+			if ($isWeb && ($result['sources'] !== ['openai-web'] || $result['outcome'] !== 'found' || count($result['name_candidates']) !== 1 || ($result['name_candidate_sources'] ?? null) !== [['openai-web']] || count($web) !== 1)) throw new \InvalidArgumentException('Invalid web attribution');
+			if (!$isWeb && $web !== []) throw new \InvalidArgumentException('Invalid web attribution');
+			foreach ($web as $index => $evidence)
+			{
+				if (!is_array($evidence) || count($evidence) !== 3 || !isset($evidence['candidate_index'], $evidence['exact_gtin_claim'], $evidence['citations']) || $evidence['candidate_index'] !== 0 || !is_bool($evidence['exact_gtin_claim']) || !is_array($evidence['citations']) || !array_is_list($evidence['citations']) || count($evidence['citations']) < 1 || count($evidence['citations']) > 2) throw new \InvalidArgumentException('Invalid web evidence');
+				foreach ($evidence['citations'] as $citationIndex => $citation)
+				{
+					if (!is_array($citation) || count($citation) !== 2 || !isset($citation['title'], $citation['url']) || !is_string($citation['title']) || trim($citation['title']) !== $citation['title'] || $citation['title'] === '' || mb_strlen($citation['title']) > 200 || preg_match('/\p{C}/u', $citation['title'])) throw new \InvalidArgumentException('Invalid web citation');
+					$domain = self::CitationDomain($citation['url']);
+					$result['web_evidence'][$index]['citations'][$citationIndex]['domain'] = $domain;
+				}
+			}
+		}
 		return $result;
 	}
 }

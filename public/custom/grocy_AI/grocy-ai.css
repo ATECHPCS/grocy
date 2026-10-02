@@ -881,3 +881,6 @@ details.grocy-ai-diagnostics:not([open]) > .grocy-ai-diagnostic-body {
 .grocy-ai-product-research input, .grocy-ai-product-research select, .grocy-ai-product-research button { min-height: 44px; font-size: 16px; max-width: 100%; }
 .grocy-ai-product-research-actions { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0; }
 .grocy-ai-product-research-status { font-weight: 600; }
+
+.grocy-ai-product-research-web { min-width: 0; overflow-wrap: anywhere; }
+.grocy-ai-product-research-web a { display: block; max-width: 100%; white-space: normal; overflow-wrap: anywhere; word-break: break-word; }

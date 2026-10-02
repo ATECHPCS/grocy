@@ -230,4 +230,32 @@ checkResearch($controller->ReserveWebSearch($request->withParsedBody(['lease_tok
 $response = $controller->ReserveWebSearch($request, $factory->createResponse(), $args);
 checkResearch($response->getStatusCode() === 200 && json_decode((string)$response->getBody(), true) === ['allowed' => false, 'reason' => 'already_reserved', 'reservation_id' => 2], 'reservation response exposes only safe decision');
 
+// A missing v2 validator or relaxed evidence boundary must fail these tests.
+$normalize = new ReflectionMethod(GrocyAiCaptureResearchService::class, 'NormalizeResult');
+$web = ['contract_version' => 2, 'canonical_gtin' => '04006381333931', 'outcome' => 'found', 'name_candidates' => ['Web cereal'], 'brand' => null, 'package' => null, 'categories' => [], 'sources' => ['openai-web'], 'name_candidate_sources' => [['openai-web']], 'web_evidence' => [['candidate_index' => 0, 'exact_gtin_claim' => false, 'citations' => [['title' => 'Cereal listing', 'url' => 'https://example.com/product']]]]];
+$normalized = $normalize->invoke(null, $web, $web['canonical_gtin']);
+checkResearch($normalized['web_evidence'][0]['citations'][0] === ['title' => 'Cereal listing', 'url' => 'https://example.com/product', 'domain' => 'example.com'], 'OpenAI citation domain derived from URL');
+foreach (['https://example.com/%zz', 'https:///missing-host', 'https://example.com:bad/a', 'https://example.test/a', 'https://example.internal/a', 'https://example.com@localhost/a', 'javascript:alert(1)', 'https://127.0.0.1/a', 'https://10.0.0.1/a', 'https://[::1]/a', 'https://localhost/a', 'https://host.local/a', 'https://example.com:444/a', 'https://user@example.com/a', "https://example.com/\n", 'https://example.com/%0a', 'https://example.com\\@127.0.0.1/a'] as $url)
+{
+	$bad = $web; $bad['web_evidence'][0]['citations'][0]['url'] = $url;
+	deniesResearch(fn() => $normalize->invoke(null, $bad, $web['canonical_gtin']), 'unsafe OpenAI citation URL rejected: ' . $url);
+}
+foreach (['extra', 'index', 'claim', 'title', 'empty', 'version', 'missing', 'name'] as $case)
+{
+	$bad = $web;
+	if ($case === 'extra') $bad['web_evidence'][0]['raw_response'] = 'secret';
+	if ($case === 'index') $bad['web_evidence'][0]['candidate_index'] = 1;
+	if ($case === 'claim') $bad['web_evidence'][0]['exact_gtin_claim'] = 'true';
+	if ($case === 'title') $bad['web_evidence'][0]['citations'][0]['title'] = "Bad\x00title";
+	if ($case === 'empty') $bad['web_evidence'][0]['citations'] = [];
+	if ($case === 'version') $bad['contract_version'] = 1;
+	if ($case === 'missing') unset($bad['web_evidence']);
+	if ($case === 'name') $bad['name_candidates'] = ["Bad\x00name"];
+	deniesResearch(fn() => $normalize->invoke(null, $bad, $web['canonical_gtin']), 'malformed OpenAI evidence rejected: ' . $case);
+}
+$v1 = $web; $v1['contract_version'] = 1; $v1['sources'] = ['openfoodfacts']; $v1['name_candidate_sources'] = [['openfoodfacts']]; unset($v1['web_evidence']);
+checkResearch($normalize->invoke(null, $v1, $v1['canonical_gtin']) === $v1, 'provider-only version 1 unchanged');
+$miss = $v1; $miss['contract_version'] = 2; $miss['outcome'] = 'miss'; $miss['name_candidates'] = []; $miss['name_candidate_sources'] = []; $miss['web_evidence'] = [];
+checkResearch($normalize->invoke(null, $miss, $miss['canonical_gtin']) === $miss, 'inconclusive version 2 remains needs input');
+
 echo "capture research queue: PASS\n";

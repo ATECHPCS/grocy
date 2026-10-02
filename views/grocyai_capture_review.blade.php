@@ -1,7 +1,7 @@
 @extends('layout.default')
 
 @php
-$grocyAiAssetVersion = '2.6.5';
+$grocyAiAssetVersion = '2.6.6';
 @endphp
 @push('pageStyles')
 <link rel="stylesheet"

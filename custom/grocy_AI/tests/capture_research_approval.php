@@ -39,6 +39,17 @@ $research->EnqueueUnknown(2, 2, '04006381333931');
 $research->EnqueueUnknown(1, 4, '96385074');
 $draft = $research->DraftsForTrip(1)[0];
 $revision = (int)$draft['revision'];
+// Completing web research may suggest a name but must preserve reviewer edits and native state.
+$draft = $research->UpdateDraft(1, 1, $revision, ['name' => 'Reviewer cereal'], 'test');
+$claim = $research->ClaimJobs(1, 'test')[0];
+$research->CompleteJob($claim['id'], $claim['lease_token'], ['contract_version' => 2, 'canonical_gtin' => $claim['canonical_gtin'], 'outcome' => 'found', 'name_candidates' => ['Web cereal'], 'brand' => null, 'package' => null, 'categories' => [], 'sources' => ['openai-web'], 'name_candidate_sources' => [['openai-web']], 'web_evidence' => [['candidate_index' => 0, 'exact_gtin_claim' => false, 'citations' => [['title' => 'Cereal', 'url' => 'https://example.com/cereal']]]]]);
+$draft = $research->ReviewForTrip(1)['drafts'][0];
+$revision = $draft['revision'];
+approvalCheck($draft['selected']['name'] === 'Reviewer cereal', 'OpenAI completion preserves reviewer name');
+approvalCheck($draft['name_alternatives'][0]['web_evidence']['citations'][0]['domain'] === 'example.com', 'review DTO exposes bounded OpenAI evidence');
+approvalCheck($draft['group_candidates'] === [] && $draft['taxonomy_candidates'] === [] && $draft['receipt_evidence'] === null, 'web evidence selects no classification or receipt');
+approvalCheck((int)$db->query('SELECT COUNT(*) FROM stock_log')->fetchColumn() === 0, 'OpenAI completion never writes stock');
+
 $fields = ['name' => 'Test cereal', 'location_id' => 1, 'qu_id_purchase' => 1, 'qu_id_stock' => 1, 'product_group_id' => 1];
 approvalCheck((int)$db->query('SELECT COUNT(*) FROM products')->fetchColumn() === 0 && (int)$db->query('SELECT COUNT(*) FROM product_barcodes')->fetchColumn() === 0, 'research has no native writes');
 $approval = new GrocyAI\Services\GrocyAiCaptureProductService($db);
