@@ -125,6 +125,28 @@
 				{
 					var label = node('p', null, candidate.value + ' — ' + (candidate.sources.length ? candidate.sources.map(function (source) { return sources[source] || source; }).join(', ') : 'Source unknown'));
 					names.appendChild(label);
+					if (candidate.sources.indexOf('openai-web') !== -1 && candidate.web_evidence)
+					{
+						var web = node('div', 'grocy-ai-product-research-web');
+						web.appendChild(node('strong', null, 'OpenAI web suggestion — verify UPC'));
+						web.appendChild(node('p', null, 'Verify against package'));
+						web.appendChild(node('p', null, candidate.web_evidence.exact_gtin_claim ? 'Source claims this exact GTIN; verify against package.' : 'Exact GTIN association is unconfirmed.'));
+						(candidate.web_evidence.citations || []).forEach(function (citation)
+						{
+							try
+							{
+								var url = new URL(citation.url);
+								if (typeof citation.url !== 'string' || citation.url.length > 2048 || /[\s\\\x00-\x1f\x7f]|%(?![0-9a-f]{2})|%(?:0[0-9a-f]|1[0-9a-f]|7f)/i.test(citation.url) || url.protocol !== 'https:' || url.username || url.password || url.port && url.port !== '443' || url.hostname !== citation.domain || !/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(url.hostname) || /\.(local|localhost|internal|lan|test|invalid|example|arpa|onion|alt|home|corp|mail)$/.test(url.hostname) || typeof citation.title !== 'string' || !citation.title || citation.title.length > 400 || /[\x00-\x1f\x7f]/.test(citation.title)) return;
+								var anchor = node('a', null, citation.title + ' — ' + citation.domain);
+								anchor.href = citation.url;
+								anchor.target = '_blank';
+								anchor.rel = 'noopener noreferrer';
+								web.appendChild(anchor);
+							}
+							catch (error) { /* Invalid citations remain noninteractive. */ }
+						});
+						names.appendChild(web);
+					}
 				});
 				card.appendChild(names);
 			}

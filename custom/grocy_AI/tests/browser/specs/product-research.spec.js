@@ -295,3 +295,52 @@ test('saved local classification stays selected across reload despite another pr
 	await expect(page.getByLabel('Product group')).toHaveValue('4');
 	await expect(page.getByLabel('Food classification')).toHaveValue('produce');
 });
+
+
+test('OpenAI web suggestion shows safe citations on narrow screens without persistence', async ({ page }) =>
+{
+	const data = await setup(page);
+	data.draft.selected.name = 'Reviewer name';
+	data.draft.name_alternatives = [{ value: '<img src=x onerror=alert(1)>', sources: ['openai-web'], provenance: 'attributed', web_evidence: { exact_gtin_claim: false, citations: [{ title: '<b>Package source</b>', domain: 'example.com', url: 'https://example.com/' + 'a'.repeat(500) }] } }];
+	data.draft.group_candidates = []; data.draft.taxonomy_candidates = []; data.draft.receipt_evidence = null;
+	await page.setViewportSize({ width: 320, height: 700 });
+	await page.locator('#grocyai-capture-review-trips button').click();
+	await expect(page.getByText('OpenAI web suggestion — verify UPC')).toBeVisible();
+	await expect(page.getByText('Verify against package')).toBeVisible();
+	const link = page.locator('.grocy-ai-product-research-web a');
+	await expect(link).toHaveAttribute('target', '_blank');
+	await expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+	await expect(link).toContainText('<b>Package source</b>');
+	await expect(link).toContainText('example.com');
+	await expect(page.getByLabel('Proposed name')).toHaveValue('Reviewer name');
+	await expect(page.getByLabel('Product group')).toHaveValue('');
+	await expect(page.getByLabel('Food classification')).toHaveValue('');
+	await expect(page.getByRole('button', { name: 'Commit purchase' })).toBeDisabled();
+	expect(data.writes).toEqual([]);
+	expect(await link.evaluate(el => el.getBoundingClientRect().right <= window.innerWidth)).toBe(true);
+	await expect(page.locator('.grocy-ai-product-research-names img')).toHaveCount(0);
+});
+
+test('OpenAI unsafe citation URLs never become links', async ({ page }) =>
+{
+	const data = await setup(page);
+	data.draft.name_alternatives = [{ value: 'Web name', sources: ['openai-web'], provenance: 'attributed', web_evidence: { exact_gtin_claim: true, citations: ['javascript:alert(1)', 'https://127.0.0.1/a', 'https://example.com/a'].map(url => ({ title: 'Source', domain: 'wrong.example', url })) } }];
+	await page.locator('#grocyai-capture-review-trips button').click();
+	await expect(page.getByText('OpenAI web suggestion — verify UPC')).toBeVisible();
+	await expect(page.locator('.grocy-ai-product-research-web a')).toHaveCount(0);
+	expect(data.writes).toEqual([]);
+});
+
+
+test('OpenAI special-use citation hosts are rejected while public domains remain linked', async ({ page }) =>
+{
+	const data = await setup(page);
+	for (const host of ['router.home.arpa', 'hidden.onion', 'node.alt', 'router.home', 'intranet.corp', 'server.mail', 'node.arpa', 'host.local', 'host.localhost', 'host.internal', 'host.lan', 'host.test', 'host.invalid', 'host.example', 'www.openfoodfacts.org'])
+	{
+		data.draft.name_alternatives = [{ value: 'Web name', sources: ['openai-web'], provenance: 'attributed', web_evidence: { exact_gtin_claim: false, citations: [{ title: 'Source', domain: host, url: 'https://' + host + '/product' }] } }];
+		await page.locator('#grocyai-capture-review-trips button').click();
+		await expect(page.getByText('OpenAI web suggestion — verify UPC')).toBeVisible();
+		await expect(page.locator('.grocy-ai-product-research-web a')).toHaveCount(host === 'www.openfoodfacts.org' ? 1 : 0);
+	}
+	expect(data.writes).toEqual([]);
+});

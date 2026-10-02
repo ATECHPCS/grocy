@@ -1,6 +1,7 @@
 custom/grocy_AI/README.md
 custom/grocy_AI/bin/activate-verified-conversion-ruleset.php
 custom/grocy_AI/bin/audit-conversions.php
+custom/grocy_AI/bin/capture-web-search-requeue.php
 custom/grocy_AI/bin/snapshot-refresh.sh
 custom/grocy_AI/bin/snapshot-scrub.sql
 custom/grocy_AI/bin/validate-conversion-rules.php
@@ -59,6 +60,7 @@ custom/grocy_AI/tests/bulk.php
 custom/grocy_AI/tests/capture.php
 custom/grocy_AI/tests/capture_native_snapshot.php
 custom/grocy_AI/tests/capture_native_transaction.php
+custom/grocy_AI/tests/capture_web_search_requeue.php
 custom/grocy_AI/tests/categorization.php
 custom/grocy_AI/tests/check-portable-parity.sh
 custom/grocy_AI/tests/conversion-characterization.php

@@ -546,3 +546,37 @@ GROCY_DATAPATH=/etc/komodo/grocy php8.5 custom/grocy_AI/bin/capture-research-bac
 Apply locks SQLite for the duration, recalculates the trip/line checksum, and aborts if status, cancellation, selection, barcode, quantity, or another included line value changed. Run a fresh preview after any refusal. Repeating an accepted apply is safe: existing research drafts are reused, and `created_count` reports newly queued drafts. This command writes only namespaced research job, draft, and audit rows. It does not create products, attach barcodes, change receipt/capture rows, or book stock. The companion may start researching queued GTINs; product approval and purchase commit remain explicit separate actions. `--db=PATH` is for isolated fixture verification; omit it on the household deployment.
 
 Follow [capture research release acceptance](../../docs/CAPTURE-RESEARCH-ACCEPTANCE.md) for backup, count, phone, and rollback checks. The local focused test is `php8.5 custom/grocy_AI/tests/capture_research_backfill.php`.
+
+### Paid web search reservations
+
+The worker must reserve before each paid search through `POST /api/grocy-ai/capture/research/jobs/{jobId}/web-search/reserve`, using its existing API credential and worker key and a body containing only `lease_token`. Call the provider only when `allowed` is true. Duplicate or reclaimed leases return `already_reserved` with the original reservation ID and never authorize another search. The durable UTC daily ceiling is `GROCY_AI_CAPTURE_WEB_SEARCH_DAILY_LIMIT` (default 20; zero disables new reservations). Spent slots are never refunded. An explicit audited Retry action permits one additional paid generation per canonical GTIN; subsequent manual retries can still query ordinary providers but cannot spend again. The reservation table stores identifiers, UTC day, actor, generation, and timestamp only.
+
+### OpenAI web suggestion review
+
+The companion may complete research with contract version 2 and `web_evidence`; provider-only version 1 remains supported. A web result has exactly one name attributed to `openai-web`, one evidence entry at candidate index zero, a boolean `exact_gtin_claim`, and one or two citations containing only title (200 characters maximum) and HTTPS URL (2048 bytes maximum). Grocy derives each domain, rejects control characters, credentials, unusual ports, IP literals and local or reserved hostname suffixes, and exposes only normalized evidence in name alternatives. No raw model response is accepted. The companion additionally checks DNS addresses; Grocy renders links without fetching source pages or resolving hosts during job completion.
+
+The review card labels these results **OpenAI web suggestion — verify UPC** and **Verify against package**. An exact GTIN claim describes the source claim and does not establish correctness. Citation text is escaped through DOM text nodes; links use `noopener noreferrer`. Evidence does not select product group, food classification, receipt matches, or stock. Reviewer edits retain precedence. Approve new product, Link existing product, and Commit purchase remain explicit separate actions. The purchase review asset token is `2.6.7` and customization marker is `ATECHPCS-grocy_AI-29`.
+
+Citation host filters also reject special-use `.arpa` (including `.home.arpa`), `.onion`, `.alt`, and reserved collision suffixes `.home`, `.corp`, and `.mail`, consistently in PHP and browser code.
+
+### Settled provider misses: bounded web-search requeue
+
+The enrollment backfill (`capture-research-backfill.php`) only enrolls missing drafts. It does not requeue settled provisional jobs. Use the separate tool below for trip #12 after deploying the tested worker/fallback. Before apply, take and verify a **full Grocy data-directory backup**, including SQLite, uploaded files, and configuration. This is an operator runbook gate; the CLI does not create a backup.
+
+```sh
+GROCY_DATAPATH=/etc/komodo/grocy php8.5 custom/grocy_AI/bin/capture-web-search-requeue.php --trip=12 --dry-run
+GROCY_DATAPATH=/etc/komodo/grocy php8.5 custom/grocy_AI/bin/capture-web-search-requeue.php --trip=12 --apply --checksum=<SHA256_FROM_REQUEUE_DRY_RUN>
+# Explicit fixture/deployment database paths are also supported:
+php8.5 custom/grocy_AI/bin/capture-web-search-requeue.php --trip=12 --dry-run --db=/absolute/path/grocy.db
+php8.5 custom/grocy_AI/bin/capture-web-search-requeue.php --trip=12 --apply --checksum=<SHA256_FROM_REQUEUE_DRY_RUN> --db=/absolute/path/grocy.db
+```
+
+Review exact candidate job IDs, safe blocker codes, UTC day, daily reservation count, remaining slots, and `max_chargeable_calls` before apply. Trips over 100 lines are refused; apply requires 1–20 eligible jobs. The daily limit follows configuration constants in the database data directory's `config.php`, then `settingoverrides/AI_CAPTURE_WEB_SEARCH_DAILY_LIMIT.txt`, then `GROCY_AI_CAPTURE_WEB_SEARCH_DAILY_LIMIT`, with default 20. Invalid values fail closed; accepted values are integers from 0 through 100000. Zero disables new paid reservations. The shown maximum is based on current UTC slots; other workers can consume slots before queued work runs.
+
+The **requeue checksum is distinct** from enrollment, capture booking, and receipt approval checksums. It covers the full trip/cancellation and relevant line/draft/job state (including revisions and user edits), related drafts/trip activity, existing reservations and their generations, today's reservation IDs/count, UTC day, candidate IDs, and configured limit. Changes require a new preview. Dry-run uses SQLite query-only mode and emits no barcodes or receipt text.
+
+Eligible jobs are unreserved generation-zero settled `needs_input` jobs with a definitive stored v1 provider miss, linked to selected unapplied checksum-valid unresolved unknown lines in the active trip. Finalized drafts, provider errors, and jobs shared with active drafts in another trip are excluded. Apply uses `BEGIN IMMEDIATE`, resets attempts/retry timing/lease/safe error, increments job revision, and appends `grocy_ai:web_search_requeue` audits with actor and job ID. It preserves draft edits, receipt evidence, native rows, and stock, makes no OpenAI request, and does not advance the paid retry generation or reserve payment. Repeated apply is refused. The worker still controls paid reservations and explicit review controls product/link/stock writes.
+
+Fixture verification: `php8.5 custom/grocy_AI/tests/capture_web_search_requeue.php`.
+
+The queue suite (`php8.5 custom/grocy_AI/tests/capture_research_queue.php`) requires a Unix PHP CLI with enabled `pcntl_fork`, `pcntl_waitpid`, `pcntl_wexitstatus`, and working Unix `stream_socket_pair` sockets. It fails with a clear prerequisite diagnostic on unsupported runtimes rather than skipping the concurrent daily-ceiling assertion. These are test prerequisites; the production reservation service does not require process-control functions.
