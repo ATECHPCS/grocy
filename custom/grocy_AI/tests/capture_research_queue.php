@@ -110,4 +110,124 @@ $db->prepare("INSERT INTO grocy_ai_capture_lines (trip_id, seq, scanned_barcode,
 $repaired = $capture->ScanIntoTrip($repairTripId, '96385074');
 checkResearch((int)$repaired['quantity'] === 2 && count((new GrocyAiCaptureResearchService($db))->DraftsForTrip($repairTripId)) === 1, 'coalesced legacy unknown line repairs missing draft');
 
+// Removing the durable gate or its live eligibility checks must fail these tests.
+checkResearch(method_exists(GrocyAiCaptureResearchService::class, 'ReserveWebSearch'), 'paid web search reservation gate exists');
+define('GROCY_AI_CAPTURE_WEB_SEARCH_DAILY_LIMIT', 2);
+$research = new GrocyAiCaptureResearchService($db);
+$claims = $research->ClaimJobs(5, 'reservation-test');
+checkResearch(count($claims) === 2, 'reservation fixtures claim two shared jobs');
+$a = $claims[0];
+$b = $claims[1];
+function deniesResearch(callable $operation, string $message): void
+{
+	try { $operation(); } catch (InvalidArgumentException|RuntimeException $expected) { return; }
+	throw new RuntimeException($message);
+}
+deniesResearch(fn() => $research->ReserveWebSearch($a['id'], str_repeat('0', 64), 'worker'), 'invalid lease denied');
+$db->exec("UPDATE grocy_ai_capture_research_jobs SET lease_expires_at = datetime('now', '-1 second') WHERE id = " . $a['id']);
+deniesResearch(fn() => $research->ReserveWebSearch($a['id'], $a['lease_token'], 'worker'), 'expired lease denied');
+$db->exec("UPDATE grocy_ai_capture_research_jobs SET lease_expires_at = datetime('now', '+60 seconds') WHERE id = " . $a['id']);
+$db->exec('UPDATE grocy_ai_capture_lines SET selected = 0 WHERE id = ' . $otherLineId);
+checkResearch(!$research->ReserveWebSearch($a['id'], $a['lease_token'], 'worker')['allowed'], 'deselected line denied');
+$db->exec('UPDATE grocy_ai_capture_lines SET selected = 1 WHERE id = ' . $otherLineId);
+$db->exec("UPDATE grocy_ai_capture_trips SET status = 'committed' WHERE id = " . (int)$secondTrip['id']);
+checkResearch(!$research->ReserveWebSearch($a['id'], $a['lease_token'], 'worker')['allowed'], 'committed trip denied');
+$db->exec("UPDATE grocy_ai_capture_trips SET status = 'open' WHERE id = " . (int)$secondTrip['id']);
+$db->exec("UPDATE grocy_ai_capture_lines SET scanned_barcode = 'unsupported' WHERE id = " . $otherLineId);
+checkResearch(!$research->ReserveWebSearch($a['id'], $a['lease_token'], 'worker')['allowed'], 'unsupported line denied');
+$db->exec("UPDATE grocy_ai_capture_lines SET scanned_barcode = '4006381333931' WHERE id = " . $otherLineId);
+$db->exec("UPDATE grocy_ai_capture_research_drafts SET outcome = 'approved' WHERE line_id = " . $otherLineId);
+checkResearch(!$research->ReserveWebSearch($a['id'], $a['lease_token'], 'worker')['allowed'], 'finalized draft denied even if stale line remains unknown');
+$db->exec("UPDATE grocy_ai_capture_research_drafts SET outcome = 'pending' WHERE line_id = " . $otherLineId);
+$reservation = $research->ReserveWebSearch($a['id'], $a['lease_token'], 'worker');
+checkResearch($reservation['allowed'] && is_int($reservation['reservation_id']), 'first generation reserves');
+// Race two processes for the final daily slot using independent SQLite connections.
+$concurrentTrip = $capture->StartTrip();
+$capture->ScanIntoTrip((int)$concurrentTrip['id'], '5901234123457');
+$c = $research->ClaimJobs(1, 'concurrent')[0];
+$racePath = tempnam(sys_get_temp_dir(), 'grocy-reservation-');
+unlink($racePath);
+$db->exec('VACUUM INTO ' . $db->quote($racePath));
+$children = [];
+foreach ([$b, $c] as $index => $claim)
+{
+	$pair = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, 0);
+	$pid = pcntl_fork();
+	checkResearch($pid >= 0, 'reservation race fork succeeds');
+	if ($pid === 0)
+	{
+		fclose($pair[0]);
+		fread($pair[1], 1);
+		try
+		{
+			$raceDb = new PDO('sqlite:' . $racePath);
+			$raceDb->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+			$raceDb->exec('PRAGMA busy_timeout = 5000');
+			$raceService = new GrocyAiCaptureResearchService($raceDb, false);
+			$result = $raceService->ReserveWebSearch($claim['id'], $claim['lease_token'], 'race-' . $index);
+			fwrite($pair[1], json_encode($result, JSON_THROW_ON_ERROR));
+			exit(0);
+		}
+		catch (Throwable $ex) { fwrite($pair[1], $ex->getMessage()); exit(1); }
+	}
+	fclose($pair[1]);
+	$children[] = [$pid, $pair[0]];
+}
+foreach ($children as [$pid, $socket]) fwrite($socket, 'G');
+$allowed = 0;
+foreach ($children as [$pid, $socket])
+{
+	$result = json_decode(stream_get_contents($socket), true, 512, JSON_THROW_ON_ERROR);
+	fclose($socket);
+	pcntl_waitpid($pid, $status);
+	checkResearch(pcntl_wexitstatus($status) === 0, 'reservation race child succeeds');
+	$allowed += (int)$result['allowed'];
+}
+checkResearch($allowed === 1, 'two concurrent reservations grant only final daily slot');
+$raceDb = new PDO('sqlite:' . $racePath);
+checkResearch((int)$raceDb->query('SELECT COUNT(*) FROM grocy_ai_capture_web_search_reservations')->fetchColumn() === 2, 'concurrent daily count never exceeds ceiling');
+$raceDb = null;
+unlink($racePath);
+
+$duplicate = $research->ReserveWebSearch($a['id'], $a['lease_token'], 'worker');
+checkResearch(!$duplicate['allowed'] && $duplicate['reservation_id'] === $reservation['reservation_id'], 'lost response cannot repeat paid search');
+$db->exec("UPDATE grocy_ai_capture_research_jobs SET lease_expires_at = datetime('now', '-1 second') WHERE id = " . $a['id']);
+$reclaimed = $research->ClaimJobs(1, 'reclaimer')[0];
+checkResearch(!$research->ReserveWebSearch($a['id'], $reclaimed['lease_token'], 'worker')['allowed'], 'reclaimed lease cannot repeat paid search');
+$db->exec("UPDATE grocy_ai_capture_research_jobs SET state = 'needs_input' WHERE id = " . $a['id']);
+$research->RetryJob((int)$secondTrip['id'], $otherLineId, 'user');
+$manual = $research->ClaimJobs(1, 'manual')[0];
+checkResearch($research->ReserveWebSearch($a['id'], $manual['lease_token'], 'worker')['allowed'], 'one manual retry reserves generation one');
+$db->exec("UPDATE grocy_ai_capture_research_jobs SET state = 'needs_input' WHERE id = " . $a['id']);
+$research->RetryJob((int)$secondTrip['id'], $otherLineId, 'user');
+$providerRetry = $research->ClaimJobs(1, 'provider-only')[0];
+checkResearch(!$research->ReserveWebSearch($a['id'], $providerRetry['lease_token'], 'worker')['allowed'], 'second manual retry preserves provider lookup without extra paid search');
+checkResearch(!$research->ReserveWebSearch($b['id'], $b['lease_token'], 'worker')['allowed'], 'daily ceiling denies next job');
+checkResearch((int)$db->query('SELECT COUNT(*) FROM grocy_ai_capture_web_search_reservations')->fetchColumn() === 2, 'denials never spend additional slots');
+$db->exec("INSERT INTO grocy_ai_capture_trip_cancellations (trip_id, actor) VALUES ($failedTripId, 'user')");
+$db->exec("INSERT INTO grocy_ai_capture_trip_cancellations (trip_id, actor) VALUES ($repairTripId, 'user')");
+checkResearch($research->ReserveWebSearch($b['id'], $b['lease_token'], 'worker')['reason'] === 'ineligible', 'canceled trips denied before budget decision');
+
+require_once __DIR__ . '/../../../packages/autoload.php';
+require_once __DIR__ . '/../src/GrocyAiCaptureResearchController.php';
+define('GROCY_AI_RESEARCH_WORKER_KEY', 'reservation-worker-key');
+class ReservationTestController extends GrocyAI\Controllers\Api\GrocyAiCaptureResearchController
+{
+	public function __construct(private GrocyAiCaptureResearchService $research) {}
+	protected function Service(): GrocyAiCaptureResearchService { return $this->research; }
+	protected function HasApiCredential(Psr\Http\Message\ServerRequestInterface $request): bool { return $request->getHeaderLine('GROCY-API-KEY') === 'test-api-key'; }
+}
+$controller = new ReservationTestController($research);
+$request = (new Slim\Psr7\Factory\ServerRequestFactory())->createServerRequest('POST', '/reserve')->withParsedBody(['lease_token' => $providerRetry['lease_token']]);
+$factory = new Slim\Psr7\Factory\ResponseFactory();
+$args = ['jobId' => (string)$a['id']];
+checkResearch($controller->ReserveWebSearch($request->withHeader('X-Grocy-AI-Worker-Key', 'reservation-worker-key'), $factory->createResponse(), $args)->getStatusCode() === 401, 'reservation requires API credential');
+$request = $request->withHeader('GROCY-API-KEY', 'test-api-key');
+checkResearch($controller->ReserveWebSearch($request, $factory->createResponse(), $args)->getStatusCode() === 403, 'reservation requires worker key');
+$request = $request->withHeader('X-Grocy-AI-Worker-Key', 'reservation-worker-key');
+checkResearch($controller->ReserveWebSearch($request->withParsedBody(['lease_token' => 1]), $factory->createResponse(), $args)->getStatusCode() === 400, 'reservation validates lease type');
+checkResearch($controller->ReserveWebSearch($request->withParsedBody(['lease_token' => str_repeat('0', 64)]), $factory->createResponse(), $args)->getStatusCode() === 409, 'reservation maps conflicting lease safely');
+$response = $controller->ReserveWebSearch($request, $factory->createResponse(), $args);
+checkResearch($response->getStatusCode() === 200 && json_decode((string)$response->getBody(), true) === ['allowed' => false, 'reason' => 'already_reserved', 'reservation_id' => 2], 'reservation response exposes only safe decision');
+
 echo "capture research queue: PASS\n";

@@ -63,6 +63,18 @@ class GrocyAiCaptureResearchController extends BaseApiController
 		catch (\RuntimeException) { return $this->GenericErrorResponse($response, 'Research unavailable', 503); }
 	}
 
+	public function ReserveWebSearch(Request $request, Response $response, array $args): Response
+	{
+		if (!$this->HasApiCredential($request)) return $this->GenericErrorResponse($response, 'API authentication required', 401);
+		if (!$this->Authorized($request)) return $this->GenericErrorResponse($response, 'Worker authorization failed', 403);
+		$jobId = $this->JobId($args);
+		$body = $this->Body($request);
+		if ($jobId === null || $body === null || !$this->HasFields($body, ['lease_token']) || !is_string($body['lease_token'])) return $this->GenericErrorResponse($response, 'Invalid search reservation', 400);
+		try { return $this->ApiResponse($response, $this->Service()->ReserveWebSearch($jobId, $body['lease_token'], 'research-worker')); }
+		catch (\InvalidArgumentException) { return $this->GenericErrorResponse($response, 'Invalid search reservation', 400); }
+		catch (\RuntimeException) { return $this->GenericErrorResponse($response, 'Research lease conflict', 409); }
+	}
+
 	public function Complete(Request $request, Response $response, array $args): Response
 	{
 		if (!$this->HasApiCredential($request)) return $this->GenericErrorResponse($response, 'API authentication required', 401);

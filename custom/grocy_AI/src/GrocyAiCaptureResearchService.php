@@ -173,10 +173,11 @@ class GrocyAiCaptureResearchService
 	{
 		return $this->MutateDraft($tripId, $lineId, $actor, 'retry', function (array $draft): array
 		{
-			$job = $this->Db->prepare('SELECT state FROM grocy_ai_capture_research_jobs WHERE id = ?');
+			$job = $this->Db->prepare('SELECT state, retry_generation FROM grocy_ai_capture_research_jobs WHERE id = ?');
 			$job->execute([$draft['job_id']]);
-			if (!in_array($job->fetchColumn(), ['needs_input', 'retryable_failure'], true)) throw new \InvalidArgumentException('Research is not retryable');
-			$this->Db->prepare("UPDATE grocy_ai_capture_research_jobs SET state = 'queued', attempts = 0, next_retry_at = NULL, lease_hash = NULL, lease_expires_at = NULL, safe_error_code = NULL, revision = revision + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?")->execute([$draft['job_id']]);
+			$job = $job->fetch(PDO::FETCH_ASSOC);
+			if (!in_array($job['state'], ['needs_input', 'retryable_failure'], true)) throw new \InvalidArgumentException('Research is not retryable');
+			$this->Db->prepare("UPDATE grocy_ai_capture_research_jobs SET state = 'queued', retry_generation = MIN(1, retry_generation + 1), attempts = 0, next_retry_at = NULL, lease_hash = NULL, lease_expires_at = NULL, safe_error_code = NULL, revision = revision + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?")->execute([$draft['job_id']]);
 			return [];
 		});
 	}
@@ -310,6 +311,51 @@ class GrocyAiCaptureResearchService
 		return $matches;
 	}
 
+	public function ReserveWebSearch(int $jobId, string $leaseToken, string $actor): array
+	{
+		if ($actor === '' || strlen($actor) > 128) throw new \InvalidArgumentException('Invalid actor');
+		$this->Db->exec('BEGIN IMMEDIATE');
+		try
+		{
+			$job = $this->JobForLease($jobId, $leaseToken);
+			$this->RequireLiveLease($job);
+			$decision = ['allowed' => false, 'reason' => 'ineligible', 'reservation_id' => null];
+			try { $this->LookupBarcodeForJob($jobId, $job['canonical_gtin']); }
+			catch (\RuntimeException)
+			{
+				$this->Db->commit();
+				return $decision;
+			}
+			$existing = $this->Db->prepare('SELECT id FROM grocy_ai_capture_web_search_reservations WHERE canonical_gtin = ? AND retry_generation = ?');
+			$existing->execute([$job['canonical_gtin'], $job['retry_generation']]);
+			$id = $existing->fetchColumn();
+			if ($id !== false)
+			{
+				$decision['reason'] = 'already_reserved';
+				$decision['reservation_id'] = (int)$id;
+			}
+			else
+			{
+				$limit = defined('GROCY_AI_CAPTURE_WEB_SEARCH_DAILY_LIMIT') ? (int)GROCY_AI_CAPTURE_WEB_SEARCH_DAILY_LIMIT : 20;
+				$count = (int)$this->Db->query("SELECT COUNT(*) FROM grocy_ai_capture_web_search_reservations WHERE utc_day = date('now')")->fetchColumn();
+				$decision['reason'] = 'daily_limit';
+				if ($count < $limit)
+				{
+					// A granted slot remains spent even if the worker loses the response or fails.
+					$this->Db->prepare("INSERT INTO grocy_ai_capture_web_search_reservations (job_id, canonical_gtin, utc_day, actor, retry_generation) VALUES (?, ?, date('now'), ?, ?)")->execute([$jobId, $job['canonical_gtin'], $actor, $job['retry_generation']]);
+					$decision = ['allowed' => true, 'reason' => 'reserved', 'reservation_id' => (int)$this->Db->lastInsertId()];
+				}
+			}
+			$this->Db->commit();
+			return $decision;
+		}
+		catch (\Throwable $ex)
+		{
+			if ($this->Db->inTransaction()) $this->Db->rollBack();
+			throw $ex;
+		}
+	}
+
 	/** @return array<int, array<string, mixed>> */
 	public function ClaimJobs(int $limit, string $workerId): array
 	{
@@ -329,7 +375,7 @@ class GrocyAiCaptureResearchService
 					$this->Db->prepare("INSERT INTO grocy_ai_capture_research_audit (trip_id, draft_id, actor, action, before_json, after_json) VALUES (?, ?, 'research-worker', 'research_failure', ?, ?)")->execute([$draft['trip_id'], $draft['id'], json_encode(['outcome' => $draft['outcome']], JSON_THROW_ON_ERROR), json_encode(['outcome' => 'needs_input', 'safe_error_code' => 'worker_unavailable', 'attempts' => 5], JSON_THROW_ON_ERROR)]);
 				}
 			}
-			$select = $this->Db->prepare("SELECT j.id, j.canonical_gtin, j.attempts, j.revision FROM grocy_ai_capture_research_jobs j WHERE j.attempts < ? AND ((j.state = 'queued' AND (j.next_retry_at IS NULL OR j.next_retry_at <= CURRENT_TIMESTAMP)) OR (j.state = 'retryable_failure' AND j.next_retry_at <= CURRENT_TIMESTAMP) OR (j.state = 'leased' AND j.lease_expires_at <= CURRENT_TIMESTAMP)) AND EXISTS (SELECT 1 FROM grocy_ai_capture_research_drafts d JOIN grocy_ai_capture_lines l ON l.id = d.line_id AND l.trip_id = d.trip_id JOIN grocy_ai_capture_trips t ON t.id = d.trip_id WHERE d.job_id = j.id AND l.status = 'unknown' AND l.selected = 1 AND l.applied_at IS NULL AND l.canonical_gtin = j.canonical_gtin AND l.scanned_barcode = d.scanned_barcode AND t.status IN ('open', 'reviewing') AND NOT EXISTS (SELECT 1 FROM grocy_ai_capture_trip_cancellations c WHERE c.trip_id = t.id)) ORDER BY j.id LIMIT ?");
+			$select = $this->Db->prepare("SELECT j.id, j.canonical_gtin, j.attempts, j.revision FROM grocy_ai_capture_research_jobs j WHERE j.attempts < ? AND ((j.state = 'queued' AND (j.next_retry_at IS NULL OR j.next_retry_at <= CURRENT_TIMESTAMP)) OR (j.state = 'retryable_failure' AND j.next_retry_at <= CURRENT_TIMESTAMP) OR (j.state = 'leased' AND j.lease_expires_at <= CURRENT_TIMESTAMP)) AND EXISTS (SELECT 1 FROM grocy_ai_capture_research_drafts d JOIN grocy_ai_capture_lines l ON l.id = d.line_id AND l.trip_id = d.trip_id JOIN grocy_ai_capture_trips t ON t.id = d.trip_id WHERE d.job_id = j.id AND d.outcome NOT IN ('approved', 'linked') AND l.status = 'unknown' AND l.selected = 1 AND l.applied_at IS NULL AND l.canonical_gtin = j.canonical_gtin AND l.scanned_barcode = d.scanned_barcode AND t.status IN ('open', 'reviewing') AND NOT EXISTS (SELECT 1 FROM grocy_ai_capture_trip_cancellations c WHERE c.trip_id = t.id)) ORDER BY j.id LIMIT ?");
 			$select->bindValue(1, self::MAX_ATTEMPTS, PDO::PARAM_INT);
 			$select->bindValue(2, $limit, PDO::PARAM_INT);
 			$select->execute();
@@ -354,7 +400,7 @@ class GrocyAiCaptureResearchService
 
 	private function LookupBarcodeForJob(int $jobId, string $canonical): string
 	{
-		$query = $this->Db->prepare("SELECT l.scanned_barcode FROM grocy_ai_capture_research_drafts d JOIN grocy_ai_capture_lines l ON l.id = d.line_id AND l.trip_id = d.trip_id JOIN grocy_ai_capture_trips t ON t.id = d.trip_id WHERE d.job_id = ? AND l.status = 'unknown' AND l.selected = 1 AND l.applied_at IS NULL AND l.canonical_gtin = ? AND l.scanned_barcode = d.scanned_barcode AND t.status IN ('open', 'reviewing') AND NOT EXISTS (SELECT 1 FROM grocy_ai_capture_trip_cancellations c WHERE c.trip_id = t.id) ORDER BY l.id LIMIT 32");
+		$query = $this->Db->prepare("SELECT l.scanned_barcode FROM grocy_ai_capture_research_drafts d JOIN grocy_ai_capture_lines l ON l.id = d.line_id AND l.trip_id = d.trip_id JOIN grocy_ai_capture_trips t ON t.id = d.trip_id WHERE d.job_id = ? AND d.outcome NOT IN ('approved', 'linked') AND l.status = 'unknown' AND l.selected = 1 AND l.applied_at IS NULL AND l.canonical_gtin = ? AND l.scanned_barcode = d.scanned_barcode AND t.status IN ('open', 'reviewing') AND NOT EXISTS (SELECT 1 FROM grocy_ai_capture_trip_cancellations c WHERE c.trip_id = t.id) ORDER BY l.id LIMIT 32");
 		$query->execute([$jobId, $canonical]);
 		foreach ($query->fetchAll(PDO::FETCH_COLUMN) as $barcode)
 		{
