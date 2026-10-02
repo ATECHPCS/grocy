@@ -540,7 +540,7 @@ class GrocyAiCaptureResearchService
 		if (!is_string($url) || strlen($url) > 2048 || preg_match('/[\s\\\\]|\p{C}|%(?![0-9a-f]{2})|%(?:0[0-9a-f]|1[0-9a-f]|7f)/iu', $url)) throw new \InvalidArgumentException('Invalid citation URL');
 		$parts = parse_url($url);
 		$host = strtolower($parts['host'] ?? '');
-		if ($parts === false || ($parts['scheme'] ?? '') !== 'https' || isset($parts['user']) || isset($parts['pass']) || isset($parts['port']) && $parts['port'] !== 443 || !preg_match('/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/D', $host) || strlen($host) > 253 || preg_match('/\.(?:local|localhost|internal|lan|test|invalid|example)$/D', $host)) throw new \InvalidArgumentException('Invalid citation host');
+		if ($parts === false || ($parts['scheme'] ?? '') !== 'https' || isset($parts['user']) || isset($parts['pass']) || isset($parts['port']) && $parts['port'] !== 443 || !preg_match('/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/D', $host) || strlen($host) > 253 || preg_match('/\.(?:local|localhost|internal|lan|test|invalid|example|arpa|onion|alt|home|corp|mail)$/D', $host)) throw new \InvalidArgumentException('Invalid citation host');
 		return $host;
 	}
 

@@ -330,3 +330,17 @@ test('OpenAI unsafe citation URLs never become links', async ({ page }) =>
 	await expect(page.locator('.grocy-ai-product-research-web a')).toHaveCount(0);
 	expect(data.writes).toEqual([]);
 });
+
+
+test('OpenAI special-use citation hosts are rejected while public domains remain linked', async ({ page }) =>
+{
+	const data = await setup(page);
+	for (const host of ['router.home.arpa', 'hidden.onion', 'node.alt', 'router.home', 'intranet.corp', 'server.mail', 'node.arpa', 'host.local', 'host.localhost', 'host.internal', 'host.lan', 'host.test', 'host.invalid', 'host.example', 'www.openfoodfacts.org'])
+	{
+		data.draft.name_alternatives = [{ value: 'Web name', sources: ['openai-web'], provenance: 'attributed', web_evidence: { exact_gtin_claim: false, citations: [{ title: 'Source', domain: host, url: 'https://' + host + '/product' }] } }];
+		await page.locator('#grocyai-capture-review-trips button').click();
+		await expect(page.getByText('OpenAI web suggestion — verify UPC')).toBeVisible();
+		await expect(page.locator('.grocy-ai-product-research-web a')).toHaveCount(host === 'www.openfoodfacts.org' ? 1 : 0);
+	}
+	expect(data.writes).toEqual([]);
+});

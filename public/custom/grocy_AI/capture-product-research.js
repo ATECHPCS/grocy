@@ -136,7 +136,7 @@
 							try
 							{
 								var url = new URL(citation.url);
-								if (typeof citation.url !== 'string' || citation.url.length > 2048 || /[\s\\\x00-\x1f\x7f]|%(?![0-9a-f]{2})|%(?:0[0-9a-f]|1[0-9a-f]|7f)/i.test(citation.url) || url.protocol !== 'https:' || url.username || url.password || url.port && url.port !== '443' || url.hostname !== citation.domain || !/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(url.hostname) || /\.(local|localhost|internal|lan|test|invalid|example)$/.test(url.hostname) || typeof citation.title !== 'string' || !citation.title || citation.title.length > 400 || /[\x00-\x1f\x7f]/.test(citation.title)) return;
+								if (typeof citation.url !== 'string' || citation.url.length > 2048 || /[\s\\\x00-\x1f\x7f]|%(?![0-9a-f]{2})|%(?:0[0-9a-f]|1[0-9a-f]|7f)/i.test(citation.url) || url.protocol !== 'https:' || url.username || url.password || url.port && url.port !== '443' || url.hostname !== citation.domain || !/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(url.hostname) || /\.(local|localhost|internal|lan|test|invalid|example|arpa|onion|alt|home|corp|mail)$/.test(url.hostname) || typeof citation.title !== 'string' || !citation.title || citation.title.length > 400 || /[\x00-\x1f\x7f]/.test(citation.title)) return;
 								var anchor = node('a', null, citation.title + ' — ' + citation.domain);
 								anchor.href = citation.url;
 								anchor.target = '_blank';
