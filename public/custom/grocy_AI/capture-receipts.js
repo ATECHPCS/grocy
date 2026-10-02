@@ -212,7 +212,11 @@
 			{
 				choices.push(['capture:' + item.id + ':' + item.resolved_product_id, 'Scanned #' + item.seq + ' — ' + (options.names[item.resolved_product_id] || 'Product #' + item.resolved_product_id)]);
 			});
-			var chosen = existing ? (existing.capture_line_id ? 'capture:' + existing.capture_line_id + ':' + existing.product_id : 'product:' + existing.product_id) : '';
+			var pairedScan = !existing && line.paired_capture_line_id ? options.lines.find(function (item)
+			{
+				return Number(item.id) === Number(line.paired_capture_line_id) && Number(item.selected) === 1 && item.resolved_product_id;
+			}) : null;
+			var chosen = existing ? (existing.capture_line_id ? 'capture:' + existing.capture_line_id + ':' + existing.product_id : 'product:' + existing.product_id) : pairedScan ? 'capture:' + pairedScan.id + ':' + pairedScan.resolved_product_id : '';
 			if (existing && !existing.capture_line_id) choices.push([chosen, 'Product #' + existing.product_id]);
 			var match = select(box, 'Purchase match', choices, chosen);
 			button(box, 'Find product suggestions', function ()
@@ -232,7 +236,9 @@
 				});
 			});
 			var quantity = field(box, 'Purchase quantity', existing ? existing.quantity : line.quantity, 'number');
-			var price = field(box, 'Confirmed unit price', existing ? existing.unit_price : null, 'number');
+			var derivedPrice = !existing && pairedScan && Number(line.quantity) > 0 && Number(line.line_total) >= 0 && line.line_total !== null ? Number((Number(line.line_total) / Number(line.quantity)).toFixed(6)) : null;
+			var price = field(box, 'Confirmed unit price', existing ? existing.unit_price : derivedPrice, 'number');
+			if (derivedPrice !== null) box.appendChild(el('p', 'Price calculated from this receipt line. Confirm quantity and price before adding the allocation.'));
 			quantity.min = '0.000001';
 			price.min = '0';
 			button(box, existing ? 'Save allocation' : 'Add allocation', function ()
@@ -270,6 +276,54 @@
 			parent.appendChild(box);
 			var path = receiptPath + '/lines/' + line.id;
 			box.setAttribute('data-draft-scope', path);
+			if (line.paired_capture_line_id)
+			{
+				var pairedLine = (options.lines || []).find(function (item) { return Number(item.id) === Number(line.paired_capture_line_id); });
+				box.appendChild(el('p', 'Paired with scanned item #' + (pairedLine ? pairedLine.seq : line.paired_capture_line_id) + ' for product review.'));
+				if (pairedLine && pairedLine.status === 'unknown') button(box, 'Clear scan pairing', function ()
+				{
+					run(function () { return request('/lines/' + pairedLine.seq + '/receipt-evidence', 'PUT', { receipt_line_id: null }); });
+				});
+			}
+			if (line.kind === undefined || line.kind === 'item')
+			{
+				var unknownScans = (options.lines || []).filter(function (item)
+				{
+					return Number(item.selected) === 1 && !item.resolved_product_id && item.status === 'unknown';
+				});
+				if (unknownScans.length && line.decision !== 'ignore')
+				{
+					var candidates = Array.isArray(line.capture_candidates) ? line.capture_candidates : [];
+					var available = Array.isArray(line.capture_options) ? line.capture_options.filter(function (item)
+					{
+						return !item.paired_receipt_line_id || Number(item.paired_receipt_line_id) === Number(line.id);
+					}) : unknownScans.map(function (item)
+					{
+						return { capture_line_id: item.id, seq: item.seq, scanned_barcode: item.scanned_barcode, display_name: '', source: '', paired_receipt_line_id: null };
+					});
+					var choices = [['', 'Choose a scanned UPC']];
+					candidates.forEach(function (candidate)
+					{
+						if (!available.some(function (item) { return Number(item.capture_line_id) === Number(candidate.capture_line_id); })) return;
+						choices.push([String(candidate.capture_line_id), 'Scanned #' + candidate.seq + ' — ' + candidate.display_name + ' (suggested match)']);
+					});
+					available.forEach(function (item)
+					{
+						if (choices.some(function (choice) { return choice[0] === String(item.capture_line_id); })) return;
+						choices.push([String(item.capture_line_id), 'Scanned #' + item.seq + ' — ' + (item.display_name || 'UPC ' + item.scanned_barcode)]);
+					});
+					var suggestedId = line.paired_capture_line_id ? String(line.paired_capture_line_id) : line.capture_match_status === 'unique' && candidates.length ? String(candidates[0].capture_line_id) : '';
+					var scanned = select(box, 'Scanned item for this receipt line', choices, suggestedId);
+					box.appendChild(el('p', 'Pair the UPC with this receipt description for product review. Confirm product details before adding a purchase allocation.'));
+					button(box, 'Pair scanned item', function ()
+					{
+						if (!scanned.value) { status.textContent = 'Choose a scanned UPC first.'; return; }
+						var selected = unknownScans.find(function (item) { return String(item.id) === scanned.value; });
+						if (!selected) { status.textContent = 'This scan is no longer available. Reload the trip.'; return; }
+						run(function () { return request('/lines/' + selected.seq + '/receipt-evidence', 'PUT', { receipt_line_id: Number(line.id) }); });
+					});
+				}
+			}
 			var description = field(box, 'Description', line.description);
 			var quantity = field(box, 'Receipt quantity', line.quantity, 'number');
 			var total = field(box, 'Line total', line.line_total, 'number');

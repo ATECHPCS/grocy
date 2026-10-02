@@ -54,6 +54,7 @@ async function setup(page)
 				checksum: 'a'.repeat(64)
 			}
 		});
+		if (p.endsWith('/lines/1/receipt-evidence') && m === 'PUT') return r.fulfill({ json: { receipt_line_id: b.receipt_line_id } });
 		if (p.endsWith('/receipt-readiness'))
 		{
 			const reasons = state.receipts.length ? state.receipts.filter(v => v.receipt.status !== 'finished').map(v => 'receipt_' + v.receipt.id + '_unfinished') : ['no_receipts'];
@@ -214,6 +215,55 @@ test('multiple photos and blocked commit', async (
 	}]);
 	await expect(page.locator('.grocy-ai-receipt')).toHaveCount(2);
 	await expect(page.locator('#grocyai-receipt-readiness')).toContainText('Finish receipt');
+});
+test('unknown scanned UPC can be paired with a receipt line before product approval without allocating stock', async ({ page }) =>
+{
+	const state = await setup(page);
+	await page.getByLabel('Add receipt photos').setInputFiles(photo);
+	await expect(page.locator('.grocy-ai-receipt')).toHaveCount(1);
+	state.lines = [{ id: 100, trip_id: 7, seq: 1, scanned_barcode: '012345678905', canonical_gtin: '012345678905', resolved_product_id: null, status: 'unknown', quantity: 1, price: null, best_before_override: null, selected: 1, applied_at: null, outcome: null, created_at: '', updated_at: '' }];
+	state.receipts[0].lines = [{ id: 1, description: 'Sample oats', quantity: 1, line_total: 2, decision: 'needs_review', allocations: [], capture_match_status: 'unique', capture_candidates: [{ capture_line_id: 100, seq: 1, scanned_barcode: '012345678905', display_name: 'Sample oats', source: 'Open Food Facts', score: 100, reason: 'name match' }] }];
+	await page.locator('#grocyai-capture-review-trips button').click();
+	const line = page.locator('.grocy-ai-receipt-line');
+	await expect(line).toContainText('Scanned #1');
+	await expect(line).toContainText('suggested');
+	await expect(line.getByRole('button', { name: 'Pair scanned item' })).toBeVisible();
+	expect(state.writes.filter(write => write.path.endsWith('/receipt-evidence'))).toHaveLength(0);
+	await line.getByRole('button', { name: 'Pair scanned item' }).click();
+	expect(state.writes.filter(write => write.path.endsWith('/receipt-evidence')).map(write => write.body)).toEqual([{ receipt_line_id: 1 }]);
+	expect(state.writes.filter(write => write.path.endsWith('/allocation'))).toHaveLength(0);
+});
+test('approved paired scan preselects receipt quantity and derived price for explicit allocation', async ({ page }) =>
+{
+	const state = await setup(page);
+	await page.getByLabel('Add receipt photos').setInputFiles(photo);
+	await expect(page.locator('.grocy-ai-receipt')).toHaveCount(1);
+	state.lines = [{ id: 100, trip_id: 7, seq: 1, scanned_barcode: '012345678905', canonical_gtin: '012345678905', resolved_product_id: 101, status: 'known', quantity: 2, price: null, best_before_override: null, selected: 1, applied_at: null, outcome: null, created_at: '', updated_at: '' }];
+	state.receipts[0].lines = [{ id: 1, description: 'Sample oats', quantity: 2, line_total: 5, decision: 'include', allocations: [], paired_capture_line_id: 100, capture_match_status: 'none', capture_candidates: [] }];
+	await page.locator('#grocyai-capture-review-trips button').click();
+	const allocation = page.locator('.grocy-ai-receipt-allocation').last();
+	await expect(allocation.getByLabel('Purchase match')).toHaveValue('capture:100:101');
+	await expect(allocation.getByLabel('Purchase quantity')).toHaveValue('2');
+	await expect(allocation.getByLabel('Confirmed unit price')).toHaveValue('2.5');
+	expect(state.writes.filter(write => write.path.endsWith('/allocation'))).toHaveLength(0);
+	await allocation.getByRole('button', { name: 'Add allocation' }).click();
+	expect(state.writes.filter(write => write.path.endsWith('/allocation')).map(write => write.body)).toEqual([{ capture_line_id: 100, product_id: 101, quantity: 2, unit_price: 2.5 }]);
+});
+test('receipt pairing can be cleared and scans claimed by another line are unavailable', async ({ page }) =>
+{
+	const state = await setup(page);
+	await page.getByLabel('Add receipt photos').setInputFiles(photo);
+	await expect(page.locator('.grocy-ai-receipt')).toHaveCount(1);
+	state.lines = [1, 2].map(seq => ({ id: 100 + seq, trip_id: 7, seq, scanned_barcode: '01234567890' + seq, canonical_gtin: '01234567890' + seq, resolved_product_id: null, status: 'unknown', quantity: 1, price: null, best_before_override: null, selected: 1, applied_at: null, outcome: null, created_at: '', updated_at: '' }));
+	const options = [1, 2].map(seq => ({ capture_line_id: 100 + seq, seq, scanned_barcode: '01234567890' + seq, display_name: 'Sample ' + seq, source: 'research_provider', paired_receipt_line_id: seq === 1 ? 1 : null }));
+	state.receipts[0].lines = [1, 2].map(id => ({ id, description: 'Sample ' + id, quantity: 1, line_total: 2, decision: 'needs_review', allocations: [], paired_capture_line_id: id === 1 ? 101 : null, capture_candidates: [], capture_match_status: 'none', capture_options: options }));
+	await page.locator('#grocyai-capture-review-trips button').click();
+	const first = page.locator('.grocy-ai-receipt-line').first();
+	const second = page.locator('.grocy-ai-receipt-line').last();
+	await expect(first).toContainText('Sample 1');
+	await expect(second.getByLabel('Scanned item for this receipt line').locator('option[value="101"]')).toHaveCount(0);
+	await first.getByRole('button', { name: 'Clear scan pairing' }).click();
+	expect(state.writes.filter(write => write.path.endsWith('/receipt-evidence')).map(write => write.body)).toEqual([{ receipt_line_id: null }]);
 });
 test('OCR fallback, manual Ignore, correction invalidates acceptance, finish and reopen', async (
 {

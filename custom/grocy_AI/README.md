@@ -525,6 +525,8 @@ The research review DTO includes `line_status`, `resolved_product_id`, and `reso
 
 ### Capture research backfill
 
+Receipt OCR descriptions do not always contain the scanned UPC. In Purchase capture review, each receipt item now shows strong same-trip scan suggestions and a picker for other selected unknown scans. Pairing a receipt line to a scanned UPC supplies product draft evidence only; approve or link that draft before confirming its purchase allocation. After approval, the paired scan and unit price calculated from the receipt line are prefilled for review. Ambiguous store descriptions require a manual selection, and stock changes only after Commit purchase.
+
 After the companion research worker and Grocy release are configured, preview the existing trip from the deployed Grocy checkout with its persistent data path:
 
 ```sh

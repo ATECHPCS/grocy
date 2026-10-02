@@ -37,6 +37,7 @@ class GrocyAiReceiptService
 	{
 		$receipt = $this->Receipt($receiptId);
 		$line = $this->Line($receiptId, $lineId);
+		$reviewMatch = $this->CaptureCandidates((int)$receipt['trip_id'], $line);
 		$description = mb_strtolower(trim((string)$line['description']));
 		$captures = $this->Rows('SELECT c.id, c.seq, c.scanned_barcode, c.resolved_product_id AS product_id, c.quantity, p.name AS product_name FROM grocy_ai_capture_lines c LEFT JOIN products p ON p.id = c.resolved_product_id WHERE c.trip_id = ? AND c.selected = 1 ORDER BY c.seq', [(int)$receipt['trip_id']]);
 		$score = static function (string $name) use ($description): int
@@ -54,7 +55,61 @@ class GrocyAiReceiptService
 		unset($product);
 		$products = array_values(array_filter($products, static fn(array $product) => $product['match_score'] > 0));
 		usort($products, static fn(array $a, array $b) => $b['match_score'] <=> $a['match_score'] ?: $a['id'] <=> $b['id']);
-		return ['capture_lines' => array_slice($captures, 0, 20), 'products' => array_slice($products, 0, 20)];
+		return ['capture_lines' => array_slice($captures, 0, 20), 'products' => array_slice($products, 0, 20), 'capture_candidates' => $reviewMatch['capture_candidates'], 'capture_match_status' => $reviewMatch['capture_match_status']];
+	}
+
+	private function CaptureCandidates(int $tripId, array $line): array
+	{
+		$hasResearch = $this->Scalar("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'grocy_ai_capture_research_drafts'", []) !== false;
+		$paired = [];
+		if ($hasResearch) $paired = $this->Rows('SELECT d.line_id FROM grocy_ai_capture_research_drafts d JOIN grocy_ai_capture_lines c ON c.id = d.line_id AND c.trip_id = d.trip_id WHERE d.trip_id = ? AND d.receipt_line_id = ? AND c.selected = 1 LIMIT 2', [$tripId, (int)$line['id']]);
+		$pairedId = count($paired) === 1 ? (int)$paired[0]['line_id'] : null;
+		if ($line['kind'] !== 'item' || $line['decision'] === 'ignore') return ['capture_candidates' => [], 'capture_options' => [], 'capture_match_status' => 'none', 'paired_capture_line_id' => $pairedId];
+		$needle = $this->MatchWords((string)$line['description']);
+		$draftJoin = $hasResearch ? 'LEFT JOIN grocy_ai_capture_research_drafts d ON d.line_id = c.id AND d.trip_id = c.trip_id' : '';
+		$draftFields = $hasResearch ? 'd.selected_json, d.suggested_json, d.receipt_line_id' : 'NULL AS selected_json, NULL AS suggested_json, NULL AS receipt_line_id';
+		$captures = $this->Rows('SELECT c.id, c.seq, c.scanned_barcode, c.status, p.name AS product_name, ' . $draftFields . ' FROM grocy_ai_capture_lines c LEFT JOIN products p ON p.id = c.resolved_product_id ' . $draftJoin . ' WHERE c.trip_id = ? AND c.selected = 1 ORDER BY c.seq', [$tripId]);
+		$candidates = [];
+		$options = [];
+		foreach ($captures as $capture)
+		{
+			$claimed = $capture['receipt_line_id'] === null ? null : (int)$capture['receipt_line_id'];
+			if ($claimed !== null && $claimed !== (int)$line['id']) continue;
+			$names = [];
+			if (is_string($capture['product_name'] ?? null)) $names[] = ['name' => $capture['product_name'], 'source' => 'grocy_product'];
+			foreach (['selected_json' => 'research_selected', 'suggested_json' => 'research_provider'] as $field => $source)
+			{
+				$data = json_decode((string)($capture[$field] ?? '{}'), true);
+				if (!is_array($data)) continue;
+				if ($field === 'selected_json' && is_string($data['name'] ?? null)) $names[] = ['name' => $data['name'], 'source' => $source];
+				if ($field === 'suggested_json') foreach ($data['name_candidates'] ?? [] as $name) if (is_string($name)) $names[] = ['name' => $name, 'source' => $source];
+			}
+			if ($capture['status'] === 'unknown')
+			{
+				$display = $names[0] ?? ['name' => 'UPC ' . $capture['scanned_barcode'], 'source' => 'barcode'];
+				$options[] = ['capture_line_id' => (int)$capture['id'], 'seq' => (int)$capture['seq'], 'scanned_barcode' => $capture['scanned_barcode'], 'display_name' => $display['name'], 'source' => $display['source'], 'paired_receipt_line_id' => $claimed];
+			}
+			$best = null;
+			if ($needle === []) continue;
+			foreach ($names as $name)
+			{
+				$words = $this->MatchWords($name['name']);
+				if (count($words) < 2) continue;
+				$score = $words === $needle ? 100 : 0;
+				if ($score === 0 && count($needle) >= 2 && count(array_intersect($needle, $words)) >= 2 && count(array_diff($needle, $words)) === 0) $score = 80;
+				if ($score > 0 && ($best === null || $score > $best['score'])) $best = ['capture_line_id' => (int)$capture['id'], 'seq' => (int)$capture['seq'], 'scanned_barcode' => $capture['scanned_barcode'], 'display_name' => $name['name'], 'source' => $name['source'], 'score' => $score, 'reason' => $score === 100 ? 'same_product_words' : 'receipt_words_in_product_name'];
+			}
+			if ($best !== null) $candidates[] = $best;
+		}
+		usort($candidates, static fn(array $a, array $b): int => $b['score'] <=> $a['score'] ?: $a['seq'] <=> $b['seq']);
+		return ['capture_candidates' => array_slice($candidates, 0, 20), 'capture_options' => $options, 'capture_match_status' => count($candidates) === 0 ? 'none' : (count($candidates) === 1 ? 'unique' : 'ambiguous'), 'paired_capture_line_id' => $pairedId];
+	}
+
+	private function MatchWords(string $text): array
+	{
+		$text = mb_strtolower($text);
+		$words = preg_split('/[^\p{L}\p{N}]+/u', $text, -1, PREG_SPLIT_NO_EMPTY) ?: [];
+		return array_values(array_filter($words, static fn(string $word): bool => mb_strlen($word) >= 3));
 	}
 
 	public function ImportExtraction(int $receiptId, array $suggestions, ?string $actor = null, ?int $expectedRevision = null): array
@@ -444,7 +499,11 @@ class GrocyAiReceiptService
 	{
 		$receipt = $this->Receipt($receiptId);
 		$lines = $this->Rows('SELECT * FROM grocy_ai_receipt_lines WHERE receipt_id = ? ORDER BY seq', [$receiptId]);
-		foreach ($lines as &$line) $line['allocations'] = $this->Rows('SELECT * FROM grocy_ai_receipt_allocations WHERE receipt_line_id = ? ORDER BY id', [(int)$line['id']]);
+		foreach ($lines as &$line)
+		{
+			$line['allocations'] = $this->Rows('SELECT * FROM grocy_ai_receipt_allocations WHERE receipt_line_id = ? ORDER BY id', [(int)$line['id']]);
+			$line += $this->CaptureCandidates((int)$receipt['trip_id'], $line);
+		}
 		unset($line);
 		return ['receipt' => $receipt, 'lines' => $lines, 'totals' => $this->Totals($receipt), 'issues' => $this->ReceiptIssues($receipt)];
 	}
