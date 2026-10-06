@@ -610,3 +610,14 @@ Changing or clearing either unit is a reviewer decision saved by Save research d
 Unit suggestions reuse the existing single classification reservation and paid call per draft research result revision, with the existing UTC-day ceiling. A usable local category mapping does not trigger an OpenAI call solely to suggest units. Deploy matching Grocy and companion contracts together. Stored legacy four-field classification results remain valid: missing unit fields normalize to null, local evidence is recomputed, and manual controls remain usable. Existing trip #12 classification jobs receive no paid rerun.
 
 The purchase review asset token is `2.6.10`; the capture page retains `2.6.8`. The customization marker is `ATECHPCS-grocy_AI-32` to invalidate persisted route and Blade caches for this release.
+
+
+### Mobile purchase review queue
+
+Below 768px, Purchase capture review shows one active card with its original UPC, research, inclusion/quantity controls, and related receipt evidence. Keyboard-accessible Previous and Next buttons remain available; horizontal swipes on non-form card surfaces also navigate. Form fields and vertical scrolling retain their normal behavior. Desktop keeps the expanded review.
+
+Every scan remains a card, including excluded scans. Receipt-only items have their own cards for pairing with a scan, matching a known product, or Ignore. A receipt line related to one scan is edited inside that scan card. A line allocated across multiple scans has one receipt card; the scan cards link to its authoritative editor. Tax, savings, and other adjustments also remain visible as adjustment cards. Compact receipt summaries expose merchant, totals and differences; expand them for receipt details, photo access, and Finish/Reopen.
+
+Navigation preserves unsaved research and receipt edits without saving. The current card survives refresh by stable identity, and failed saves keep typed values and show an error. Changing trips selects the first unresolved card using server readiness blockers. Save research draft and receipt saves update draft/evidence state; Finish receipt confirms receipt reconciliation. Approve new product remains an explicitly confirmed catalog write. Commit purchase remains the separate stock write, blocked by server readiness and unsaved edits.
+
+The mobile queue release uses review asset token `2.6.11` and customization marker `ATECHPCS-grocy_AI-33`. The review view loads `capture-review-queue.js` before `capture-review.js`; all review assets share the token. Release gates include the PHP 8.5 module and standalone capture/receipt contracts, serial browser suite, JavaScript syntax, and diff checks. Independent branch review precedes PR/merge/deployment; the live smoke is read-only and checks trip #12 plus unchanged product/stock counts.

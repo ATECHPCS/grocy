@@ -54,7 +54,7 @@
 		var productList = null;
 		var productListPromise = null;
 		var referenceRequests = {};
-		var pendingUnits = {};
+		var pendingEdits = options.editState || {};
 		var loadGeneration = 0;
 		var catalogPromise = request('/api/grocy-ai/capture/research/options', 'GET');
 		var canEditProducts = !window.Grocy || !Array.isArray(window.Grocy.UserPermissions) || window.Grocy.UserPermissions.some(function (permission) { return permission.permission_name === 'MASTER_DATA_EDIT' && Number(permission.has_permission) === 1; });
@@ -71,7 +71,7 @@
 				if (options.errorHost) options.errorHost.textContent = '';
 				payload.drafts.forEach(function (draft)
 				{
-					var line = options.lines.find(function (candidate) { return candidate.id === draft.line_id && candidate.selected && (candidate.status === 'unknown' || candidate.status === 'known' && draft.line_status === 'known' && Number(draft.resolved_product_id) > 0 && Number(candidate.resolved_product_id) === Number(draft.resolved_product_id)); });
+					var line = options.lines.find(function (candidate) { return candidate.id === draft.line_id && (candidate.status === 'unknown' || candidate.status === 'known' && draft.line_status === 'known' && Number(draft.resolved_product_id) > 0 && Number(candidate.resolved_product_id) === Number(draft.resolved_product_id)); });
 					if (line && draft.outcome !== 'approved' && draft.outcome !== 'linked') render(draft, line, catalog);
 				});
 			}).catch(function (error) { if (active && generation === loadGeneration && options.errorHost) options.errorHost.textContent = error.message === 'You need product edit permission.' ? 'You need purchase permission to review product research.' : error.message; });
@@ -91,11 +91,30 @@
 			function mutate(url, method, body, reloadTrip, onFailure, onSuccess)
 			{
 				message.textContent = 'Saving…';
-				return request(url, method, body).then(function () { if (onSuccess) onSuccess(); message.textContent = 'Saved.'; return reloadTrip ? options.reload() : load(); }).catch(function (error) { if (onFailure) onFailure(); message.textContent = error.message; });
+				return request(url, method, body).then(function ()
+				{
+					// A successful write still settles its matching draft fields after disposal.
+					if (onSuccess) onSuccess();
+					if (reloadTrip) delete pendingEdits[line.id];
+					if (options.onEdit) options.onEdit();
+					if (!active) return;
+					message.textContent = 'Saved.';
+					return reloadTrip ? options.reload() : load();
+				}).catch(function (error)
+				{
+					if (!active) return;
+					if (onFailure) onFailure();
+					message.textContent = error.message;
+				});
 			}
 			function finishCard()
 			{
 				card.appendChild(message);
+				if (Number(line.selected) === 0)
+				{
+					card.appendChild(node('p', 'text-muted', 'Include this scan in the purchase before approving or linking a product. Research draft edits can still be saved.'));
+					Array.prototype.forEach.call(card.querySelectorAll('.permission-MASTER_DATA_EDIT'), function (control) { control.disabled = true; });
+				}
 				if (!canEditProducts)
 				{
 					card.appendChild(node('p', 'text-muted', 'Product edit permission is required to approve or link.'));
@@ -188,9 +207,21 @@
 			var controls = node('div', 'grocy-ai-product-research-actions');
 			card.appendChild(controls);
 			var initialFields = { name: name.value.trim(), brand: brand.value.trim() || null, package: packageField.value.trim() || null, product_group_id: group.value ? Number(group.value) : null, taxonomy_leaf_slug: taxonomy.value || null, parent_product_id: parent.value ? Number(parent.value) : null };
-			var unitEdits = pendingUnits[line.id] || {};
-			pendingUnits[line.id] = unitEdits;
+			var fieldEdits = pendingEdits[line.id] || {};
+			pendingEdits[line.id] = fieldEdits;
 			var touchedFields = {};
+			[['name', name], ['brand', brand], ['package', packageField], ['product_group_id', group], ['taxonomy_leaf_slug', taxonomy], ['parent_product_id', parent]].forEach(function (entry)
+			{
+				var key = entry[0], control = entry[1];
+				if (Object.prototype.hasOwnProperty.call(fieldEdits, key)) control.value = fieldEdits[key] == null ? '' : String(fieldEdits[key]);
+				function remember()
+				{
+					fieldEdits[key] = control.tagName === 'SELECT' ? (control.value ? (key === 'taxonomy_leaf_slug' ? control.value : Number(control.value)) : null) : control.value;
+					if (options.onEdit) options.onEdit();
+				}
+				control.addEventListener('input', remember);
+				control.addEventListener('change', remember);
+			});
 			[['product_group_id', group], ['taxonomy_leaf_slug', taxonomy], ['parent_product_id', parent]].forEach(function (entry) { entry[1].addEventListener('change', function () { touchedFields[entry[0]] = true; }); });
 			button(controls, 'Save research draft', function ()
 			{
@@ -202,11 +233,12 @@
 					values.qu_id_stock = stockUnit.value ? Number(stockUnit.value) : null;
 				}
 				var changes = {};
-				Object.keys(values).forEach(function (key) { if (values[key] !== initialFields[key] || touchedFields[key] || Object.prototype.hasOwnProperty.call(unitEdits, key)) changes[key] = values[key]; });
+				Object.keys(values).forEach(function (key) { if (values[key] !== initialFields[key] || touchedFields[key] || Object.prototype.hasOwnProperty.call(fieldEdits, key)) changes[key] = values[key]; });
 				if (!Object.keys(changes).length) { message.textContent = 'No research draft changes to save.'; return; }
+				var submittedEdits = Object.assign({}, fieldEdits);
 				mutate(path + '/research', 'PUT', { revision: draft.revision, changes: changes }, false, null, function ()
 				{
-					Object.keys(changes).forEach(function (key) { if (unitEdits[key] === changes[key]) delete unitEdits[key]; });
+					Object.keys(changes).forEach(function (key) { if (fieldEdits[key] === submittedEdits[key]) delete fieldEdits[key]; });
 				});
 			});
 			evidence.addEventListener('change', function () { mutate(path + '/receipt-evidence', 'PUT', { receipt_line_id: evidence.value ? Number(evidence.value) : null }, false, function () { evidence.value = savedEvidenceId; }); });
@@ -240,12 +272,13 @@
 				function updateSource()
 				{
 					var candidate = candidates.find(function (item) { return Number(item.id) === Number(control.value); });
-					source.textContent = Object.prototype.hasOwnProperty.call(unitEdits, key) ? 'Reviewer choice (unsaved)' : Object.prototype.hasOwnProperty.call(draft.user_edits || {}, key) ? 'Saved reviewer choice' : candidate ? (sources[candidate.source] || candidate.source) + ' suggestion' : 'No unit suggestion; choose manually.';
-					unitMessage.textContent = Object.keys(unitEdits).length ? 'Unit changes are unsaved. Save research draft to keep them.' : '';
+					source.textContent = Object.prototype.hasOwnProperty.call(fieldEdits, key) ? 'Reviewer choice (unsaved)' : Object.prototype.hasOwnProperty.call(draft.user_edits || {}, key) ? 'Saved reviewer choice' : candidate ? (sources[candidate.source] || candidate.source) + ' suggestion' : 'No unit suggestion; choose manually.';
+					unitMessage.textContent = ['qu_id_purchase', 'qu_id_stock'].some(function (key) { return Object.prototype.hasOwnProperty.call(fieldEdits, key); }) ? 'Unit changes are unsaved. Save research draft to keep them.' : '';
 				}
 				control.addEventListener('change', function ()
 				{
-					unitEdits[key] = control.value ? Number(control.value) : null;
+					fieldEdits[key] = control.value ? Number(control.value) : null;
+					if (options.onEdit) options.onEdit();
 					updateSource();
 				});
 				if (!referenceRequests.quantity_units) referenceRequests.quantity_units = request('/api/objects/quantity_units', 'GET');
@@ -258,7 +291,7 @@
 						var item = node('option', null, row.name);
 						item.value = String(row.id); control.appendChild(item);
 					});
-					var value = Object.prototype.hasOwnProperty.call(unitEdits, key) ? unitEdits[key] : initialFields[key];
+					var value = Object.prototype.hasOwnProperty.call(fieldEdits, key) ? fieldEdits[key] : initialFields[key];
 					control.value = value == null ? '' : String(value);
 					control.disabled = !!options.readOnly;
 					updateSource();

@@ -128,6 +128,7 @@ test('product research save preserves unsaved receipt editor text', async ({ pag
 	const data = await setup(page);
 	data.receipts.push({ receipt: { id: 9, status: 'needs_review', merchant: '', purchase_date: null, printed_total: null, shopping_location_id: null, difference_accepted_amount: null }, lines: [], totals: { entered_total: 0, printed_total: null, difference: null }, issues: ['no_lines'] });
 	await page.locator('#grocyai-capture-review-trips button').click();
+	if (page.viewportSize().width < 768) await page.getByRole('button', { name: 'Show receipt details' }).click();
 	await page.getByLabel('Merchant').fill('Corner Market');
 	await page.getByLabel('Proposed name').fill('Corrected Oat Milk');
 	await page.getByRole('button', { name: 'Save research draft' }).click();

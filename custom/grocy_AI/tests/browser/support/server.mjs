@@ -159,6 +159,7 @@ const allowlistedFiles = new Map([
 	}],
 	['/assets/capture-receipts.js', { path: resolve(repositoryRoot, 'public/custom/grocy_AI/capture-receipts.js'), contentType: 'text/javascript; charset=utf-8' }],
 	['/assets/capture-product-research.js', { path: resolve(repositoryRoot, 'public/custom/grocy_AI/capture-product-research.js'), contentType: 'text/javascript; charset=utf-8' }],
+	['/assets/capture-review-queue.js', { path: resolve(repositoryRoot, 'public/custom/grocy_AI/capture-review-queue.js'), contentType: 'text/javascript; charset=utf-8' }],
 	['/assets/capture-review.js', {
 		path: resolve(repositoryRoot, 'public/custom/grocy_AI/capture-review.js'),
 		contentType: 'text/javascript; charset=utf-8'
