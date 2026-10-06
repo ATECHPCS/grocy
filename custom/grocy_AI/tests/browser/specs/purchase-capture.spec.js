@@ -109,7 +109,7 @@ async function installScanApi(page, options)
 			if (settings.resumeUnavailable) return json(route, { error_message: 'Unknown trip' }, 404);
 			return json(route, {
 				trip: makeTrip({ id: 12, status: settings.resumeClosed ? 'reviewing' : 'open' }),
-				lines: [makeLine({ id: 201, trip_id: 12, seq: 1, status: 'known', resolved_product_id: 101, quantity: 2, selected: 1 })]
+				lines: [makeLine({ id: 201, trip_id: 12, seq: 1, scanned_barcode: KNOWN_GTIN, canonical_gtin: '00012345678905', status: 'known', resolved_product_id: 101, quantity: 2, selected: 1 })]
 			});
 		}
 
@@ -274,6 +274,7 @@ test.describe('purchase capture — scan loop', function ()
 		await expect(page.locator('#grocyai-capture-status')).toContainText('Trip #12');
 		await expect(page.locator('.grocy-ai-capture-line')).toHaveCount(1);
 		await expect(page.locator('.grocy-ai-capture-line-quantity')).toHaveText('× 2');
+		await expect(page.locator('.grocy-ai-capture-line-barcode')).toHaveText('UPC ' + KNOWN_GTIN);
 		await expect(page.locator('#grocyai-capture-review-link')).toHaveAttribute('href', '/grocyai/capture/review?trip=12');
 		expect(state.tripCreations).toBe(0);
 		await expectNoForbiddenWrites(page);
@@ -353,11 +354,13 @@ test.describe('purchase capture — scan loop', function ()
 		const knownRow = page.locator('.grocy-ai-capture-line.status-known');
 		await expect(knownRow.locator('.grocy-ai-capture-line-name')).toHaveText('Fixture oats');
 		await expect(knownRow.locator('.grocy-ai-capture-line-quantity')).toHaveText('× 1');
+		await expect(knownRow.locator('.grocy-ai-capture-line-barcode')).toHaveText('UPC ' + KNOWN_GTIN);
 
 		await input.fill(UNKNOWN_GTIN);
 		await input.press('Enter');
 		const unknownRow = page.locator('.grocy-ai-capture-line.status-unknown');
 		await expect(unknownRow.locator('.grocy-ai-capture-line-name')).toHaveText('Unknown — needs product');
+		await expect(unknownRow.locator('.grocy-ai-capture-line-barcode')).toHaveText('UPC ' + UNKNOWN_GTIN);
 
 		// A repeat scan of the same GTIN coalesces into the existing line and increments its quantity.
 		await input.fill(KNOWN_GTIN);
@@ -369,18 +372,48 @@ test.describe('purchase capture — scan loop', function ()
 		expect(await page.evaluate(function () { return window.__captureFixture.captureWrites; })).toBeGreaterThan(0);
 	});
 
-	test('@cap @mob a camera scan is added exactly like a manual entry, and a foreign target is ignored', async function ({ page })
+	test('@cap @mob camera reads require confirmation and may be edited before saving', async function ({ page })
 	{
-		await installScanApi(page);
+		const state = await installScanApi(page);
 		await page.goto('/fixtures/capture.html');
 		await expect(page.locator('#grocyai-capture-status')).toHaveText('Trip started. Scan or enter a GTIN to add items.');
 
 		await page.evaluate(function (gtin) { window.Grocy.BarcodeScanned(gtin, 'grocyai-capture-barcode'); }, KNOWN_GTIN);
-		await expect(page.locator('.grocy-ai-capture-line.status-known .grocy-ai-capture-line-name')).toHaveText('Fixture oats');
+		const confirmation = page.locator('#grocyai-capture-camera-confirmation');
+		await expect(confirmation).toBeVisible();
+		await expect(page.locator('#grocyai-capture-camera-barcode')).toHaveValue(KNOWN_GTIN);
+		expect(state.scans).toBe(0);
+		await page.locator('#grocyai-capture-camera-barcode').fill(UNKNOWN_GTIN);
+		await page.locator('#grocyai-capture-camera-save-button').click();
+		await expect(confirmation).toBeHidden();
+		await expect(page.locator('.grocy-ai-capture-line.status-unknown .grocy-ai-capture-line-barcode')).toHaveText('UPC ' + UNKNOWN_GTIN);
+		expect(state.scans).toBe(1);
+		expect(state.byBarcode[KNOWN_GTIN]).toBeUndefined();
 
 		// A scan aimed at another input's target must not add a line to this page.
-		await page.evaluate(function (gtin) { window.Grocy.BarcodeScanned(gtin, 'some-other-input'); }, UNKNOWN_GTIN);
+		await page.evaluate(function (gtin) { window.Grocy.BarcodeScanned(gtin, 'some-other-input'); }, KNOWN_GTIN);
 		await expect(page.locator('.grocy-ai-capture-line')).toHaveCount(1);
+		await expect(confirmation).toBeHidden();
+		expect(state.scans).toBe(1);
+
+		await page.evaluate(function (gtin) { window.Grocy.BarcodeScanned(gtin, 'grocyai-capture-barcode'); }, KNOWN_GTIN);
+		await expect(confirmation).toBeVisible();
+		await page.locator('#grocyai-capture-camera-cancel-button').click();
+		await expect(confirmation).toBeHidden();
+		expect(state.scans).toBe(1);
+		await expectNoForbiddenWrites(page);
+	});
+
+	test('@cap a pending camera read cannot be saved into a newly started trip', async function ({ page })
+	{
+		const state = await installScanApi(page);
+		await page.goto('/fixtures/capture.html');
+		await expect(page.locator('#grocyai-capture-status')).toContainText('Trip started');
+		await page.evaluate(function (gtin) { window.Grocy.BarcodeScanned(gtin, 'grocyai-capture-barcode'); }, KNOWN_GTIN);
+		await expect(page.locator('#grocyai-capture-camera-confirmation')).toBeVisible();
+		await page.locator('#grocyai-capture-new-trip-button').click();
+		await expect(page.locator('#grocyai-capture-camera-confirmation')).toBeHidden();
+		expect(state.scans).toBe(0);
 		await expectNoForbiddenWrites(page);
 	});
 
@@ -472,6 +505,7 @@ test.describe('purchase capture — review and commit', function ()
 
 		const detail = page.locator('#grocyai-capture-review-detail');
 		await expect(detail.locator('.grocy-ai-capture-review-line-name')).toHaveText('Fixture oats');
+		await expect(detail.locator('.grocy-ai-capture-review-line-barcode')).toHaveText('UPC ' + KNOWN_GTIN);
 		await expect(detail.locator('.grocy-ai-capture-review-quantity input')).toHaveValue('2');
 
 		page.once('dialog', function (dialog) { return dialog.accept(); });
@@ -527,6 +561,7 @@ test.describe('purchase capture — review and commit', function ()
 		const createLink = page.locator('#grocyai-capture-review-detail a.permission-MASTER_DATA_EDIT');
 		await expect(createLink).toHaveText('Create product');
 		await expect(createLink).toHaveAttribute('href', '/product/new?barcode=' + UNKNOWN_GTIN);
+		await expect(page.locator('.grocy-ai-capture-review-line-barcode')).toHaveText('UPC ' + UNKNOWN_GTIN);
 		await expectNoForbiddenWrites(page);
 	});
 });

@@ -900,6 +900,16 @@ function expectException(callable $callback, string $exceptionClass, string $mes
 
 check($moduleVersion !== '', 'The portable module version is defined');
 check($hasAssetVersion, 'The product form defines one grocy_AI asset version token');
+
+$captureTemplate = file_get_contents($repoRoot . '/views/grocyai_capture.blade.php');
+$captureReviewTemplate = file_get_contents($repoRoot . '/views/grocyai_capture_review.blade.php');
+$captureAssetMatch = [];
+$captureReviewAssetMatch = [];
+preg_match('/\$grocyAiAssetVersion = \'([^\']+)\'/', $captureTemplate, $captureAssetMatch);
+preg_match('/\$grocyAiAssetVersion = \'([^\']+)\'/', $captureReviewTemplate, $captureReviewAssetMatch);
+$stableVersion = json_decode(file_get_contents($repoRoot . '/custom/grocy_AI/version.json'), true, 512, JSON_THROW_ON_ERROR);
+check(($captureAssetMatch[1] ?? null) === '2.6.8' && ($captureReviewAssetMatch[1] ?? null) === '2.6.8', 'Capture and review serve the new UPC UI assets through the same cache token');
+check(($stableVersion['Customization'] ?? null) === 'ATECHPCS-grocy_AI-30', 'Capture view changes invalidate the persisted production Blade cache');
 check(($assetVersionMatch[1] ?? null) === $moduleVersion, 'The grocy_AI asset token matches the portable module version');
 check(substr_count($productFormTemplate, '{{ $grocyAiAssetVersion }}') === 4, 'All custom product-form assets use the grocy_AI token');
 $resolvedTemplate = file_get_contents($repoRoot . '/views/quantityunitconversionsresolved.blade.php');

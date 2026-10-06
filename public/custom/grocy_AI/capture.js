@@ -36,6 +36,7 @@
 		finishSecond: 'Confirm again: Are you finished scanning this trip?',
 		finishError: 'Could not finish this trip. Your scans are saved; try again.',
 		finishPending: 'Wait for the current scan to finish, then try again.',
+		barcode: 'UPC',
 		empty: 'No items yet. Scan or enter a GTIN above.',
 		quantity: 'Quantity'
 	};
@@ -130,6 +131,7 @@
 			finishSecond: d.labelFinishSecond || DEFAULT_COPY.finishSecond,
 			finishError: d.labelFinishError || DEFAULT_COPY.finishError,
 			finishPending: d.labelFinishPending || DEFAULT_COPY.finishPending,
+			barcode: d.labelBarcode || DEFAULT_COPY.barcode,
 			empty: d.labelEmpty || DEFAULT_COPY.empty,
 			quantity: d.labelQuantity || DEFAULT_COPY.quantity
 		};
@@ -157,12 +159,17 @@
 		var reviewUrl = reviewLink ? reviewLink.getAttribute('href') : '';
 		var statusEl = document.getElementById('grocyai-capture-status');
 		var linesEl = document.getElementById('grocyai-capture-lines');
+		var cameraConfirmation = document.getElementById('grocyai-capture-camera-confirmation');
+		var cameraInput = document.getElementById('grocyai-capture-camera-barcode');
+		var cameraSaveButton = document.getElementById('grocyai-capture-camera-save-button');
+		var cameraCancelButton = document.getElementById('grocyai-capture-camera-cancel-button');
 
 		var currentTripId = null;
 		var lines = [];
 		var productNames = {};
 		var pendingScans = 0;
 		var finishing = false;
+		var pendingCameraReads = [];
 
 		function setStatus(message)
 		{
@@ -213,13 +220,19 @@
 				var name = document.createElement('span');
 				name.className = 'grocy-ai-capture-line-name';
 				name.textContent = label.text;
+				var detail = document.createElement('div');
+				var barcode = document.createElement('span');
+				barcode.className = 'grocy-ai-capture-line-barcode text-muted';
+				barcode.textContent = copy.barcode + ' ' + String(line.scanned_barcode);
+				detail.appendChild(name);
+				detail.appendChild(barcode);
 
 				var quantity = document.createElement('span');
 				quantity.className = 'badge badge-pill grocy-ai-capture-line-quantity';
 				quantity.textContent = '× ' + describeQuantity(line.quantity);
 				quantity.setAttribute('aria-label', copy.quantity + ' ' + describeQuantity(line.quantity));
 
-				item.appendChild(name);
+				item.appendChild(detail);
 				item.appendChild(quantity);
 				linesEl.appendChild(item);
 			});
@@ -264,6 +277,8 @@
 				}
 				lines = [];
 				productNames = {};
+				pendingCameraReads = [];
+				showNextCameraRead();
 				render();
 				setStatus(copy.tripStarted);
 				if (typeof window !== 'undefined' && window.history && window.location)
@@ -346,6 +361,39 @@
 			{
 				pendingScans--;
 			});
+		}
+
+		function showNextCameraRead()
+		{
+			if (!cameraConfirmation || !cameraInput)
+			{
+				return;
+			}
+			if (pendingCameraReads.length === 0)
+			{
+				cameraConfirmation.hidden = true;
+				return;
+			}
+			cameraInput.value = pendingCameraReads[0];
+			cameraConfirmation.hidden = false;
+			cameraInput.focus();
+		}
+
+		function finishCameraRead(save)
+		{
+			if (pendingCameraReads.length === 0)
+			{
+				return;
+			}
+			var barcode = cameraInput ? cameraInput.value.trim() : '';
+			if (save && barcode === '')
+			{
+				if (cameraInput) cameraInput.focus();
+				return;
+			}
+			pendingCameraReads.shift();
+			showNextCameraRead();
+			if (save) submitBarcode(barcode);
 		}
 
 		function finishScanning()
@@ -431,9 +479,19 @@
 				}
 			});
 		}
+		if (cameraSaveButton) cameraSaveButton.addEventListener('click', function () { finishCameraRead(true); });
+		if (cameraCancelButton) cameraCancelButton.addEventListener('click', function () { finishCameraRead(false); });
+		if (cameraInput) cameraInput.addEventListener('keydown', function (event)
+		{
+			if (event.key === 'Enter')
+			{
+				event.preventDefault();
+				finishCameraRead(true);
+			}
+		});
 
 		// Reuse the enrichment card's camera scanner path: the core camera control fires this jQuery event
-		// with the input's data-target; we filter to this page's input and submit exactly as a manual add.
+		// with the input's data-target; hold this page's camera reads for confirmation before saving.
 		if (typeof window !== 'undefined' && typeof window.$ === 'function')
 		{
 			window.$(document).on('Grocy.BarcodeScanned', function (event, barcode, target)
@@ -442,7 +500,8 @@
 				{
 					return;
 				}
-				submitBarcode(barcode);
+				pendingCameraReads.push(String(barcode));
+				if (pendingCameraReads.length === 1) showNextCameraRead();
 			});
 		}
 
