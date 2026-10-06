@@ -279,4 +279,116 @@ checkResearch($normalize->invoke(null, $v1, $v1['canonical_gtin']) === $v1, 'pro
 $miss = $v1; $miss['contract_version'] = 2; $miss['outcome'] = 'miss'; $miss['name_candidates'] = []; $miss['name_candidate_sources'] = []; $miss['web_evidence'] = [];
 checkResearch($normalize->invoke(null, $miss, $miss['canonical_gtin']) === $miss, 'inconclusive version 2 remains needs input');
 
+
+// Classification has an independent immutable revision and append-only spend ledger.
+require_once __DIR__ . '/../src/GrocyAiTaxonomyMigration.php';
+checkResearch(method_exists(GrocyAiCaptureResearchService::class, 'ClaimClassifications'), 'classification queue missing');
+$cdb = new PDO('sqlite::memory:');
+$cdb->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+$cdb->exec('CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT, active INTEGER DEFAULT 1, parent_product_id INTEGER, qu_id_stock INTEGER DEFAULT 1)');
+$cdb->exec('CREATE TABLE product_groups (id INTEGER PRIMARY KEY, name TEXT, active INTEGER DEFAULT 1)');
+$cdb->exec('CREATE TABLE product_barcodes (id INTEGER PRIMARY KEY, product_id INTEGER, barcode TEXT)');
+$cdb->exec('CREATE TABLE stock_log (id INTEGER PRIMARY KEY)');
+$cs = new GrocyAiCaptureResearchService($cdb);
+$cdb->exec("INSERT INTO product_groups VALUES (1, 'Other', 1)");
+$cdb->exec("INSERT INTO products (id, name) VALUES (1, 'Parent')");
+$cdb->exec("INSERT INTO grocy_ai_capture_trips (id, status, module_version) VALUES (1, 'reviewing', 'test')");
+$cdb->exec("INSERT INTO grocy_ai_capture_lines (id, trip_id, seq, scanned_barcode, canonical_gtin, status) VALUES (1, 1, 1, '4006381333931', '04006381333931', 'unknown')");
+$cd = $cs->EnqueueUnknown(1, 1, '4006381333931');
+checkResearch($cs->ClaimClassifications(1, 'test') === [], 'pending identity cannot classify');
+$cj = $cs->ClaimJobs(1, 'test')[0];
+$cs->CompleteJob($cj['id'], $cj['lease_token'], ['contract_version'=>1, 'canonical_gtin'=>'04006381333931', 'outcome'=>'found', 'name_candidates'=>['Food'], 'brand'=>null, 'package'=>null, 'categories'=>[], 'sources'=>['bb-federation']]);
+$cc = $cs->ClaimClassifications(1, 'test')[0];
+checkResearch($cc['input']['identity']['name'] === 'Food' && $cc['input']['result_revision'] === 1, 'claim returns immutable identity revision');
+checkResearch($cs->ClaimClassifications(1, 'other') === [], 'live classification lease exclusive');
+checkResearch($cs->ReserveClassification($cc['id'], $cc['lease_token'], 'test')['allowed'], 'first classification reserved');
+checkResearch(!$cs->ReserveClassification($cc['id'], $cc['lease_token'], 'test')['allowed'], 'same revision cannot spend twice');
+rejectsResearch(fn() => $cdb->exec('DELETE FROM grocy_ai_capture_classification_reservations'), 'classification reservations append-only');
+$cdb->exec('UPDATE product_groups SET active = 0 WHERE id = 1');
+$cr = $cs->CompleteClassification($cc['id'], $cc['lease_token'], ['status'=>'suggested', 'product_group_id'=>1, 'taxonomy_leaf_slug'=>'produce', 'parent_product_id'=>999]);
+checkResearch($cr['result']['product_group_id'] === null && $cr['result']['taxonomy_leaf_slug'] === 'produce' && $cr['result']['parent_product_id'] === null, 'invalid fields do not discard valid live snapshot choice');
+checkResearch($cs->CompleteClassification($cc['id'], $cc['lease_token'], ['status'=>'suggested', 'product_group_id'=>1, 'taxonomy_leaf_slug'=>'produce', 'parent_product_id'=>999]) === $cr, 'lost completion idempotent');
+checkResearch($cs->ClaimClassifications(1, 'other') === [], 'completed classification not retried');
+checkResearch($cdb->query('SELECT outcome FROM grocy_ai_capture_research_drafts')->fetchColumn() === 'ready', 'classification preserves identified research');
+$cdb->exec('UPDATE grocy_ai_capture_research_drafts SET result_revision = 2');
+$cc = $cs->ClaimClassifications(1, 'test')[0];
+$cdb->exec("UPDATE grocy_ai_capture_research_drafts SET outcome = 'approved'");
+checkResearch($cs->CompleteClassification($cc['id'], $cc['lease_token'], ['status'=>'suggested', 'product_group_id'=>null, 'taxonomy_leaf_slug'=>'produce', 'parent_product_id'=>1])['state'] === 'ignored', 'finalized completion ignored');
+// Lost call, malformed result, stale revision, and review status are all neutral.
+$cdb->exec("UPDATE grocy_ai_capture_research_drafts SET outcome = 'ready', result_revision = 3");
+$cc = $cs->ClaimClassifications(1, 'test')[0];
+$cs->ReserveClassification($cc['id'], $cc['lease_token'], 'test');
+$cdb->exec("UPDATE grocy_ai_capture_classification_jobs SET lease_expires_at = datetime('now', '-1 second') WHERE id = " . $cc['id']);
+checkResearch($cs->ClaimClassifications(1, 'test') === [], 'lost paid call cannot be reclaimed');
+checkResearch($cs->ReviewForTrip(1)['drafts'][0]['classification']['state'] === 'unavailable', 'lost call visible for manual review');
+$cdb->exec('UPDATE grocy_ai_capture_research_drafts SET result_revision = 4');
+$cc = $cs->ClaimClassifications(1, 'test')[0];
+$malformed = $cs->CompleteClassification($cc['id'], $cc['lease_token'], ['arbitrary'=>'data']);
+checkResearch($malformed['state'] === 'malformed', 'malformed completion safely recorded');
+$cdb->exec('UPDATE grocy_ai_capture_research_drafts SET result_revision = 5');
+$cc = $cs->ClaimClassifications(1, 'test')[0];
+$cdb->exec('UPDATE grocy_ai_capture_research_drafts SET result_revision = 6');
+checkResearch($cs->CompleteClassification($cc['id'], $cc['lease_token'], ['status'=>'suggested', 'product_group_id'=>null, 'taxonomy_leaf_slug'=>'produce', 'parent_product_id'=>1])['state'] === 'ignored', 'superseded completion ignored');
+$cc = $cs->ClaimClassifications(1, 'test')[0];
+$cdb->exec("INSERT INTO product_barcodes VALUES (1, 1, '4006381333931')");
+checkResearch(!$cs->ReserveClassification($cc['id'], $cc['lease_token'], 'test')['allowed'], 'new exact owner prevents spend');
+checkResearch($cs->CompleteClassification($cc['id'], $cc['lease_token'], ['status'=>'suggested', 'product_group_id'=>null, 'taxonomy_leaf_slug'=>'produce', 'parent_product_id'=>1])['state'] === 'ignored', 'new exact owner ignores completion');
+$cdb->exec('DELETE FROM product_barcodes');
+// Existing OFF mapping prevents AI classification even when its group is unavailable.
+$cdb->exec('UPDATE grocy_ai_capture_research_drafts SET result_revision = 7');
+$provider = json_decode($cdb->query('SELECT suggested_json FROM grocy_ai_capture_research_drafts')->fetchColumn(), true);
+$provider['sources'] = ['openfoodfacts']; $provider['categories'] = ['Seafood'];
+$cdb->prepare('UPDATE grocy_ai_capture_research_drafts SET suggested_json = ?')->execute([json_encode($provider)]);
+checkResearch($cs->ClaimClassifications(1, 'test') === [], 'usable OFF mapping wins');
+$provider['sources'] = ['bb-federation']; $provider['categories'] = [];
+$cdb->prepare('UPDATE grocy_ai_capture_research_drafts SET suggested_json = ?, result_revision = 8')->execute([json_encode($provider)]);
+$cc = $cs->ClaimClassifications(1, 'test')[0];
+// Atomic final UTC-day slot shared by two processes, including historical reservations.
+define('GROCY_AI_CAPTURE_CLASSIFICATION_DAILY_LIMIT', 3);
+$cdb->exec("INSERT INTO grocy_ai_capture_lines (id, trip_id, seq, scanned_barcode, canonical_gtin, status) VALUES (2, 1, 2, '96385074', '00000096385074', 'unknown')");
+$cs->EnqueueUnknown(1, 2, '96385074');
+$cj = $cs->ClaimJobs(1, 'test')[0];
+$provider['canonical_gtin'] = '00000096385074';
+$cs->CompleteJob($cj['id'], $cj['lease_token'], $provider);
+$cc2 = $cs->ClaimClassifications(1, 'test')[0];
+$cdb->exec("INSERT INTO grocy_ai_capture_classification_jobs (draft_id, result_revision, input_json, state, lease_hash, lease_expires_at) VALUES (1, 100, '{}', 'unavailable', 'historical', CURRENT_TIMESTAMP)");
+$cdb->exec("INSERT INTO grocy_ai_capture_classification_reservations (draft_id, result_revision, utc_day, actor) VALUES (1, 100, date('now', '-1 day'), 'historical')");
+$racePath = tempnam(sys_get_temp_dir(), 'grocy-classification-'); unlink($racePath);
+$cdb->exec('VACUUM INTO ' . $cdb->quote($racePath));
+$children = [];
+foreach ([$cc, $cc2] as $claim)
+{
+	$pair = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, 0);
+	$pid = pcntl_fork();
+	checkResearch($pid >= 0, 'classification fork succeeds');
+	if ($pid === 0)
+	{
+		fclose($pair[0]); fread($pair[1], 1);
+		try
+		{
+			$raceDb = new PDO('sqlite:' . $racePath); $raceDb->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION); $raceDb->exec('PRAGMA busy_timeout = 5000');
+			$result = (new GrocyAiCaptureResearchService($raceDb, false))->ReserveClassification($claim['id'], $claim['lease_token'], 'racer');
+			fwrite($pair[1], json_encode($result)); exit(0);
+		}
+		catch (Throwable $ex) { fwrite($pair[1], json_encode(['error'=>$ex->getMessage()])); exit(1); }
+	}
+	fclose($pair[1]); $children[] = [$pid, $pair[0]];
+}
+foreach ($children as [$pid, $socket]) fwrite($socket, 'G');
+$allowed = 0;
+foreach ($children as [$pid, $socket])
+{
+	$result = json_decode(stream_get_contents($socket), true); fclose($socket); pcntl_waitpid($pid, $status);
+	checkResearch(pcntl_wexitstatus($status) === 0, 'classification race child succeeds'); $allowed += (int)$result['allowed'];
+}
+checkResearch($allowed === 1, 'classification race grants final UTC slot exactly once');
+$raceDb = new PDO('sqlite:' . $racePath);
+checkResearch((int)$raceDb->query("SELECT COUNT(*) FROM grocy_ai_capture_classification_reservations WHERE utc_day = date('now')")->fetchColumn() === 3, 'classification daily ceiling exact');
+$raceDb = null; unlink($racePath);
+checkResearch($cdb->query('SELECT source FROM grocy_ai_capture_classification_jobs WHERE id = 1')->fetchColumn() === 'openai-classification', 'classification source durably recorded');
+rejectsResearch(fn() => $cdb->exec("UPDATE grocy_ai_capture_classification_jobs SET input_json = '{}' WHERE id = 1"), 'claim snapshot immutable');
+$cdb->exec("UPDATE grocy_ai_capture_lines SET scanned_barcode = '036000291452', canonical_gtin = '00036000291452' WHERE id = 1");
+$cdb->exec('UPDATE grocy_ai_capture_research_drafts SET result_revision = 9 WHERE id = 1');
+checkResearch($cs->ClassificationInput(1) === null, 'changed scan cannot classify stale identity');
+
 echo "capture research queue: PASS\n";

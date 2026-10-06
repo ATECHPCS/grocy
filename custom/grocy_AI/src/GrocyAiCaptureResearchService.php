@@ -105,15 +105,104 @@ class GrocyAiCaptureResearchService
 		];
 	}
 
+	/** Read-only worker evidence: choices are bounded independently of the full review catalog. */
+	public function ClassificationInput(int $draftId): ?array
+	{
+		$query = $this->Db->prepare("SELECT d.trip_id, d.line_id FROM grocy_ai_capture_research_drafts d JOIN grocy_ai_capture_lines l ON l.id = d.line_id AND l.trip_id = d.trip_id JOIN grocy_ai_capture_trips t ON t.id = d.trip_id JOIN grocy_ai_capture_research_jobs j ON j.id = d.job_id WHERE d.id = ? AND d.outcome = 'ready' AND d.result_revision > 0 AND l.scanned_barcode = d.scanned_barcode AND l.canonical_gtin = j.canonical_gtin AND l.applied_at IS NULL AND l.status = 'unknown' AND l.selected = 1 AND l.resolved_product_id IS NULL AND t.status != 'committed' AND NOT EXISTS (SELECT 1 FROM grocy_ai_capture_trip_cancellations c WHERE c.trip_id = t.id) AND NOT EXISTS (SELECT 1 FROM product_barcodes b WHERE " . GrocyAiGtin::CanonicalSqlExpression('b.barcode') . " = j.canonical_gtin)");
+		$query->execute([$draftId]);
+		$row = $query->fetch(PDO::FETCH_ASSOC);
+		if ($row === false) return null;
+		$draft = $this->DraftRow((int)$row['trip_id'], (int)$row['line_id']);
+		$suggested = json_decode($draft['suggested_json'], true, 512, JSON_THROW_ON_ERROR);
+		$selected = json_decode($draft['selected_json'], true, 512, JSON_THROW_ON_ERROR);
+		if (($suggested['outcome'] ?? null) !== 'found' || empty($suggested['name_candidates'])) return null;
+		$edits = json_decode($draft['user_edits_json'], true, 512, JSON_THROW_ON_ERROR);
+		$name = self::ClassificationText($selected['name'] ?? $suggested['name_candidates'][0]);
+		if ($name === null) return null;
+		GrocyAiTaxonomyMigration::Bootstrap($this->Db);
+		$groups = $this->Db->query('SELECT id, name FROM product_groups WHERE active = 1 ORDER BY name, id LIMIT 200')->fetchAll(PDO::FETCH_ASSOC);
+		$leavesQuery = $this->Db->prepare('SELECT slug, label FROM grocy_ai_taxonomy_nodes WHERE version = ? AND depth = 2 ORDER BY label, slug LIMIT 200');
+		$leavesQuery->execute([GrocyAiTaxonomyMigration::VERSION]);
+		$leaves = $leavesQuery->fetchAll(PDO::FETCH_ASSOC);
+		$parents = $this->Db->query('SELECT id, name, qu_id_stock FROM products WHERE active = 1 AND parent_product_id IS NULL ORDER BY name, id LIMIT 500')->fetchAll(PDO::FETCH_ASSOC);
+		foreach ($groups as &$group) { $group['id'] = (int)$group['id']; $group['name'] = self::ClassificationText($group['name']); }
+		unset($group);
+		foreach ($leaves as &$leaf) { $leaf['label'] = self::ClassificationText($leaf['label']); }
+		unset($leaf);
+		foreach ($parents as &$parent) { $parent['id'] = (int)$parent['id']; $parent['qu_id_stock'] = (int)$parent['qu_id_stock']; $parent['name'] = self::ClassificationText($parent['name']); }
+		unset($parent);
+		$receiptDescription = null;
+		if ($draft['receipt_line_id'] !== null)
+		{
+			try { $receiptDescription = (new GrocyAiReceiptService($this->Db))->ResearchEvidence((int)$draft['trip_id'], (int)$draft['receipt_line_id'])['description']; }
+			catch (\InvalidArgumentException) { /* Removed receipt evidence is optional. */ }
+		}
+		$candidates = ['product_group_id' => $this->GroupCandidates($suggested), 'taxonomy_leaf_slug' => $this->TaxonomyCandidates($suggested), 'parent_product_id' => $this->ParentCandidates($draft, $selected, $suggested)];
+		foreach ($candidates as &$fieldCandidates)
+		{
+			foreach ($fieldCandidates as &$candidate)
+			{
+				foreach (['name', 'label', 'provider_category'] as $field)
+				{
+					if (array_key_exists($field, $candidate)) $candidate[$field] = self::ClassificationText($candidate[$field]);
+				}
+			}
+			unset($candidate);
+		}
+		unset($fieldCandidates);
+
+		return [
+			'contract_version' => 1,
+			'draft_id' => $draftId,
+			'result_revision' => (int)$draft['result_revision'],
+			'identity' => ['name' => $name, 'brand' => self::ClassificationText(!empty($edits['brand']) ? ($selected['brand'] ?? null) : ($selected['brand'] ?? $suggested['brand'] ?? null)), 'package' => self::ClassificationText(!empty($edits['package']) ? ($selected['package'] ?? null) : ($selected['package'] ?? $suggested['package'] ?? null)), 'receipt_description' => self::ClassificationText($receiptDescription)],
+			'choices' => ['product_groups' => $groups, 'taxonomy_leaves' => $leaves, 'generic_parents' => $parents],
+			'deterministic_candidates' => $candidates
+		];
+	}
+
+	private static function ClassificationText(mixed $value): ?string
+	{
+		if (!is_string($value)) return null;
+		$value = trim(preg_replace('/\p{C}/u', ' ', $value) ?? '');
+		return $value === '' ? null : mb_substr($value, 0, 200);
+	}
+
+	private function ParentCandidates(array $draft, array $selected, array $suggested): array
+	{
+		if ($draft['outcome'] !== 'ready' || $draft['line_status'] !== 'unknown' || ($suggested['outcome'] ?? null) !== 'found') return [];
+		$name = $selected['name'] ?? $suggested['name_candidates'][0] ?? null;
+		if (!is_string($name) || $name === '') return [];
+		$matches = [];
+		$query = $this->Db->query('SELECT id, name, qu_id_stock FROM products WHERE active = 1 AND parent_product_id IS NULL ORDER BY id');
+		foreach ($query as $parent)
+		{
+			if (mb_strtolower(trim($parent['name'])) !== mb_strtolower(trim($name))) continue;
+			$matches[] = ['id' => (int)$parent['id'], 'name' => $parent['name'], 'qu_id_stock' => (int)$parent['qu_id_stock'], 'source' => 'local_identity', 'compatibility' => 'pending'];
+			if (count($matches) > 1) return [];
+		}
+		if ($matches === [] || !isset($selected['qu_id_stock'])) return $matches;
+		$stock = (int)$selected['qu_id_stock'];
+		if ($stock !== $matches[0]['qu_id_stock'])
+		{
+			// Only global conversions apply to a child that has not yet been created.
+			$conversion = $this->Db->prepare('SELECT 1 FROM quantity_unit_conversions WHERE product_id IS NULL AND from_qu_id = ? AND to_qu_id = ? AND factor > 0 LIMIT 1');
+			$conversion->execute([$matches[0]['qu_id_stock'], $stock]);
+			if ($conversion->fetchColumn() === false) return [];
+		}
+		$matches[0]['compatibility'] = 'compatible';
+		return $matches;
+	}
+
 	/** @param array<string, mixed> $changes */
 	public function UpdateDraft(int $tripId, int $lineId, int $revision, array $changes, string $actor): array
 	{
-		if ($revision < 1 || $changes === [] || array_diff(array_keys($changes), ['name', 'brand', 'package', 'product_group_id', 'taxonomy_leaf_slug']) !== []) throw new \InvalidArgumentException('Invalid draft changes');
+		if ($revision < 1 || $changes === [] || array_diff(array_keys($changes), ['name', 'brand', 'package', 'product_group_id', 'taxonomy_leaf_slug', 'parent_product_id']) !== []) throw new \InvalidArgumentException('Invalid draft changes');
 		foreach ($changes as $key => $value)
 		{
 			if (in_array($key, ['name', 'brand', 'package'], true) && $value !== null && (!is_string($value) || trim($value) !== $value || $value === '' || mb_strlen($value) > 200)) throw new \InvalidArgumentException('Invalid draft field');
 			if ($key === 'name' && $value === null) throw new \InvalidArgumentException('Name is required');
-			if ($key === 'product_group_id' && $value !== null && (!is_int($value) || $value < 1)) throw new \InvalidArgumentException('Invalid group');
+			if (in_array($key, ['product_group_id', 'parent_product_id'], true) && $value !== null && (!is_int($value) || $value < 1)) throw new \InvalidArgumentException('Invalid group');
 			if ($key === 'taxonomy_leaf_slug' && $value !== null && (!is_string($value) || preg_match('/^[a-z0-9_-]{1,100}$/D', $value) !== 1)) throw new \InvalidArgumentException('Invalid taxonomy leaf');
 		}
 		if (isset($changes['product_group_id']))
@@ -121,6 +210,12 @@ class GrocyAiCaptureResearchService
 			$query = $this->Db->prepare('SELECT 1 FROM product_groups WHERE id = ? AND active = 1');
 			$query->execute([$changes['product_group_id']]);
 			if ($query->fetchColumn() === false) throw new \InvalidArgumentException('Inactive group');
+		}
+		if (isset($changes['parent_product_id']))
+		{
+			$query = $this->Db->prepare('SELECT 1 FROM products WHERE id = ? AND active = 1 AND parent_product_id IS NULL');
+			$query->execute([$changes['parent_product_id']]);
+			if ($query->fetchColumn() === false) throw new \InvalidArgumentException('Inactive generic parent');
 		}
 		if (isset($changes['taxonomy_leaf_slug']))
 		{
@@ -264,7 +359,24 @@ class GrocyAiCaptureResearchService
 			catch (\InvalidArgumentException) { $evidence = null; }
 		}
 		if ($evidence !== null) $names[] = ['value' => $evidence['description'], 'sources' => ['receipt_ocr'], 'provenance' => 'attributed'];
-		return ['id' => (int)$draft['id'], 'line_id' => $lineId, 'seq' => (int)$draft['seq'], 'revision' => (int)$draft['revision'], 'outcome' => $draft['outcome'], 'line_status' => $draft['line_status'], 'resolved_product_id' => $draft['resolved_product_id'] === null ? null : (int)$draft['resolved_product_id'], 'resolved_product_name' => $draft['resolved_product_name'], 'job_state' => $job['state'], 'safe_error_code' => $job['safe_error_code'], 'scanned_barcode' => $draft['scanned_barcode'], 'canonical_gtin' => $job['canonical_gtin'], 'selected' => $selected, 'suggested' => $suggested, 'name_alternatives' => $names, 'receipt_evidence' => $evidence, 'group_candidates' => $this->GroupCandidates($suggested), 'taxonomy_candidates' => $this->TaxonomyCandidates($suggested), 'possible_existing_products' => $this->PossibleProducts($selected, $suggested), 'final_product_id' => $draft['final_product_id'] === null ? null : (int)$draft['final_product_id']];
+		$classificationQuery = $this->Db->prepare('SELECT state, result_revision, result_json FROM grocy_ai_capture_classification_jobs WHERE draft_id = ? AND result_revision = ?');
+		$classificationQuery->execute([$draft['id'], $draft['result_revision']]);
+		$classification = $classificationQuery->fetch(PDO::FETCH_ASSOC);
+		if ($classification !== false) $classification = ['state' => $classification['state'], 'result_revision' => (int)$classification['result_revision'], 'source' => 'openai-classification', 'result' => $classification['result_json'] === null ? null : json_decode($classification['result_json'], true, 512, JSON_THROW_ON_ERROR)];
+		elseif ($this->ClassificationInput((int)$draft['id']) !== null) $classification = ['state' => 'pending', 'result_revision' => (int)$draft['result_revision'], 'source' => null, 'result' => null];
+		$edits = json_decode($draft['user_edits_json'], true, 512, JSON_THROW_ON_ERROR);
+		$candidates = ['product_group_id' => $this->GroupCandidates($suggested), 'taxonomy_leaf_slug' => $this->TaxonomyCandidates($suggested), 'parent_product_id' => $this->ParentCandidates($draft, $selected, $suggested)];
+		$catalog = ($classification['state'] ?? null) === 'suggested' ? $this->ReviewOptions() : ['product_groups' => [], 'taxonomy_leaves' => [], 'generic_parents' => []];
+		foreach (['product_group_id' => ['product_groups', 'id'], 'taxonomy_leaf_slug' => ['taxonomy_leaves', 'slug'], 'parent_product_id' => ['generic_parents', 'id']] as $field => [$choices, $key])
+		{
+			$value = $classification['result'][$field] ?? null;
+			if ($candidates[$field] === [] && ($classification['state'] ?? null) === 'suggested' && $value !== null)
+			{
+				foreach ($catalog[$choices] as $choice) if ($choice[$key] === $value) $candidates[$field][] = $choice + ['source' => 'openai-classification'];
+			}
+			if (!array_key_exists($field, $edits) && !array_key_exists($field, $selected) && count($candidates[$field]) === 1) $selected[$field] = $candidates[$field][0][$key];
+		}
+		return ['id' => (int)$draft['id'], 'line_id' => $lineId, 'seq' => (int)$draft['seq'], 'revision' => (int)$draft['revision'], 'outcome' => $draft['outcome'], 'line_status' => $draft['line_status'], 'resolved_product_id' => $draft['resolved_product_id'] === null ? null : (int)$draft['resolved_product_id'], 'resolved_product_name' => $draft['resolved_product_name'], 'job_state' => $job['state'], 'safe_error_code' => $job['safe_error_code'], 'scanned_barcode' => $draft['scanned_barcode'], 'canonical_gtin' => $job['canonical_gtin'], 'selected' => $selected, 'user_edits' => $edits, 'suggested' => $suggested, 'classification' => $classification ?: null, 'name_alternatives' => $names, 'receipt_evidence' => $evidence, 'group_candidates' => $candidates['product_group_id'], 'taxonomy_candidates' => $candidates['taxonomy_leaf_slug'], 'parent_candidates' => $candidates['parent_product_id'], 'possible_existing_products' => $this->PossibleProducts($selected, $suggested), 'final_product_id' => $draft['final_product_id'] === null ? null : (int)$draft['final_product_id']];
 	}
 
 	private function GroupCandidates(array $suggested): array
@@ -516,6 +628,123 @@ class GrocyAiCaptureResearchService
 			if ($this->Db->inTransaction()) $this->Db->rollBack();
 			throw $ex;
 		}
+	}
+
+	/** Claim an immutable classification input, independently of UPC research leases. */
+	public function ClaimClassifications(int $limit, string $workerId): array
+	{
+		if ($limit < 1 || $limit > 5 || preg_match('/^[A-Za-z0-9_.:-]{1,64}$/D', $workerId) !== 1) throw new \InvalidArgumentException('Invalid classification claim');
+		$this->Db->exec('BEGIN IMMEDIATE');
+		try
+		{
+			// A lost paid call is terminal. Releasing its lease must never authorize another call.
+			$this->Db->exec("UPDATE grocy_ai_capture_classification_jobs SET state = 'unavailable' WHERE state = 'leased' AND lease_expires_at <= CURRENT_TIMESTAMP AND EXISTS (SELECT 1 FROM grocy_ai_capture_classification_reservations r WHERE r.draft_id = grocy_ai_capture_classification_jobs.draft_id AND r.result_revision = grocy_ai_capture_classification_jobs.result_revision)");
+			$rows = $this->Db->query("SELECT d.id FROM grocy_ai_capture_research_drafts d JOIN grocy_ai_capture_lines l ON l.id = d.line_id AND l.trip_id = d.trip_id JOIN grocy_ai_capture_trips t ON t.id = d.trip_id JOIN grocy_ai_capture_research_jobs j ON j.id = d.job_id LEFT JOIN grocy_ai_capture_classification_jobs c ON c.draft_id = d.id AND c.result_revision = d.result_revision WHERE d.outcome = 'ready' AND d.result_revision > 0 AND l.status = 'unknown' AND l.selected = 1 AND l.resolved_product_id IS NULL AND l.applied_at IS NULL AND l.scanned_barcode = d.scanned_barcode AND l.canonical_gtin = j.canonical_gtin AND t.status != 'committed' AND NOT EXISTS (SELECT 1 FROM grocy_ai_capture_trip_cancellations x WHERE x.trip_id = t.id) AND NOT EXISTS (SELECT 1 FROM product_barcodes b WHERE " . GrocyAiGtin::CanonicalSqlExpression('b.barcode') . " = j.canonical_gtin) AND (c.id IS NULL OR (c.state = 'leased' AND c.lease_expires_at <= CURRENT_TIMESTAMP)) ORDER BY d.id LIMIT 100")->fetchAll(PDO::FETCH_COLUMN);
+			$jobs = [];
+			foreach ($rows as $draftId)
+			{
+				$input = $this->ClassificationInput((int)$draftId);
+				if ($input === null) continue;
+				$mapped = count($input['deterministic_candidates']['taxonomy_leaf_slug']) === 1;
+				$state = $mapped ? 'not_needed' : 'leased';
+				$token = bin2hex(random_bytes(32));
+				$this->Db->prepare("INSERT INTO grocy_ai_capture_classification_jobs (draft_id, result_revision, input_json, state, lease_hash, lease_expires_at) VALUES (?, ?, ?, ?, ?, datetime('now', '+60 seconds')) ON CONFLICT(draft_id, result_revision) DO UPDATE SET lease_hash = excluded.lease_hash, lease_expires_at = excluded.lease_expires_at WHERE state = 'leased'")->execute([$draftId, $input['result_revision'], json_encode($input, JSON_THROW_ON_ERROR), $state, hash('sha256', $token)]);
+				if ($mapped) continue;
+				$query = $this->Db->prepare('SELECT * FROM grocy_ai_capture_classification_jobs WHERE draft_id = ? AND result_revision = ?');
+				$query->execute([$draftId, $input['result_revision']]);
+				$row = $query->fetch(PDO::FETCH_ASSOC);
+				$jobs[] = ['id' => (int)$row['id'], 'input' => json_decode($row['input_json'], true, 512, JSON_THROW_ON_ERROR), 'lease_token' => $token, 'lease_expires_at' => $row['lease_expires_at']];
+				if (count($jobs) === $limit) break;
+			}
+			$this->Db->commit();
+			return $jobs;
+		}
+		catch (\Throwable $ex) { if ($this->Db->inTransaction()) $this->Db->rollBack(); throw $ex; }
+	}
+
+	private function ClassificationLease(int $id, string $token): array
+	{
+		if ($id < 1 || preg_match('/^[a-f0-9]{64}$/D', $token) !== 1) throw new \InvalidArgumentException('Invalid classification lease');
+		$query = $this->Db->prepare('SELECT * FROM grocy_ai_capture_classification_jobs WHERE id = ?');
+		$query->execute([$id]);
+		$row = $query->fetch(PDO::FETCH_ASSOC);
+		if ($row === false || !hash_equals($row['lease_hash'], hash('sha256', $token))) throw new \RuntimeException('Classification lease conflict');
+		return $row;
+	}
+
+	public function ReserveClassification(int $id, string $token, string $actor): array
+	{
+		$this->Db->exec('BEGIN IMMEDIATE');
+		try
+		{
+			$row = $this->ClassificationLease($id, $token);
+			$this->RequireLiveLease($row);
+			$input = $this->ClassificationInput((int)$row['draft_id']);
+			$decision = ['allowed' => false, 'reason' => 'stale'];
+			if ($input !== null && $input['result_revision'] === (int)$row['result_revision'])
+			{
+				$existing = $this->Db->prepare('SELECT 1 FROM grocy_ai_capture_classification_reservations WHERE draft_id = ? AND result_revision = ?');
+				$existing->execute([$row['draft_id'], $row['result_revision']]);
+				$decision['reason'] = 'already_reserved';
+				if ($existing->fetchColumn() === false)
+				{
+					$limit = defined('GROCY_AI_CAPTURE_CLASSIFICATION_DAILY_LIMIT') ? (int)GROCY_AI_CAPTURE_CLASSIFICATION_DAILY_LIMIT : 20;
+					$count = (int)$this->Db->query("SELECT COUNT(*) FROM grocy_ai_capture_classification_reservations WHERE utc_day = date('now')")->fetchColumn();
+					$decision['reason'] = 'daily_limit';
+					if ($count < $limit)
+					{
+						$this->Db->prepare("INSERT INTO grocy_ai_capture_classification_reservations (draft_id, result_revision, utc_day, actor) VALUES (?, ?, date('now'), ?)")->execute([$row['draft_id'], $row['result_revision'], $actor]);
+						$decision = ['allowed' => true, 'reason' => 'reserved'];
+					}
+					else $this->Db->prepare("UPDATE grocy_ai_capture_classification_jobs SET state = 'daily_limit' WHERE id = ?")->execute([$id]);
+				}
+			}
+			$this->Db->commit();
+			return $decision;
+		}
+		catch (\Throwable $ex) { if ($this->Db->inTransaction()) $this->Db->rollBack(); throw $ex; }
+	}
+
+	public function FailClassification(int $id, string $token, string $safeCode): array
+	{
+		if (!in_array($safeCode, ['unavailable', 'quota_exhausted', 'refused', 'malformed', 'timeout'], true)) throw new \InvalidArgumentException('Invalid classification status');
+		return $this->CompleteClassification($id, $token, ['status' => $safeCode, 'product_group_id' => null, 'taxonomy_leaf_slug' => null, 'parent_product_id' => null]);
+	}
+
+	public function CompleteClassification(int $id, string $token, array $result): array
+	{
+		$this->Db->exec('BEGIN IMMEDIATE');
+		try
+		{
+			$row = $this->ClassificationLease($id, $token);
+			$summary = static fn(array $r): array => ['id' => (int)$r['id'], 'state' => $r['state'], 'result_revision' => (int)$r['result_revision'], 'source' => 'openai-classification', 'result' => $r['result_json'] === null ? null : json_decode($r['result_json'], true, 512, JSON_THROW_ON_ERROR)];
+			if ($row['state'] !== 'leased') { $this->Db->commit(); return $summary($row); }
+			$live = $this->ClassificationInput((int)$row['draft_id']);
+			$state = 'ignored';
+			$normalized = null;
+			if ($live !== null && $live['result_revision'] === (int)$row['result_revision'] && $row['lease_expires_at'] > gmdate('Y-m-d H:i:s'))
+			{
+				$fields = ['product_group_id', 'taxonomy_leaf_slug', 'parent_product_id'];
+				$status = $result['status'] ?? null;
+				if (!in_array($status, ['suggested', 'inconclusive', 'unavailable', 'quota_exhausted', 'refused', 'malformed', 'timeout'], true) || count($result) !== 4 || array_diff($fields, array_keys($result))) $status = 'malformed';
+				$reserved = $this->Db->prepare('SELECT 1 FROM grocy_ai_capture_classification_reservations WHERE draft_id = ? AND result_revision = ?');
+				$reserved->execute([$row['draft_id'], $row['result_revision']]);
+				if ($status === 'suggested' && $reserved->fetchColumn() === false) throw new \RuntimeException('Classification reservation required');
+				$normalized = ['status' => $status, 'product_group_id' => null, 'taxonomy_leaf_slug' => null, 'parent_product_id' => null];
+				$snapshot = json_decode($row['input_json'], true, 512, JSON_THROW_ON_ERROR);
+				foreach (['product_group_id' => ['product_groups', 'id'], 'taxonomy_leaf_slug' => ['taxonomy_leaves', 'slug'], 'parent_product_id' => ['generic_parents', 'id']] as $field => [$choices, $key])
+				{
+					$value = $result[$field] ?? null;
+					if ($status === 'suggested' && $value !== null && in_array($value, array_column($snapshot['choices'][$choices], $key), true) && in_array($value, array_column($live['choices'][$choices], $key), true)) $normalized[$field] = $value;
+				}
+				$state = $status;
+			}
+			$this->Db->prepare('UPDATE grocy_ai_capture_classification_jobs SET state = ?, result_json = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?')->execute([$state, $normalized === null ? null : json_encode($normalized, JSON_THROW_ON_ERROR), $id]);
+			$row['state'] = $state; $row['result_json'] = $normalized === null ? null : json_encode($normalized, JSON_THROW_ON_ERROR);
+			$this->Db->commit();
+			return $summary($row);
+		}
+		catch (\Throwable $ex) { if ($this->Db->inTransaction()) $this->Db->rollBack(); throw $ex; }
 	}
 
 	private function JobForLease(int $jobId, string $leaseToken): array

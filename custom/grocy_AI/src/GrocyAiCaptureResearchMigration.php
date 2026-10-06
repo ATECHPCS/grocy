@@ -6,7 +6,7 @@ use PDO;
 
 class GrocyAiCaptureResearchMigration
 {
-	public const VERSION = 'v3';
+	public const VERSION = 'v4';
 
 	public static function Bootstrap(PDO $pdo): void
 	{
@@ -31,6 +31,12 @@ class GrocyAiCaptureResearchMigration
 			$pdo->exec('CREATE INDEX IF NOT EXISTS grocy_ai_capture_research_jobs_claim_idx ON grocy_ai_capture_research_jobs (state, next_retry_at, lease_expires_at, id)');
 			// Drafts survive capture-line deletion for audit; only their live line association is cleared.
 			$pdo->exec("CREATE TABLE IF NOT EXISTS grocy_ai_capture_research_drafts (id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT, job_id INTEGER NOT NULL, trip_id INTEGER NOT NULL, line_id INTEGER NULL UNIQUE, scanned_barcode TEXT NOT NULL, suggested_json TEXT NOT NULL DEFAULT '{}', selected_json TEXT NOT NULL DEFAULT '{}', user_edits_json TEXT NOT NULL DEFAULT '{}', receipt_line_id INTEGER NULL, receipt_evidence TEXT NULL, revision INTEGER NOT NULL DEFAULT 1 CHECK (revision > 0), result_revision INTEGER NOT NULL DEFAULT 0 CHECK (result_revision >= 0), outcome TEXT NOT NULL DEFAULT 'pending' CHECK (outcome IN ('pending', 'ready', 'needs_input', 'approved', 'linked')), final_product_id INTEGER NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (job_id) REFERENCES grocy_ai_capture_research_jobs(id), FOREIGN KEY (trip_id) REFERENCES grocy_ai_capture_trips(id), FOREIGN KEY (line_id) REFERENCES grocy_ai_capture_lines(id) ON DELETE SET NULL, FOREIGN KEY (receipt_line_id) REFERENCES grocy_ai_receipt_lines(id) ON DELETE SET NULL)");
+			$pdo->exec("CREATE TABLE IF NOT EXISTS grocy_ai_capture_classification_jobs (id INTEGER PRIMARY KEY AUTOINCREMENT, draft_id INTEGER NOT NULL, result_revision INTEGER NOT NULL, input_json TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'openai-classification', state TEXT NOT NULL, lease_hash TEXT NOT NULL, lease_expires_at TEXT NOT NULL, result_json TEXT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, completed_at TEXT NULL, UNIQUE(draft_id, result_revision), FOREIGN KEY(draft_id) REFERENCES grocy_ai_capture_research_drafts(id))");
+			$pdo->exec("CREATE TABLE IF NOT EXISTS grocy_ai_capture_classification_reservations (id INTEGER PRIMARY KEY AUTOINCREMENT, draft_id INTEGER NOT NULL, result_revision INTEGER NOT NULL, utc_day TEXT NOT NULL, actor TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE(draft_id, result_revision), FOREIGN KEY(draft_id, result_revision) REFERENCES grocy_ai_capture_classification_jobs(draft_id, result_revision))");
+			$pdo->exec("CREATE TRIGGER IF NOT EXISTS grocy_ai_capture_classification_input_immutable BEFORE UPDATE OF draft_id, result_revision, input_json, source ON grocy_ai_capture_classification_jobs BEGIN SELECT RAISE(ABORT, 'classification input is immutable'); END");
+			$pdo->exec('CREATE INDEX IF NOT EXISTS grocy_ai_capture_classification_reservations_day_idx ON grocy_ai_capture_classification_reservations(utc_day)');
+			$pdo->exec("CREATE TRIGGER IF NOT EXISTS grocy_ai_capture_classification_reservations_no_update BEFORE UPDATE ON grocy_ai_capture_classification_reservations BEGIN SELECT RAISE(ABORT, 'classification reservation is append-only'); END");
+			$pdo->exec("CREATE TRIGGER IF NOT EXISTS grocy_ai_capture_classification_reservations_no_delete BEFORE DELETE ON grocy_ai_capture_classification_reservations BEGIN SELECT RAISE(ABORT, 'classification reservation is append-only'); END");
 			$pdo->exec('CREATE INDEX IF NOT EXISTS grocy_ai_capture_research_drafts_trip_idx ON grocy_ai_capture_research_drafts (trip_id, line_id)');
 			$pdo->exec("CREATE TABLE IF NOT EXISTS grocy_ai_capture_research_audit (id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT, trip_id INTEGER NOT NULL, draft_id INTEGER NOT NULL, actor TEXT NOT NULL, action TEXT NOT NULL, before_json TEXT NULL, after_json TEXT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (trip_id) REFERENCES grocy_ai_capture_trips(id), FOREIGN KEY (draft_id) REFERENCES grocy_ai_capture_research_drafts(id))");
 			$pdo->exec('CREATE INDEX IF NOT EXISTS grocy_ai_capture_research_audit_draft_idx ON grocy_ai_capture_research_audit (draft_id, id)');
@@ -50,6 +56,7 @@ class GrocyAiCaptureResearchMigration
 			if ($invalidDrafts !== 0 || $invalidAudit !== 0) throw new \RuntimeException('Existing research rows have mismatched trip references');
 			$pdo->prepare('INSERT OR IGNORE INTO grocy_ai_capture_research_migrations (version) VALUES (?)')->execute(['v1']);
 			$pdo->prepare('INSERT OR IGNORE INTO grocy_ai_capture_research_migrations (version) VALUES (?)')->execute(['v2']);
+			$pdo->prepare('INSERT OR IGNORE INTO grocy_ai_capture_research_migrations (version) VALUES (?)')->execute(['v3']);
 			$pdo->prepare('INSERT OR IGNORE INTO grocy_ai_capture_research_migrations (version) VALUES (?)')->execute([self::VERSION]);
 			if ($started) $pdo->commit();
 		}

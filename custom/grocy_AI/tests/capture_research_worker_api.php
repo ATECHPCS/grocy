@@ -202,4 +202,11 @@ checkWorker((int)$db->query('SELECT COUNT(*) FROM products')->fetchColumn() === 
 $db = null;
 $other = null;
 unlink($path);
+foreach (['ClaimClassifications', 'ReserveClassification', 'CompleteClassification', 'FailClassification'] as $method)
+{
+	checkWorker(method_exists($testController, $method), 'classification worker route missing');
+	checkWorker($testController->$method($request, $response, [])->getStatusCode() === 401, 'classification requires API key');
+	checkWorker($testController->$method($apiRequest, $response, [])->getStatusCode() === 403, 'classification requires worker key');
+}
+
 echo "capture research worker API: PASS\n";

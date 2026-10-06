@@ -906,3 +906,7 @@ details.grocy-ai-diagnostics:not([open]) > .grocy-ai-diagnostic-body {
 
 .grocy-ai-product-research-web { min-width: 0; overflow-wrap: anywhere; }
 .grocy-ai-product-research-web a { display: block; max-width: 100%; white-space: normal; overflow-wrap: anywhere; word-break: break-word; }
+
+.grocy-ai-product-research-field { min-width: 0; }
+.grocy-ai-product-research select { width: 100%; text-overflow: ellipsis; }
+.grocy-ai-product-research-classification, .grocy-ai-product-research-compatibility { overflow-wrap: anywhere; }

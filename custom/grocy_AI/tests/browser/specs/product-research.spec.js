@@ -9,7 +9,7 @@ function draft(state = 'ready')
 async function setup(page, state = 'ready')
 {
 	const data = { draft: draft(state), writes: [], receipts: [], lines: [line], drafts: null, approved: false, evidenceReject: false, referenceGets: [], catalogGets: 0, catalog: { contract_version: 1, taxonomy_version: 'v1', product_groups: [{ id: 3, name: 'Beverages' }, { id: 4, name: 'Pantry' }], taxonomy_leaves: [{ slug: 'plant-milk', label: 'Plant milk' }, { slug: 'produce', label: 'Produce' }], generic_parents: [{ id: 95, name: 'Generic Produce', qu_id_stock: 2 }] } };
-	await page.route('**/api/objects/**', route => { const path = new URL(route.request().url()).pathname; data.referenceGets.push(path); return route.fulfill({ json: path.endsWith('/locations') ? [{ id: 1, name: 'Pantry', active: 1 }] : path.endsWith('/products') ? [{ id: 82, name: 'Oat Milk', active: 1 }, { id: 91, name: 'Completely Different Pantry Item', active: 1 }] : [{ id: 2, name: 'Each', active: 1 }] }); });
+	await page.route('**/api/objects/**', route => { const path = new URL(route.request().url()).pathname; data.referenceGets.push(path); return route.fulfill({ json: path.endsWith('/products/95') ? { id: 95, name: 'Generic Produce', active: 1, parent_product_id: null, qu_id_stock: data.parentStockUnit || 2 } : path.endsWith('/quantity_unit_conversions') ? [] : path.endsWith('/locations') ? [{ id: 1, name: 'Pantry', active: 1 }] : path.endsWith('/products') ? [{ id: 82, name: 'Oat Milk', active: 1 }, { id: 91, name: 'Completely Different Pantry Item', active: 1 }] : [{ id: 2, name: 'Each', active: 1 }] }); });
 	await page.route('**/api/grocy-ai/capture/**', route =>
 	{
 		const path = new URL(route.request().url()).pathname;
@@ -343,4 +343,69 @@ test('OpenAI special-use citation hosts are rejected while public domains remain
 		await expect(page.locator('.grocy-ai-product-research-web a')).toHaveCount(host === 'www.openfoodfacts.org' ? 1 : 0);
 	}
 	expect(data.writes).toEqual([]);
+});
+
+test('classification suggestions show source and preserve explicit parent clearing on mobile', async ({ page }) =>
+{
+	const data = await setup(page);
+	data.draft.group_candidates = [{ id: 4, name: 'Pantry', source: 'openai-classification' }];
+	data.draft.taxonomy_candidates = [{ slug: 'produce', label: 'Produce', source: 'openai-classification' }];
+	data.draft.parent_candidates = [{ id: 95, name: 'Generic Produce', qu_id_stock: 2, source: 'openai-classification' }];
+	data.draft.selected = { ...data.draft.selected, product_group_id: 4, taxonomy_leaf_slug: 'produce', parent_product_id: 95 };
+	data.draft.classification = { state: 'suggested', source: 'openai-classification', result: { status: 'suggested' } };
+	await page.locator('#grocyai-capture-review-trips button').click();
+	await expect(page.getByLabel('Generic parent')).toHaveValue('95');
+	await expect(page.getByLabel('Product group').locator('option:checked')).toContainText('OpenAI classification');
+	await expect(page.getByText('Classification suggestions ready')).toBeVisible();
+	expect(data.writes).toHaveLength(0);
+	await page.getByLabel('Generic parent').selectOption('');
+	await page.getByRole('button', { name: 'Save research draft' }).click();
+	await expect.poll(() => data.writes.some(w => w.body?.changes && Object.hasOwn(w.body.changes, 'parent_product_id') && w.body.changes.parent_product_id === null)).toBe(true);
+	await expect(page.getByLabel('Generic parent')).toHaveValue('');
+	expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});
+
+test('parent stock unit mismatch blocks confirmation before approval', async ({ page }) =>
+{
+	const data = await setup(page);
+	data.parentStockUnit = 99;
+	await page.getByLabel('Purchase unit').selectOption('2');
+	await page.getByLabel('Stock unit').selectOption('2');
+	await page.getByLabel('Generic parent').selectOption('95');
+	await expect(page.getByText('Generic parent needs a compatible stock unit. Choose another parent or stock unit.')).toBeVisible();
+	await page.getByRole('button', { name: 'Approve new product' }).click();
+	expect(data.writes.some(w => w.path.endsWith('/approve'))).toBe(false);
+});
+
+for (const state of ['pending', 'queued', 'leased'])
+{
+	test('classification ' + state + ' work remains visible with manual controls', async ({ page }) =>
+	{
+		const data = await setup(page);
+		data.draft.classification = { state, result: null };
+		await page.locator('#grocyai-capture-review-trips button').click();
+		const status = page.locator('.grocy-ai-product-research-classification');
+		await expect(status).toBeVisible();
+		await expect(status).toContainText(state === 'leased' ? 'in progress' : 'queued');
+		await expect(status).not.toContainText('unavailable');
+		await expect(page.getByLabel('Product group')).toBeEnabled();
+		await expect(page.getByLabel('Food classification')).toBeEnabled();
+		await expect(page.getByLabel('Generic parent')).toBeEnabled();
+		expect(data.writes).toHaveLength(0);
+	});
+}
+
+test('explicitly cleared brand and package stay blank after draft reload', async ({ page }) =>
+{
+	const data = await setup(page);
+	data.draft.suggested.brand = 'Provider brand';
+	data.draft.suggested.package = '1 L';
+	data.draft.selected.brand = null;
+	delete data.draft.selected.package;
+	data.draft.user_edits = { brand: true, package: true };
+	await page.locator('#grocyai-capture-review-trips button').click();
+	await expect(page.getByLabel('Brand research note')).toHaveValue('');
+	await expect(page.getByLabel('Package research note')).toHaveValue('');
+	await expect(page.getByText('Provider brand — Open Food Facts')).toBeVisible();
+	expect(data.writes).toHaveLength(0);
 });
