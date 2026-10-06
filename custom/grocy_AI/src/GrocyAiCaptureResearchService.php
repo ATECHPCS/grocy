@@ -485,7 +485,7 @@ class GrocyAiCaptureResearchService
 	/** @return array<string, mixed> */
 	public function FailJob(int $jobId, string $leaseToken, string $safeCode): array
 	{
-		if (!in_array($safeCode, ['provider_unavailable', 'worker_unavailable'], true)) throw new \InvalidArgumentException('Invalid research failure code');
+		if (!in_array($safeCode, ['provider_unavailable', 'worker_unavailable', 'web_quota_exhausted'], true)) throw new \InvalidArgumentException('Invalid research failure code');
 		$this->Db->exec('BEGIN IMMEDIATE');
 		try
 		{
@@ -496,7 +496,7 @@ class GrocyAiCaptureResearchService
 				return ['id' => $jobId, 'state' => $job['state'], 'attempts' => (int)$job['attempts'], 'safe_error_code' => $safeCode];
 			}
 			$this->RequireLiveLease($job);
-			$terminal = (int)$job['attempts'] >= self::MAX_ATTEMPTS;
+			$terminal = $safeCode === 'web_quota_exhausted' || (int)$job['attempts'] >= self::MAX_ATTEMPTS;
 			$state = $terminal ? 'needs_input' : 'retryable_failure';
 			$delay = min(300, 5 * (2 ** ((int)$job['attempts'] - 1)));
 			$this->Db->prepare("UPDATE grocy_ai_capture_research_jobs SET state = ?, safe_error_code = ?, next_retry_at = CASE WHEN ? THEN NULL ELSE datetime('now', '+' || ? || ' seconds') END, lease_expires_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
