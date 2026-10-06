@@ -139,7 +139,7 @@
 			if (host.isConnected) options.onBusy(value || dirty);
 			[host].concat(lineEditors).forEach(function (parent)
 			{
-				Array.prototype.forEach.call(parent.querySelectorAll('input,select,button'), function (node)
+				Array.prototype.forEach.call(parent.querySelectorAll('input,select,button:not([data-receipt-toggle])'), function (node)
 				{
 					node.disabled = value || readOnly;
 				});
@@ -379,6 +379,36 @@
 			card.setAttribute('data-draft-scope', path);
 			host.appendChild(card);
 			card.appendChild(el('h4', 'Receipt #' + receipt.id + ' — ' + receipt.status.replace(/_/g, ' ')));
+			if (options.compact)
+			{
+				state.expanded = state.expanded || {};
+				var summary = el('div', '', 'grocy-ai-receipt-compact-summary');
+				summary.appendChild(el('p', receipt.merchant || 'Merchant not entered'));
+				summary.appendChild(el('p', 'Printed total: ' + (view.totals.printed_total == null ? 'not entered' : view.totals.printed_total) + ' · Entered total: ' + view.totals.entered_total + ' · Difference: ' + (view.totals.difference == null ? 'not checked' : view.totals.difference)));
+				if (receipt.difference_accepted_amount != null) summary.appendChild(el('p', 'Difference accepted: ' + receipt.difference_accepted_amount));
+				var details = el('div', '', 'grocy-ai-receipt-details');
+				details.id = 'grocyai-receipt-details-' + receipt.id;
+				details.setAttribute('data-draft-scope', path);
+				var toggle = button(summary, '', function ()
+				{
+					state.expanded[receipt.id] = !state.expanded[receipt.id];
+					expand();
+				});
+				toggle.setAttribute('data-receipt-toggle', '');
+				toggle.setAttribute('aria-controls', details.id);
+				function expand()
+				{
+					var expanded = !!state.expanded[receipt.id];
+					details.classList.toggle('is-expanded', expanded);
+					toggle.setAttribute('aria-expanded', String(expanded));
+					toggle.textContent = expanded ? 'Hide receipt details' : 'Show receipt details';
+				}
+				expand();
+				card.appendChild(summary);
+				card.appendChild(details);
+				card = details;
+			}
+
 			var image = el('img');
 			image.src = options.url + path + '/image';
 			image.alt = 'Receipt #' + receipt.id + ' photo';

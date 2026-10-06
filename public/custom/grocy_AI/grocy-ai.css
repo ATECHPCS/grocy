@@ -910,3 +910,26 @@ details.grocy-ai-diagnostics:not([open]) > .grocy-ai-diagnostic-body {
 .grocy-ai-product-research-field { min-width: 0; }
 .grocy-ai-product-research select { width: 100%; text-overflow: ellipsis; }
 .grocy-ai-product-research-classification, .grocy-ai-product-research-compatibility { overflow-wrap: anywhere; }
+
+/* The same mounted editors serve expanded desktop and the mobile review queue. */
+.grocy-ai-review-navigation { display: flex; align-items: center; justify-content: space-between; gap: .5rem; margin: 1rem 0; }
+.grocy-ai-review-navigation[hidden] { display: none; }
+.grocy-ai-review-navigation button { min-height: 44px; min-width: 44px; }
+.grocy-ai-review-card { min-width: 0; overflow-wrap: anywhere; }
+.grocy-ai-review-heading:focus { outline: 2px solid #007bff; outline-offset: 3px; }
+@media (max-width: 767.98px) {
+	.grocy-ai-review-card:not(.is-active) { display: none; }
+	.grocy-ai-review-card { touch-action: pan-y; }
+	.grocy-ai-review-card input:not([type="checkbox"]), .grocy-ai-review-card select, .grocy-ai-review-card button, .grocy-ai-review-card .btn { min-height: 44px; max-width: 100%; }
+	.grocy-ai-review-card .btn { white-space: normal; }
+	.grocy-ai-review-card .form-check-label { min-height: 44px; display: flex; align-items: center; }
+	.grocy-ai-review-card .d-flex { flex-wrap: wrap; gap: .4rem; }
+	.grocy-ai-review-card .grocy-ai-product-research { padding: .6rem; }
+}
+
+.grocy-ai-receipt-compact-summary { display: none; }
+@media (max-width: 767.98px) {
+	.grocy-ai-receipt-compact-summary { display: block; }
+	.grocy-ai-receipt-compact-summary p { margin-bottom: .35rem; }
+	.grocy-ai-receipt-details:not(.is-expanded) { display: none; }
+}

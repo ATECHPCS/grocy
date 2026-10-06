@@ -164,7 +164,14 @@
 		var receiptNotice = '';
 		var receiptStates = {};
 		var researchComponent = null;
+		var receiptComponent = null;
+		var researchStates = {};
+		var activeReviewKey = null;
+		var activeReviewIndex = 0;
+		var reviewQueue = { cards: [], receiptOwnerByKey: {} };
+		var renderRevision = 0;
 		var loadRevision = 0;
+		var loadingTrip = false;
 		var productNames = {};
 		var locations = [];
 		var shoppingLocations = [];
@@ -226,7 +233,7 @@
 				window.Grocy.Api.Get('objects/products/' + encodeURIComponent(key), function (product)
 				{
 					productNames[key] = product && typeof product.name === 'string' ? product.name : null;
-					if (!receiptBusy) renderDetail();
+					if (!receiptBusy && !loadingTrip) renderDetail();
 				}, function () { productNames[key] = null; });
 			}
 		}
@@ -237,8 +244,8 @@
 			{
 				return;
 			}
-			window.Grocy.Api.Get('objects/locations', function (rows) { locations = Array.isArray(rows) ? rows : []; if (!receiptBusy) renderDetail(); }, function () {});
-			window.Grocy.Api.Get('objects/shopping_locations', function (rows) { shoppingLocations = Array.isArray(rows) ? rows : []; if (!receiptBusy) renderDetail(); }, function () {});
+			window.Grocy.Api.Get('objects/locations', function (rows) { locations = Array.isArray(rows) ? rows : []; if (!receiptBusy && !loadingTrip) renderDetail(); }, function () {});
+			window.Grocy.Api.Get('objects/shopping_locations', function (rows) { shoppingLocations = Array.isArray(rows) ? rows : []; if (!receiptBusy && !loadingTrip) renderDetail(); }, function () {});
 		}
 
 		function loadTripList()
@@ -260,6 +267,10 @@
 		function loadTrip(tripId)
 		{
 			var revision = ++loadRevision;
+			loadingTrip = true;
+			detailEl.inert = true;
+			if (researchComponent) researchComponent.dispose();
+			if (receiptComponent) receiptComponent.dispose();
 			receiptReadiness = null;
 			return Promise.all([fetchJson(tripUrl(tripId), { method: 'GET' }), fetchJson(tripUrl(tripId) + '/receipt-readiness').catch(function () { return null; })]).then(function (results)
 			{
@@ -269,10 +280,19 @@
 			}).then(function (payload)
 			{
 				if (revision !== loadRevision) return;
+				detailEl.inert = false;
 				if (!isLoadedTripPayload(payload))
 				{
+					loadingTrip = false;
 					detailEl.textContent = copy.loadError;
 					return;
+				}
+				if (currentTripId !== String(tripId))
+				{
+					activeReviewKey = null;
+					activeReviewIndex = 0;
+					receiptNotice = '';
+					commitMessage = '';
 				}
 				currentTripId = String(tripId);
 				currentTrip = payload.trip;
@@ -285,11 +305,12 @@
 						resolveProductName(line.resolved_product_id);
 					}
 				});
+				loadingTrip = false;
 				renderTripListActive();
 				renderDetail();
 			}).catch(function ()
 			{
-				detailEl.textContent = copy.loadError;
+				if (revision === loadRevision) { detailEl.inert = false; loadingTrip = false; detailEl.textContent = copy.loadError; }
 			});
 		}
 
@@ -340,8 +361,10 @@
 
 		function putTrip(body)
 		{
-			return fetchJson(tripUrl(currentTripId), { method: 'PUT', body: JSON.stringify(body) }).then(function (trip)
+			var tripId = currentTripId, revision = loadRevision;
+			return fetchJson(tripUrl(tripId), { method: 'PUT', body: JSON.stringify(body) }).then(function (trip)
 			{
+				if (revision !== loadRevision || tripId !== currentTripId) return;
 				if (isTripPayload(trip))
 				{
 					currentTrip = trip;
@@ -352,8 +375,13 @@
 
 		function putLine(seq, body)
 		{
-			return fetchJson(lineUrl(currentTripId, seq), { method: 'PUT', body: JSON.stringify(body) }).then(function (payload)
+			var tripId = currentTripId, revision = loadRevision;
+			var editedLine = currentLines.find(function (line) { return line.seq === seq; });
+			return fetchJson(lineUrl(tripId, seq), { method: 'PUT', body: JSON.stringify(body) }).then(function (payload)
 			{
+				// Explicit deletion settles only the removed scan, including after a trip switch.
+				if (body.delete === true && editedLine && isLoadedTripPayload(payload) && String(payload.trip.id) === tripId && !payload.lines.some(function (line) { return line.id === editedLine.id; }) && researchStates[tripId]) delete researchStates[tripId][editedLine.id];
+				if (revision !== loadRevision || tripId !== currentTripId) return;
 				if (isLoadedTripPayload(payload))
 				{
 					currentTrip = payload.trip;
@@ -405,6 +433,18 @@
 			}
 			if (researchComponent) researchComponent.dispose();
 			researchComponent = null;
+			if (receiptComponent) receiptComponent.dispose();
+			receiptComponent = null;
+			receiptBusy = false;
+			var generation = ++renderRevision;
+			var renderedTripId = currentTripId;
+			var renderedLoadRevision = loadRevision;
+			function reloadCurrent(notice)
+			{
+				if (generation !== renderRevision || renderedLoadRevision !== loadRevision || renderedTripId !== currentTripId) return Promise.resolve();
+				if (notice) receiptNotice = notice;
+				return loadTrip(renderedTripId);
+			}
 			detailEl.textContent = '';
 			if (currentTrip === null)
 			{
@@ -450,25 +490,111 @@
 			detailEl.appendChild(defaults);
 			detailEl.appendChild(element('p', 'text-muted', 'Correct purchase prices and stores in the receipts below.'));
 
-			// Lines.
-			var linesList = element('ul', 'list-group grocy-ai-capture-review-lines');
-			if (currentLines.length === 0)
-			{
-				linesList.appendChild(element('li', 'list-group-item text-muted', copy.emptyLines));
-			}
-			currentLines.forEach(function (line) { linesList.appendChild(renderLine(line)); });
-			detailEl.appendChild(linesList);
-			var researchError = element('div', 'invalid-feedback d-block');
-			detailEl.appendChild(researchError);
-			if (window.GrocyAIProductResearch) researchComponent = window.GrocyAIProductResearch(linesList, { errorHost: researchError, tripId: currentTripId, lines: currentLines, receipts: receiptReadiness ? receiptReadiness.receipts : [], locationId: currentTrip.default_location_id, readOnly: currentTrip.status === 'committed', reload: function () { return loadTrip(currentTripId); } });
-
 			var receiptsHost = element('div', 'grocy-ai-receipts');
 			detailEl.appendChild(receiptsHost);
-			if (window.GrocyAIReceipts && receiptReadiness && Array.isArray(receiptReadiness.receipts))
+			var receiptViews = receiptReadiness ? receiptReadiness.receipts : [];
+			reviewQueue = window.GrocyAICaptureReviewQueue.build(currentLines, receiptViews);
+			var receiptByKey = {};
+			receiptViews.forEach(function (view)
+			{
+				(view.lines || []).forEach(function (line) { receiptByKey['receipt:' + view.receipt.id + ':' + line.id] = line; });
+			});
+			function unresolved(card)
+			{
+				var scan = currentLines.find(function (line) { return line.id === card.scanLineId; });
+				return (scan && Number(scan.selected) !== 0 && scan.status !== 'known') || card.receiptKeys.some(function (key)
+				{
+					var line = receiptByKey[key];
+					return line && (line.decision === 'needs_review' || line.decision === 'include' && (!line.kind || line.kind === 'item') && !(line.allocations || []).some(function (allocation) { return Number(allocation.active) !== 0; }));
+				});
+			}
+			if (activeReviewKey === null)
+			{
+				var first = reviewQueue.cards.findIndex(unresolved);
+				activeReviewIndex = Math.max(0, first);
+			}
+			activeReviewKey = window.GrocyAICaptureReviewQueue.retain(reviewQueue.cards, activeReviewKey, activeReviewIndex);
+			var nav = element('div', 'grocy-ai-review-navigation');
+			var previous = element('button', 'btn btn-outline-primary', 'Previous');
+			previous.id = 'grocyai-review-prev'; previous.type = 'button';
+			var progress = element('span'); progress.id = 'grocyai-review-progress';
+			var next = element('button', 'btn btn-outline-primary', 'Next');
+			next.id = 'grocyai-review-next'; next.type = 'button';
+			nav.appendChild(previous); nav.appendChild(progress); nav.appendChild(next);
+			detailEl.appendChild(nav);
+			var announcement = element('p', 'grocy-ai-review-announcement');
+			announcement.id = 'grocyai-review-announcement';
+			announcement.setAttribute('role', 'status'); announcement.setAttribute('aria-live', 'polite');
+			detailEl.appendChild(announcement);
+			var linesList = element('ul', 'list-group grocy-ai-capture-review-lines');
+			var hosts = {};
+			reviewQueue.cards.forEach(function (card)
+			{
+				var scan = currentLines.find(function (line) { return line.id === card.scanLineId; });
+				var item = scan ? renderLine(scan) : element('li', 'list-group-item');
+				item.classList.add('grocy-ai-review-card');
+				item.setAttribute('data-review-key', card.key);
+				item.setAttribute('data-review-status', unresolved(card) ? 'Needs review' : scan ? (Number(scan.selected) === 0 ? 'Not included' : 'Known product') : receiptByKey[card.key].decision === 'ignore' ? 'Ignored' : 'Included');
+				var heading = element('h3', 'grocy-ai-review-heading', scan ? 'Scan #' + scan.seq : (card.kind === 'adjustment' ? 'Receipt adjustment' : 'Receipt item') + ' · #' + card.receiptId);
+				heading.tabIndex = -1; item.insertBefore(heading, item.firstChild);
+				hosts[card.key] = item; linesList.appendChild(item);
+				card.receiptKeys.forEach(function (key)
+				{
+					if (reviewQueue.receiptOwnerByKey[key] === card.key) return;
+					item.appendChild(element('p', 'text-muted', receiptByKey[key].description + ' · quantity ' + receiptByKey[key].quantity + ' · line total ' + receiptByKey[key].line_total));
+					var shared = element('button', 'btn btn-outline-secondary', 'Review shared receipt line: ' + receiptByKey[key].description);
+					shared.type = 'button';
+					shared.addEventListener('click', function () { selectCard(reviewQueue.receiptOwnerByKey[key], true); });
+					item.appendChild(shared);
+				});
+				var touch = null;
+				item.addEventListener('touchstart', function (event)
+				{
+					touch = null;
+					if (!window.matchMedia('(max-width: 767.98px)').matches || event.touches.length !== 1 || event.target.closest('input, select, textarea, button, a, label, [contenteditable], [role="button"]')) return;
+					touch = { x: event.touches[0].clientX, y: event.touches[0].clientY };
+				}, { passive: true });
+				item.addEventListener('touchcancel', function () { touch = null; }, { passive: true });
+				item.addEventListener('touchend', function (event)
+				{
+					if (!touch || !event.changedTouches.length) return;
+					var dx = event.changedTouches[0].clientX - touch.x, dy = event.changedTouches[0].clientY - touch.y;
+					touch = null;
+					if (Math.abs(dx) >= 60 && Math.abs(dx) > Math.abs(dy) * 1.5) moveCard(dx < 0 ? 1 : -1, false);
+				}, { passive: true });
+			});
+			if (!reviewQueue.cards.length) linesList.appendChild(element('li', 'list-group-item text-muted', copy.emptyLines));
+			detailEl.appendChild(linesList);
+			function selectCard(key, focus)
+			{
+				activeReviewKey = key;
+				activeReviewIndex = reviewQueue.cards.findIndex(function (card) { return card.key === key; });
+				Object.keys(hosts).forEach(function (id) { hosts[id].classList.toggle('is-active', id === key); });
+				progress.textContent = (activeReviewIndex + 1) + ' of ' + reviewQueue.cards.length;
+				previous.disabled = activeReviewIndex <= 0;
+				next.disabled = activeReviewIndex >= reviewQueue.cards.length - 1;
+				nav.hidden = !reviewQueue.cards.length;
+				updateReviewState();
+				if (focus && hosts[key]) hosts[key].querySelector('.grocy-ai-review-heading').focus();
+			}
+			function moveCard(delta, focus)
+			{
+				var card = reviewQueue.cards[activeReviewIndex + delta];
+				if (card) selectCard(card.key, focus);
+			}
+			previous.addEventListener('click', function () { moveCard(-1, true); });
+			next.addEventListener('click', function () { moveCard(1, true); });
+			researchStates[currentTripId] = researchStates[currentTripId] || {};
+			selectCard(activeReviewKey, false);
+			var researchError = element('div', 'invalid-feedback d-block');
+			detailEl.appendChild(researchError);
+			if (window.GrocyAIProductResearch) researchComponent = window.GrocyAIProductResearch(linesList, { editState: researchStates[currentTripId], onEdit: updateReviewState, errorHost: researchError, tripId: currentTripId, lines: currentLines, receipts: receiptViews, locationId: currentTrip.default_location_id, readOnly: currentTrip.status === 'committed', reload: reloadCurrent });
+			if (window.GrocyAIReceipts && receiptReadiness)
 			{
 				receiptStates[currentTripId] = receiptStates[currentTripId] || { drafts: {}, uploads: [] };
-				window.GrocyAIReceipts(receiptsHost, { state: receiptStates[currentTripId], url: tripUrl(currentTripId), receipts: receiptReadiness.receipts, lines: currentLines, names: productNames, stores: shoppingLocations, productNew: productNewBase, readOnly: currentTrip.status === 'committed', notice: receiptNotice, reload: function (notice) { receiptNotice = notice; return loadTrip(currentTripId); }, onBusy: function (value) { receiptBusy = value; var button = document.getElementById('grocyai-capture-review-commit'); if (button) button.disabled = value || !receiptReadiness || receiptReadiness.ready !== true; } });
+				receiptComponent = window.GrocyAIReceipts(receiptsHost, { compact: true, state: receiptStates[currentTripId], inputRoot: detailEl, lineHostFor: function (receipt, line) { return hosts[reviewQueue.receiptOwnerByKey['receipt:' + receipt.id + ':' + line.id]]; }, url: tripUrl(currentTripId), receipts: receiptViews, lines: currentLines, names: productNames, stores: shoppingLocations, productNew: productNewBase, readOnly: currentTrip.status === 'committed', notice: receiptNotice, reload: reloadCurrent, onBusy: function (value) { if (generation !== renderRevision) return; receiptBusy = value; updateReviewState(); } });
 			}
+
 			var readiness = element('div', 'alert alert-info');
 			readiness.id = 'grocyai-receipt-readiness';
 			readiness.setAttribute('role', 'status');
@@ -500,12 +626,28 @@
 			detailEl.appendChild(commitSection);
 
 			detailEl.appendChild(error);
-			if (currentTrip.status === 'committed') Array.prototype.forEach.call(detailEl.querySelectorAll('input, select, button'), function (control) { control.disabled = true; });
+			updateReviewState();
+			if (currentTrip.status === 'committed') Array.prototype.forEach.call(detailEl.querySelectorAll('.grocy-ai-capture-review-line-controls input, .grocy-ai-capture-review-line-controls button, .grocy-ai-capture-review-defaults select'), function (control) { control.disabled = true; });
+		}
+
+		function hasResearchEdits()
+		{
+			return Object.keys(researchStates[currentTripId] || {}).some(function (id) { return Object.keys(researchStates[currentTripId][id]).length > 0; });
+		}
+
+		function updateReviewState()
+		{
+			var unsaved = hasResearchEdits() || receiptComponent && receiptComponent.hasUnsavedEdits();
+			var button = document.getElementById('grocyai-capture-review-commit');
+			if (button) button.disabled = receiptBusy || unsaved || !receiptReadiness || receiptReadiness.ready !== true;
+			var announcement = document.getElementById('grocyai-review-announcement');
+			var activeCard = detailEl.querySelector('.grocy-ai-review-card.is-active');
+			if (announcement) announcement.textContent = (reviewQueue.cards.length ? (activeReviewIndex + 1) + ' of ' + reviewQueue.cards.length + ' · ' : '') + (unsaved ? 'Unsaved changes — save before committing.' : activeCard ? activeCard.getAttribute('data-review-status') : 'No review items');
 		}
 
 		function commitTrip()
 		{
-			if (receiptBusy || !receiptReadiness || receiptReadiness.ready !== true || currentTripId === null || typeof currentChecksum !== 'string')
+			if (hasResearchEdits() || receiptComponent && receiptComponent.hasUnsavedEdits() || receiptBusy || !receiptReadiness || receiptReadiness.ready !== true || currentTripId === null || typeof currentChecksum !== 'string')
 			{
 				return Promise.resolve(null);
 			}
