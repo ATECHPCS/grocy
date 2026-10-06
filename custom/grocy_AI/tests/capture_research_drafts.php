@@ -85,6 +85,16 @@ $beforeClassification = $db->query('SELECT selected_json FROM grocy_ai_capture_r
 $db->exec("UPDATE grocy_ai_capture_research_drafts SET selected_json = '{\"name\":\"Existing fish\"}' WHERE line_id = 1");
 $parentReview = $service->ReviewForTrip(1)['drafts'][0];
 checkDraft($parentReview['parent_candidates'][0]['id'] === 1 && $parentReview['parent_candidates'][0]['source'] === 'local_identity' && $parentReview['parent_candidates'][0]['compatibility'] === 'pending', 'unique active top-level identity gives pending parent candidate');
+$paddedParentName = str_repeat(' ', 250) . 'Existing fish' . str_repeat(' ', 250);
+$paddedGroupName = str_repeat(' ', 250) . 'Seafood' . str_repeat(' ', 250);
+$db->prepare('UPDATE products SET name = ? WHERE id = 1')->execute([$paddedParentName]);
+$db->prepare('UPDATE product_groups SET name = ? WHERE id = 1')->execute([$paddedGroupName]);
+$paddedInput = $service->ClassificationInput($draftId);
+checkDraft($paddedInput['deterministic_candidates']['parent_product_id'][0]['name'] === 'Existing fish', 'worker matching parent candidate display strips unbounded padding');
+checkDraft($paddedInput['deterministic_candidates']['product_group_id'][0]['name'] === 'Seafood', 'worker matching group candidate display strips unbounded padding');
+checkDraft($paddedInput['deterministic_candidates']['parent_product_id'][0]['id'] === 1 && $paddedInput['deterministic_candidates']['parent_product_id'][0]['source'] === 'local_identity' && $paddedInput['deterministic_candidates']['parent_product_id'][0]['compatibility'] === 'pending', 'bounded candidate retains identity source and compatibility');
+$db->exec("UPDATE products SET name = 'Existing fish' WHERE id = 1");
+$db->exec("UPDATE product_groups SET name = 'Seafood' WHERE id = 1");
 $db->exec("INSERT INTO products (id, name) VALUES (92, 'Existing fish')");
 checkDraft($service->ReviewForTrip(1)['drafts'][0]['parent_candidates'] === [], 'ambiguous active parents remain unselected');
 $db->exec('DELETE FROM products WHERE id = 92');

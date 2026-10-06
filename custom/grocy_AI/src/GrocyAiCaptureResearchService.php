@@ -137,13 +137,27 @@ class GrocyAiCaptureResearchService
 			try { $receiptDescription = (new GrocyAiReceiptService($this->Db))->ResearchEvidence((int)$draft['trip_id'], (int)$draft['receipt_line_id'])['description']; }
 			catch (\InvalidArgumentException) { /* Removed receipt evidence is optional. */ }
 		}
+		$candidates = ['product_group_id' => $this->GroupCandidates($suggested), 'taxonomy_leaf_slug' => $this->TaxonomyCandidates($suggested), 'parent_product_id' => $this->ParentCandidates($draft, $selected, $suggested)];
+		foreach ($candidates as &$fieldCandidates)
+		{
+			foreach ($fieldCandidates as &$candidate)
+			{
+				foreach (['name', 'label', 'provider_category'] as $field)
+				{
+					if (array_key_exists($field, $candidate)) $candidate[$field] = self::ClassificationText($candidate[$field]);
+				}
+			}
+			unset($candidate);
+		}
+		unset($fieldCandidates);
+
 		return [
 			'contract_version' => 1,
 			'draft_id' => $draftId,
 			'result_revision' => (int)$draft['result_revision'],
 			'identity' => ['name' => $name, 'brand' => self::ClassificationText(!empty($edits['brand']) ? ($selected['brand'] ?? null) : ($selected['brand'] ?? $suggested['brand'] ?? null)), 'package' => self::ClassificationText(!empty($edits['package']) ? ($selected['package'] ?? null) : ($selected['package'] ?? $suggested['package'] ?? null)), 'receipt_description' => self::ClassificationText($receiptDescription)],
 			'choices' => ['product_groups' => $groups, 'taxonomy_leaves' => $leaves, 'generic_parents' => $parents],
-			'deterministic_candidates' => ['product_group_id' => $this->GroupCandidates($suggested), 'taxonomy_leaf_slug' => $this->TaxonomyCandidates($suggested), 'parent_product_id' => $this->ParentCandidates($draft, $selected, $suggested)]
+			'deterministic_candidates' => $candidates
 		];
 	}
 
