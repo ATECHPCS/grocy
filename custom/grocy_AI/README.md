@@ -579,4 +579,15 @@ Eligible jobs are unreserved generation-zero settled `needs_input` jobs with a d
 
 Fixture verification: `php8.5 custom/grocy_AI/tests/capture_web_search_requeue.php`.
 
+### Trip #12 billing-quota recovery
+
+The seven trip #12 jobs reserved before OpenAI billing was restored need a separate, one-time recovery. The worker records a future `web_quota_exhausted` failure as a terminal `needs_input` job with a safe error code, so it does not automatically burn another reservation. After deploying Grocy and the companion quota classifier, verify a full data-directory backup and preview this recovery:
+
+```sh
+GROCY_DATAPATH=/etc/komodo/grocy php8.5 custom/grocy_AI/bin/capture-quota-recovery.php --dry-run
+GROCY_DATAPATH=/etc/komodo/grocy php8.5 custom/grocy_AI/bin/capture-quota-recovery.php --apply --checksum=<SHA256_FROM_QUOTA_DRY_RUN>
+```
+
+Apply requires exactly jobs `1, 2, 3, 9, 10, 13, 15`, their expected canonical GTINs, active trip #12, selected checksum-valid unknown scans, unsettled product drafts with stored v2 misses and empty web evidence, exactly one original generation-zero reservation per job, and at least seven remaining UTC daily reservation slots. It refuses any shared research job or changed state. The checksum covers the full relevant rows and UTC allowance; apply rechecks it under `BEGIN IMMEDIATE`, advances each job to the sole remaining paid generation, and appends per-draft audit records. No receipt, product, stock, or existing reservation row is changed. The worker later reserves the new generation and researches at most once per GTIN. Run `php8.5 custom/grocy_AI/tests/capture_quota_recovery.php` for the local fixture checks.
+
 The queue suite (`php8.5 custom/grocy_AI/tests/capture_research_queue.php`) requires a Unix PHP CLI with enabled `pcntl_fork`, `pcntl_waitpid`, `pcntl_wexitstatus`, and working Unix `stream_socket_pair` sockets. It fails with a clear prerequisite diagnostic on unsupported runtimes rather than skipping the concurrent daily-ceiling assertion. These are test prerequisites; the production reservation service does not require process-control functions.

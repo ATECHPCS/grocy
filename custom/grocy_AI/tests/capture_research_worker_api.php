@@ -112,6 +112,13 @@ for ($attempt = 3; $attempt <= 5; $attempt++)
 $terminal = $service->FailJob((int)$failure['id'], $lease['lease_token'], 'worker_unavailable');
 checkWorker($terminal['state'] === 'needs_input' && count($service->ClaimJobs(1, 'worker-d')) === 0, 'fifth failure is terminal');
 checkWorker($service->DraftsForTrip(1)[1]['outcome'] === 'needs_input', 'terminal failure leaves a reviewable draft');
+$db->exec("INSERT INTO grocy_ai_capture_lines (id, trip_id, seq, scanned_barcode, canonical_gtin, status) VALUES (5, 1, 4, '042100005264', '00042100005264', 'unknown')");
+$service->EnqueueUnknown(1, 5, '042100005264');
+$quotaLease = $service->ClaimJobs(1, 'worker-quota')[0];
+$quota = $service->FailJob((int)$quotaLease['id'], $quotaLease['lease_token'], 'web_quota_exhausted');
+checkWorker($quota['state'] === 'needs_input' && $quota['safe_error_code'] === 'web_quota_exhausted', 'quota failure stops automatic retries');
+checkWorker($service->FailJob((int)$quotaLease['id'], $quotaLease['lease_token'], 'web_quota_exhausted') === $quota, 'quota failure is idempotent');
+checkWorker(count($service->ClaimJobs(1, 'worker-quota')) === 0, 'quota failure does not auto retry');
 $db->exec("INSERT INTO grocy_ai_capture_lines (id, trip_id, seq, scanned_barcode, canonical_gtin, status) VALUES (4, 1, 3, '012345678905', '00012345678905', 'unknown')");
 $service->EnqueueUnknown(1, 4, '012345678905');
 $providerFailure = $service->ClaimJobs(1, 'worker-e')[0];
