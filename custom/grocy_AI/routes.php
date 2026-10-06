@@ -61,6 +61,10 @@ $app->group('/api/grocy-ai', function (RouteCollectorProxy $group)
 	$group->post('/capture/trips', [GrocyAiApiController::class, 'StartCaptureTrip']);
 	$group->post('/capture/trips/{tripId}/scan', [GrocyAiApiController::class, 'ScanCaptureTrip']);
 	$group->post('/capture/research/jobs/{jobId}/web-search/reserve', [GrocyAiCaptureResearchController::class, 'ReserveWebSearch']);
+	$group->post('/capture/research/classifications/claim', [GrocyAiCaptureResearchController::class, 'ClaimClassifications']);
+	$group->post('/capture/research/classifications/{jobId}/reserve', [GrocyAiCaptureResearchController::class, 'ReserveClassification']);
+	$group->post('/capture/research/classifications/{jobId}/complete', [GrocyAiCaptureResearchController::class, 'CompleteClassification']);
+	$group->post('/capture/research/classifications/{jobId}/fail', [GrocyAiCaptureResearchController::class, 'FailClassification']);
 	$group->post('/capture/research/jobs/claim', [GrocyAiCaptureResearchController::class, 'Claim']);
 	$group->post('/capture/research/jobs/{jobId}/complete', [GrocyAiCaptureResearchController::class, 'Complete']);
 	$group->post('/capture/research/jobs/{jobId}/fail', [GrocyAiCaptureResearchController::class, 'Fail']);

@@ -99,6 +99,53 @@ class GrocyAiCaptureResearchController extends BaseApiController
 		catch (\RuntimeException) { return $this->GenericErrorResponse($response, 'Research lease conflict', 409); }
 	}
 
+	public function ClaimClassifications(Request $request, Response $response, array $args): Response
+	{
+		if (!$this->HasApiCredential($request)) return $this->GenericErrorResponse($response, 'API authentication required', 401);
+		if (!$this->Authorized($request)) return $this->GenericErrorResponse($response, 'Worker authorization failed', 403);
+		$body = $this->Body($request);
+		if ($body === null || !$this->HasFields($body, ['limit', 'worker_id']) || !is_int($body['limit']) || !is_string($body['worker_id'])) return $this->GenericErrorResponse($response, 'Invalid research claim', 400);
+		try { return $this->ApiResponse($response, ['jobs' => $this->Service()->ClaimClassifications($body['limit'], $body['worker_id'])]); }
+		catch (\InvalidArgumentException) { return $this->GenericErrorResponse($response, 'Invalid research claim', 400); }
+		catch (\RuntimeException) { return $this->GenericErrorResponse($response, 'Research unavailable', 503); }
+	}
+
+	public function ReserveClassification(Request $request, Response $response, array $args): Response
+	{
+		if (!$this->HasApiCredential($request)) return $this->GenericErrorResponse($response, 'API authentication required', 401);
+		if (!$this->Authorized($request)) return $this->GenericErrorResponse($response, 'Worker authorization failed', 403);
+		$jobId = $this->JobId($args);
+		$body = $this->Body($request);
+		if ($jobId === null || $body === null || !$this->HasFields($body, ['lease_token']) || !is_string($body['lease_token'])) return $this->GenericErrorResponse($response, 'Invalid search reservation', 400);
+		try { return $this->ApiResponse($response, $this->Service()->ReserveClassification($jobId, $body['lease_token'], 'research-worker')); }
+		catch (\InvalidArgumentException) { return $this->GenericErrorResponse($response, 'Invalid search reservation', 400); }
+		catch (\RuntimeException) { return $this->GenericErrorResponse($response, 'Research lease conflict', 409); }
+	}
+
+	public function CompleteClassification(Request $request, Response $response, array $args): Response
+	{
+		if (!$this->HasApiCredential($request)) return $this->GenericErrorResponse($response, 'API authentication required', 401);
+		if (!$this->Authorized($request)) return $this->GenericErrorResponse($response, 'Worker authorization failed', 403);
+		$jobId = $this->JobId($args);
+		$body = $this->Body($request);
+		if ($jobId === null || $body === null || !$this->HasFields($body, ['lease_token', 'result']) || !is_string($body['lease_token']) || !is_array($body['result'])) return $this->GenericErrorResponse($response, 'Invalid research completion', 400);
+		try { return $this->ApiResponse($response, $this->Service()->CompleteClassification($jobId, $body['lease_token'], $body['result'])); }
+		catch (\InvalidArgumentException) { return $this->GenericErrorResponse($response, 'Invalid research completion', 400); }
+		catch (\RuntimeException) { return $this->GenericErrorResponse($response, 'Research lease conflict', 409); }
+	}
+
+	public function FailClassification(Request $request, Response $response, array $args): Response
+	{
+		if (!$this->HasApiCredential($request)) return $this->GenericErrorResponse($response, 'API authentication required', 401);
+		if (!$this->Authorized($request)) return $this->GenericErrorResponse($response, 'Worker authorization failed', 403);
+		$jobId = $this->JobId($args);
+		$body = $this->Body($request);
+		if ($jobId === null || $body === null || !$this->HasFields($body, ['lease_token', 'safe_code']) || !is_string($body['lease_token']) || !is_string($body['safe_code'])) return $this->GenericErrorResponse($response, 'Invalid research failure', 400);
+		try { return $this->ApiResponse($response, $this->Service()->FailClassification($jobId, $body['lease_token'], $body['safe_code'])); }
+		catch (\InvalidArgumentException) { return $this->GenericErrorResponse($response, 'Invalid research failure', 400); }
+		catch (\RuntimeException) { return $this->GenericErrorResponse($response, 'Research lease conflict', 409); }
+	}
+
 	private function JobId(array $args): ?int
 	{
 		$value = $args['jobId'] ?? null;
