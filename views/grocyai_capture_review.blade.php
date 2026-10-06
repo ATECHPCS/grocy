@@ -1,7 +1,7 @@
 @extends('layout.default')
 
 @php
-$grocyAiAssetVersion = '2.6.10';
+$grocyAiAssetVersion = '2.6.11';
 @endphp
 @push('pageStyles')
 <link rel="stylesheet"
@@ -10,6 +10,7 @@ $grocyAiAssetVersion = '2.6.10';
 @push('pageScripts')
 <script src="{{ $U('/custom/grocy_AI/capture-receipts.js?v=', true) }}{{ $grocyAiAssetVersion }}"></script>
 <script src="{{ $U('/custom/grocy_AI/capture-product-research.js?v=', true) }}{{ $grocyAiAssetVersion }}"></script>
+<script src="{{ $U('/custom/grocy_AI/capture-review-queue.js?v=', true) }}{{ $grocyAiAssetVersion }}"></script>
 <script src="{{ $U('/custom/grocy_AI/capture-review.js?v=', true) }}{{ $grocyAiAssetVersion }}"></script>
 @endpush
 

@@ -908,8 +908,8 @@ $captureReviewAssetMatch = [];
 preg_match('/\$grocyAiAssetVersion = \'([^\']+)\'/', $captureTemplate, $captureAssetMatch);
 preg_match('/\$grocyAiAssetVersion = \'([^\']+)\'/', $captureReviewTemplate, $captureReviewAssetMatch);
 $stableVersion = json_decode(file_get_contents($repoRoot . '/custom/grocy_AI/version.json'), true, 512, JSON_THROW_ON_ERROR);
-check(($captureAssetMatch[1] ?? null) === '2.6.8' && ($captureReviewAssetMatch[1] ?? null) === '2.6.10', 'Capture retains the UPC asset token and review refreshes unit suggestion assets');
-check(($stableVersion['Customization'] ?? null) === 'ATECHPCS-grocy_AI-32', 'Capture view changes invalidate the persisted production Blade cache');
+check(($captureAssetMatch[1] ?? null) === '2.6.8' && ($captureReviewAssetMatch[1] ?? null) === '2.6.11', 'Capture retains the UPC asset token and review refreshes mobile queue assets');
+check(($stableVersion['Customization'] ?? null) === 'ATECHPCS-grocy_AI-33', 'Capture view changes invalidate the persisted production Blade cache');
 check(($assetVersionMatch[1] ?? null) === $moduleVersion, 'The grocy_AI asset token matches the portable module version');
 check(substr_count($productFormTemplate, '{{ $grocyAiAssetVersion }}') === 4, 'All custom product-form assets use the grocy_AI token');
 $resolvedTemplate = file_get_contents($repoRoot . '/views/quantityunitconversionsresolved.blade.php');
@@ -1344,6 +1344,23 @@ if (is_file($categorizationTestFile))
 if (function_exists('runTaxonomyClassificationReview'))
 {
 	runTaxonomyClassificationReview();
+}
+
+// Keep the deployed view and browser fixture on the same queue release boundary.
+$reviewBlade = file_get_contents(__DIR__ . '/../../../views/grocyai_capture_review.blade.php');
+$reviewFixture = file_get_contents(__DIR__ . '/browser/fixtures/capture-review.html');
+$reviewVersion = json_decode(file_get_contents(__DIR__ . '/../version.json'), true);
+check(str_contains($reviewBlade, "$" . "grocyAiAssetVersion = '2.6.11';"), 'Capture review Blade uses release asset token 2.6.11');
+check(($reviewVersion['Customization'] ?? '') === 'ATECHPCS-grocy_AI-33', 'Mobile queue release advances the customization marker to 33');
+foreach (['Blade' => $reviewBlade, 'browser fixture' => $reviewFixture] as $surface => $markup)
+{
+	$queuePosition = strpos($markup, 'capture-review-queue.js?v=');
+	$controllerPosition = strpos($markup, 'capture-review.js?v=');
+	check($queuePosition !== false && $controllerPosition !== false && $queuePosition < $controllerPosition, 'Capture review queue loads before controller in ' . $surface);
+}
+foreach (['capture-receipts.js', 'capture-product-research.js', 'capture-review-queue.js', 'capture-review.js', 'grocy-ai.css'] as $asset)
+{
+	check(str_contains($reviewFixture, $asset . '?v=2.6.11'), 'Browser fixture versions ' . $asset . ' at 2.6.11');
 }
 
 if ($failures > 0)

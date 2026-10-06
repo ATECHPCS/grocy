@@ -119,3 +119,10 @@ The purchase review asset token advances to `2.6.9`, and `custom/grocy_AI/versio
 The isolated research service adds active local unit evidence and nullable classification unit candidates, saves reviewer unit selections/clears in the existing research draft, and revalidates directed positive global conversions and Generic Parent compatibility before approval. The existing classification call accepts bounded active unit choices and conversion pairs; legacy results without unit fields remain compatible. Multipack or conflicting evidence leaves provisional units blank. No new paid call, conversion creation, catalog write, or stock write occurs from suggestions or draft edits.
 
 The existing purchase review hook in `views/grocyai_capture_review.blade.php` uses asset token `2.6.10` for the unit controls and stale-response guard. The capture page retains `2.6.8`. `custom/grocy_AI/version.json` advances to `ATECHPCS-grocy_AI-32` so the image overlay invalidates persisted route and Blade caches. No additional upstream hook or configuration default is needed.
+
+
+## Mobile purchase review queue
+
+The existing `views/grocyai_capture_review.blade.php` hook loads isolated `capture-review-queue.js` before `capture-review.js`, alongside the receipt and research components. Review assets advance together to `2.6.11`; `custom/grocy_AI/version.json` advances to `ATECHPCS-grocy_AI-33` for persisted Blade/route cache invalidation by the release image overlay.
+
+Below Bootstrap md, the isolated browser assets render one stable scan, receipt-only, multi-scan receipt, or adjustment card at a time with accessible Previous/Next navigation plus optional non-form horizontal swipe. Receipt lines have one authoritative editor; shared allocations link to it. Compact receipt summaries retain totals, image access, and Finish/Reopen controls. Unsaved draft state survives navigation and refresh, and server readiness remains authoritative. Save research draft, receipt saves, Finish receipt, Approve new product, and Commit purchase retain their separate persistence boundaries. No schema or backend write behavior changes and no additional upstream hook is added.
