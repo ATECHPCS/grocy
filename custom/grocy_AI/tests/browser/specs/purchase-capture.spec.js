@@ -699,3 +699,87 @@ test.describe('purchase capture — review and commit', function ()
 		await expectNoForbiddenWrites(page);
 	});
 });
+
+async function unitReview(page, legacy = false)
+{
+	const state = { selected: legacy ? { name: 'Milk' } : { name: 'Milk', qu_id_purchase: 2, qu_id_stock: 2 }, writes: [], fail: false, reads: 0, revision: 2 };
+	await installReviewApi(page, { lines: [makeLine({ id: 31, seq: 1, scanned_barcode: UNKNOWN_GTIN, selected: 1 })] });
+	await page.route('**/api/objects/quantity_units', route => json(route, [{ id: 2, name: 'Each', active: 1 }, { id: 3, name: 'Bottle', active: 1 }, { id: 4, name: 'Inactive', active: 0 }]));
+	await page.route('**/capture/research/options', route => json(route, { contract_version: 1, product_groups: [], taxonomy_leaves: [], generic_parents: [] }));
+	await page.route('**/trips/7/research', async route => { state.reads++; const payload = JSON.parse(JSON.stringify({ contract_version: 1, trip_id: 7, drafts: [{ line_id: 31, revision: state.revision, scanned_barcode: UNKNOWN_GTIN, job_state: 'ready', selected: state.selected, suggested: {}, name_alternatives: [], group_candidates: [], taxonomy_candidates: [], possible_existing_products: [], ...(legacy ? {} : { purchase_unit_candidates: [{ id: 2, name: 'Each', source: 'local_package' }], stock_unit_candidates: [{ id: 2, name: 'Each', source: 'openai-classification' }] }) }] })); if (state.holdRead) { state.holdRead = false; await new Promise(resolve => { state.releaseRead = resolve; }); } return json(route, payload); });
+	await page.route('**/lines/1/research', route => { const changes = route.request().postDataJSON().changes; state.writes.push(changes); if (state.fail) return json(route, {}, 503); Object.assign(state.selected, changes); state.revision++; return json(route, {}); });
+	await page.route('**/lines/1/receipt-evidence', route => json(route, {}));
+	await page.goto('/fixtures/capture-review.html');
+	await page.locator('#grocyai-capture-review-trips button').first().click();
+	await expect(page.getByLabel('Purchase unit', { exact: true }).locator('option')).toHaveCount(3);
+	return state;
+}
+for (const width of [390, 320]) test('@units suggestions fit ' + width + 'px and confirmation names both units', async ({ page }) =>
+{
+	await page.setViewportSize({ width, height: 844 }); const state = await unitReview(page);
+	for (const label of ['Purchase unit', 'Stock unit'])
+	{
+		const control = page.getByLabel(label, { exact: true }); await expect(control).toHaveValue('2');
+		const box = await control.boundingBox(); expect(box.height).toBeGreaterThanOrEqual(44); expect(box.x + box.width).toBeLessThanOrEqual(width);
+	}
+	await expect(page.locator('.grocy-ai-product-research-unit-source')).toContainText(['Package evidence', 'OpenAI classification']);
+	expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+	await page.getByLabel('Location', { exact: true }).selectOption('1');
+	const prompts = []; page.on('dialog', d => { prompts.push(d.message()); return prompts.length === 1 ? d.accept() : d.dismiss(); });
+	await page.getByRole('button', { name: 'Approve new product' }).click();
+	expect(prompts).toHaveLength(2); expect(prompts[1]).toContain('purchase unit Each'); expect(prompts[1]).toContain('stock unit Each'); expect(state.writes).toEqual([]);
+});
+test('@units changes and clearing persist through reload', async ({ page }) =>
+{
+	const state = await unitReview(page);
+	await page.getByLabel('Purchase unit', { exact: true }).selectOption('3'); await page.getByLabel('Stock unit', { exact: true }).selectOption('');
+	await page.getByRole('button', { name: 'Save research draft' }).click();
+	await expect.poll(() => state.writes).toEqual([{ qu_id_purchase: 3, qu_id_stock: null }]);
+	await page.reload(); await page.locator('#grocyai-capture-review-trips button').first().click();
+	await expect(page.getByLabel('Purchase unit', { exact: true })).toHaveValue('3'); await expect(page.getByLabel('Stock unit', { exact: true })).toHaveValue('');
+});
+test('@units unsaved choices survive late refresh and rejected save', async ({ page }) =>
+{
+	const state = await unitReview(page);
+	await page.getByLabel('Purchase unit', { exact: true }).selectOption('3'); await page.getByLabel('Stock unit', { exact: true }).selectOption('');
+	await expect(page.getByText('Unit changes are unsaved. Save research draft to keep them.')).toBeVisible();
+	await page.getByLabel('Receipt line evidence').dispatchEvent('change'); await expect.poll(() => state.reads).toBe(2);
+	await expect(page.getByLabel('Purchase unit', { exact: true })).toHaveValue('3'); await expect(page.getByLabel('Stock unit', { exact: true })).toHaveValue('');
+	state.fail = true; await page.getByRole('button', { name: 'Save research draft' }).click(); await expect(page.getByText('Could not save product review.')).toBeVisible();
+	await expect(page.getByLabel('Purchase unit', { exact: true })).toBeEnabled(); await expect(page.getByLabel('Purchase unit', { exact: true })).toHaveValue('3');
+	state.fail = false; await page.getByRole('button', { name: 'Save research draft' }).click(); await expect.poll(() => state.selected.qu_id_stock).toBeNull();
+});
+test('@units legacy results remain manually reviewable', async ({ page }) =>
+{
+	await unitReview(page, true); await expect(page.getByLabel('Purchase unit', { exact: true })).toHaveValue(''); await expect(page.getByLabel('Stock unit', { exact: true })).toHaveValue('');
+	await expect(page.locator('.grocy-ai-product-research-unit-source')).toContainText(['No unit suggestion; choose manually.', 'No unit suggestion; choose manually.']);
+});
+
+test('@units purchase clearing and stock selection persist as explicit reviewer edits', async ({ page }) =>
+{
+	const state = await unitReview(page);
+	await page.getByLabel('Purchase unit', { exact: true }).selectOption(''); await page.getByLabel('Stock unit', { exact: true }).selectOption('3');
+	await page.getByRole('button', { name: 'Save research draft' }).click();
+	await expect.poll(() => state.writes).toEqual([{ qu_id_purchase: null, qu_id_stock: 3 }]);
+	await expect(page.getByLabel('Purchase unit', { exact: true })).toHaveValue(''); await expect(page.getByLabel('Stock unit', { exact: true })).toHaveValue('3');
+});
+
+test('@units an older research response cannot overwrite a successful unit save', async ({ page }) =>
+{
+	const state = await unitReview(page);
+	state.holdRead = true;
+	await page.getByLabel('Receipt line evidence').dispatchEvent('change');
+	await expect.poll(() => typeof state.releaseRead).toBe('function');
+	await page.getByLabel('Purchase unit', { exact: true }).selectOption('3');
+	await page.getByLabel('Stock unit', { exact: true }).selectOption('');
+	await page.getByRole('button', { name: 'Save research draft' }).click();
+	await expect.poll(() => state.reads).toBe(3);
+	await expect(page.getByText('Unit changes are unsaved. Save research draft to keep them.')).toHaveCount(0);
+	await expect(page.getByLabel('Purchase unit', { exact: true })).toHaveValue('3');
+	const oldResponse = page.waitForResponse(response => new URL(response.url()).pathname.endsWith('/trips/7/research'));
+	state.releaseRead();
+	await oldResponse;
+	await page.waitForLoadState('networkidle');
+	await expect(page.getByLabel('Purchase unit', { exact: true })).toHaveValue('3');
+	await expect(page.getByLabel('Stock unit', { exact: true })).toHaveValue('');
+});
