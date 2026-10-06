@@ -373,12 +373,13 @@ class GrocyAiCaptureResearchService
 		elseif ($this->ClassificationInput((int)$draft['id']) !== null) $classification = ['state' => 'pending', 'result_revision' => (int)$draft['result_revision'], 'source' => null, 'result' => null];
 		$edits = json_decode($draft['user_edits_json'], true, 512, JSON_THROW_ON_ERROR);
 		if (is_array($classification['result'] ?? null)) $classification['result'] += ['qu_id_purchase' => null, 'qu_id_stock' => null];
-		$unitCandidates = $this->LocalUnitCandidates($selected, $suggested, $edits, $evidence);
+		$unitEvidence = $this->LocalUnitEvidence($selected, $suggested, $edits, $evidence);
+		$unitCandidates = $unitEvidence['candidates'];
 		$unitCandidatesByField = [];
 		foreach (['qu_id_purchase', 'qu_id_stock'] as $field)
 		{
 			$unitCandidatesByField[$field] = $unitCandidates;
-			if ($unitCandidates === [] && ($classification['state'] ?? null) === 'suggested')
+			if (!$unitEvidence['ambiguous'] && $unitCandidates === [] && ($classification['state'] ?? null) === 'suggested')
 			{
 				foreach ($this->ActiveUnits() as $unit) if ($unit['id'] === ($classification['result'][$field] ?? null)) $unitCandidatesByField[$field][] = $unit + ['source' => 'openai-classification'];
 			}
@@ -440,15 +441,21 @@ class GrocyAiCaptureResearchService
 		return $query->fetchColumn() !== false;
 	}
 
-	private function LocalUnitCandidates(array $selected, array $suggested, array $edits, ?array $evidence): array
+	private function LocalUnitEvidence(array $selected, array $suggested, array $edits, ?array $evidence): array
 	{
 		$package = !empty($edits['package']) ? ($selected['package'] ?? null) : ($selected['package'] ?? $suggested['package'] ?? null);
 		$texts = ['local_package' => $package, 'receipt_ocr' => $evidence['description'] ?? null];
 		$aliases = ['kilogram' => ['kg'], 'gram' => ['g'], 'milliliter' => ['ml'], 'millilitre' => ['ml'], 'liter' => ['l'], 'litre' => ['l'], 'ounce' => ['oz'], 'pound' => ['lb', 'lbs']];
 		$matches = [];
+		$ambiguous = false;
 		foreach ($texts as $source => $text)
 		{
-			if (!is_string($text) || preg_match('/\d\s*(?:x|×)\s*\d|(?<![\p{L}\p{N}])\d+\s*[- ]?\s*(?:packs?|pk|counts?|ct)(?![\p{L}])|(?<![\p{L}])pack\s+of\s+\d+/iu', $text)) continue;
+			if (!is_string($text)) continue;
+			if (preg_match('/\d\s*(?:x|×)\s*\d|(?<![\p{L}\p{N}])\d+\s*[- ]?\s*(?:packs?|pk|counts?|ct)(?![\p{L}])|(?<![\p{L}])pack\s+of\s+\d+/iu', $text))
+			{
+				$ambiguous = true;
+				continue;
+			}
 			foreach ($this->ActiveUnits() as $unit)
 			{
 				$tokens = array_filter([$unit['name'], $unit['name_plural']]);
@@ -460,7 +467,8 @@ class GrocyAiCaptureResearchService
 				}
 			}
 		}
-		return count($matches) === 1 ? array_values($matches) : [];
+		$ambiguous = $ambiguous || count($matches) > 1;
+		return ['candidates' => !$ambiguous && count($matches) === 1 ? array_values($matches) : [], 'ambiguous' => $ambiguous];
 	}
 
 	private function GroupCandidates(array $suggested): array
