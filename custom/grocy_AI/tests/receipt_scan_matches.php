@@ -52,4 +52,13 @@ checkMatch(count($reviewLines[1]['capture_candidates']) === 1 && $reviewLines[1]
 $db->exec("UPDATE grocy_ai_capture_research_drafts SET selected_json = '{}', suggested_json = '{}' WHERE line_id = 12");
 $fallback = $service->ListForTrip(1)[0]['lines'][1]['capture_options'][0];
 checkMatch($fallback['display_name'] === 'UPC 2222222222222' && $fallback['source'] === 'barcode', 'unresearched unknown scan remains manually selectable by UPC');
+
+$db->exec("INSERT INTO products VALUES (102, 'Evaporated milk'), (103, '365206 Evaporated milk')");
+$db->exec("INSERT INTO grocy_ai_capture_lines (id,trip_id,seq,scanned_barcode,status,resolved_product_id,quantity,selected) VALUES (14,1,4,'4006381333931','known',102,1,1),(15,1,5,'96385074','known',103,1,1)");
+$db->exec("INSERT INTO grocy_ai_receipt_lines (id,receipt_id,seq,description,kind,decision) VALUES (34,21,4,'365206 Evaporated Milk','item','needs_review')");
+$storeLine = $service->ListForTrip(1)[0]['lines'][3];
+checkMatch($storeLine['description'] === '365206 Evaporated Milk', 'full OCR receipt description remains visible');
+checkMatch($storeLine['capture_candidates'][0]['capture_line_id'] === 14 && $storeLine['capture_candidates'][0]['score'] === 100, 'leading six-digit receipt store code does not block the matching product name');
+checkMatch($storeLine['capture_match_status'] === 'ambiguous' && $storeLine['capture_candidates'][1]['capture_line_id'] === 15 && $storeLine['capture_candidates'][1]['score'] === 80, 'product names retain their own six-digit prefix and remain distinct from exact matches');
+checkMatch((int)$db->query('SELECT COUNT(*) FROM grocy_ai_receipt_allocations')->fetchColumn() === 0, 'store-code name suggestion never allocates without confirmation');
 echo "receipt scan matches passed\n";

@@ -100,3 +100,9 @@ Receipt review now offers same-trip scan candidates from reviewed product names 
 Paid capture web searches use the namespaced research migration v3 and an authenticated worker reservation route at `POST /api/grocy-ai/capture/research/jobs/{jobId}/web-search/reserve`. The additional upstream configuration default is `AI_CAPTURE_WEB_SEARCH_DAILY_LIMIT=20`. Reservations remain append-only across lease reclaim and provider failures; manual retries keep provider lookup available while limiting paid searches to generations zero and one.
 
 OpenAI UPC fallback review accepts the companion v2 evidence contract while retaining provider-only v1. Validation, citation DTOs, and mobile cards stay in the module service and public assets. The existing purchase review hook advances its asset token to `2.6.7`; the customization marker advances to `ATECHPCS-grocy_AI-29` to invalidate cached routes for the paid reservation endpoint. No additional upstream integration hook is introduced.
+
+The capture and review views show each saved scan's original UPC. Camera reads require an explicit confirm or edit before capture, while typed entry keeps its direct Add action. Both views use asset token `2.6.8`; the customization marker advances to `ATECHPCS-grocy_AI-30` so the production image invalidates cached Blade views.
+
+Any failed camera scan POST, including a lost or malformed response, locks capture until page reload and manual trip review. The page never infers whether the POST saved the scan and offers no immediate retry, avoiding an accidental duplicate purchase quantity. Typed Add retains its existing submission path and is paused while a camera save is in flight.
+
+Receipt scan suggestions ignore one leading six-digit store item code when comparing OCR receipt descriptions with product names. The stored OCR description and product names retain their original text, and the suggestion still requires user pairing and allocation confirmation.

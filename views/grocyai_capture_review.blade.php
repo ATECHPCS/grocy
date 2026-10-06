@@ -1,7 +1,7 @@
 @extends('layout.default')
 
 @php
-$grocyAiAssetVersion = '2.6.7';
+$grocyAiAssetVersion = '2.6.8';
 @endphp
 @push('pageStyles')
 <link rel="stylesheet"
@@ -43,6 +43,7 @@ $grocyAiAssetVersion = '2.6.7';
 	data-label-unknown="{{ $__t('Unknown — needs product') }}"
 	data-label-product-fallback="{{ $__t('Product #%s', '%s') }}"
 	data-label-create-product="{{ $__t('Create product') }}"
+	data-label-barcode="{{ $__t('UPC') }}"
 	data-label-no-trips="{{ $__t('No trips yet. Capture one first.') }}"
 	data-label-no-trip-selected="{{ $__t('Select a trip to review its items.') }}"
 	data-label-empty-lines="{{ $__t('This trip has no items.') }}"

@@ -46,6 +46,9 @@
 			data-label-trip-started="Trip started. Scan or enter a GTIN to add items."
 			data-label-trip-error="Could not start a capture trip. Reload the page to try again."
 			data-label-scan-error="That scan could not be added. Try again."
+			data-label-barcode="UPC"
+			data-label-camera-pending="Confirm or cancel the scanned UPC before finishing."
+			data-label-camera-unverified="Scan outcome could not be verified. Reload this page and review the trip before scanning again."
 			data-label-empty="No items yet. Scan or enter a GTIN above."
 			data-label-quantity="Quantity">
 			<div class="col">
@@ -63,6 +66,14 @@
 								placeholder="8, 12, 13, or 14 digits"
 								data-target="grocyai-capture-barcode">
 							<a id="camerabarcodescanner-start-button" class="btn btn-sm btn-primary text-white" data-target="grocyai-capture-barcode" aria-label="Scan barcode"><i class="fa-solid fa-camera"></i></a>
+						</div>
+					</div>
+					<div id="grocyai-capture-camera-confirmation" class="grocy-ai-capture-camera-confirmation alert alert-secondary mb-2" hidden>
+						<label for="grocyai-capture-camera-barcode">Confirm scanned UPC or edit it</label>
+						<input type="text" class="form-control form-control-lg" id="grocyai-capture-camera-barcode" inputmode="numeric" autocomplete="off" enterkeyhint="done">
+						<div class="grocy-ai-actions mt-2">
+							<button type="button" class="btn btn-primary btn-lg" id="grocyai-capture-camera-save-button">Add scanned item</button>
+							<button type="button" class="btn btn-outline-secondary btn-lg" id="grocyai-capture-camera-cancel-button">Cancel scan</button>
 						</div>
 					</div>
 					<div class="grocy-ai-actions">

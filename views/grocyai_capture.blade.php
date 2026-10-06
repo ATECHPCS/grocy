@@ -1,7 +1,7 @@
 @extends('layout.default')
 
 @php
-$grocyAiAssetVersion = '2.6.2';
+$grocyAiAssetVersion = '2.6.8';
 @endphp
 @push('pageStyles')
 <link rel="stylesheet"
@@ -49,6 +49,9 @@ $grocyAiAssetVersion = '2.6.2';
 	data-label-finish-second="{{ $__t('Confirm again: Are you finished scanning this trip?') }}"
 	data-label-finish-error="{{ $__t('Could not finish this trip. Your scans are saved; try again.') }}"
 	data-label-finish-pending="{{ $__t('Wait for the current scan to finish, then try again.') }}"
+	data-label-camera-pending="{{ $__t('Confirm or cancel the scanned UPC before finishing.') }}"
+	data-label-camera-unverified="{{ $__t('Scan outcome could not be verified. Reload this page and review the trip before scanning again.') }}"
+	data-label-barcode="{{ $__t('UPC') }}"
 	data-label-empty="{{ $__t('No items yet. Scan or enter a GTIN above.') }}"
 	data-label-quantity="{{ $__t('Quantity') }}">
 	<div class="col">
@@ -66,6 +69,15 @@ $grocyAiAssetVersion = '2.6.2';
 						enterkeyhint="done"
 						placeholder="{{ $__t('8, 12, 13, or 14 digits') }}"
 						data-target="grocyai-capture-barcode">
+				</div>
+			</div>
+			<div id="grocyai-capture-camera-confirmation" class="grocy-ai-capture-camera-confirmation alert alert-secondary mb-2" hidden>
+				<label for="grocyai-capture-camera-barcode">{{ $__t('Confirm scanned UPC or edit it') }}</label>
+				<input type="text" class="form-control form-control-lg" id="grocyai-capture-camera-barcode"
+					inputmode="numeric" autocomplete="off" enterkeyhint="done">
+				<div class="grocy-ai-actions mt-2">
+					<button type="button" class="btn btn-primary btn-lg" id="grocyai-capture-camera-save-button">{{ $__t('Add scanned item') }}</button>
+					<button type="button" class="btn btn-outline-secondary btn-lg" id="grocyai-capture-camera-cancel-button">{{ $__t('Cancel scan') }}</button>
 				</div>
 			</div>
 			<div class="grocy-ai-actions">

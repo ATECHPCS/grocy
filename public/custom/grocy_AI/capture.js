@@ -36,6 +36,9 @@
 		finishSecond: 'Confirm again: Are you finished scanning this trip?',
 		finishError: 'Could not finish this trip. Your scans are saved; try again.',
 		finishPending: 'Wait for the current scan to finish, then try again.',
+		cameraPending: 'Confirm or cancel the scanned UPC before finishing.',
+		cameraUnverified: 'Scan outcome could not be verified. Reload this page and review the trip before scanning again.',
+		barcode: 'UPC',
 		empty: 'No items yet. Scan or enter a GTIN above.',
 		quantity: 'Quantity'
 	};
@@ -130,6 +133,9 @@
 			finishSecond: d.labelFinishSecond || DEFAULT_COPY.finishSecond,
 			finishError: d.labelFinishError || DEFAULT_COPY.finishError,
 			finishPending: d.labelFinishPending || DEFAULT_COPY.finishPending,
+			cameraPending: d.labelCameraPending || DEFAULT_COPY.cameraPending,
+			cameraUnverified: d.labelCameraUnverified || DEFAULT_COPY.cameraUnverified,
+			barcode: d.labelBarcode || DEFAULT_COPY.barcode,
 			empty: d.labelEmpty || DEFAULT_COPY.empty,
 			quantity: d.labelQuantity || DEFAULT_COPY.quantity
 		};
@@ -157,12 +163,19 @@
 		var reviewUrl = reviewLink ? reviewLink.getAttribute('href') : '';
 		var statusEl = document.getElementById('grocyai-capture-status');
 		var linesEl = document.getElementById('grocyai-capture-lines');
+		var cameraConfirmation = document.getElementById('grocyai-capture-camera-confirmation');
+		var cameraInput = document.getElementById('grocyai-capture-camera-barcode');
+		var cameraSaveButton = document.getElementById('grocyai-capture-camera-save-button');
+		var cameraCancelButton = document.getElementById('grocyai-capture-camera-cancel-button');
 
 		var currentTripId = null;
 		var lines = [];
 		var productNames = {};
 		var pendingScans = 0;
 		var finishing = false;
+		var pendingCameraReads = [];
+		var cameraSubmitting = false;
+		var cameraLocked = false;
 
 		function setStatus(message)
 		{
@@ -213,13 +226,19 @@
 				var name = document.createElement('span');
 				name.className = 'grocy-ai-capture-line-name';
 				name.textContent = label.text;
+				var detail = document.createElement('div');
+				var barcode = document.createElement('span');
+				barcode.className = 'grocy-ai-capture-line-barcode text-muted';
+				barcode.textContent = copy.barcode + ' ' + String(line.scanned_barcode);
+				detail.appendChild(name);
+				detail.appendChild(barcode);
 
 				var quantity = document.createElement('span');
 				quantity.className = 'badge badge-pill grocy-ai-capture-line-quantity';
 				quantity.textContent = '× ' + describeQuantity(line.quantity);
 				quantity.setAttribute('aria-label', copy.quantity + ' ' + describeQuantity(line.quantity));
 
-				item.appendChild(name);
+				item.appendChild(detail);
 				item.appendChild(quantity);
 				linesEl.appendChild(item);
 			});
@@ -251,7 +270,7 @@
 
 		function startTrip()
 		{
-			if (finishing)
+			if (finishing || cameraLocked || cameraSubmitting)
 			{
 				return Promise.resolve(null);
 			}
@@ -264,6 +283,8 @@
 				}
 				lines = [];
 				productNames = {};
+				pendingCameraReads = [];
+				showNextCameraRead();
 				render();
 				setStatus(copy.tripStarted);
 				if (typeof window !== 'undefined' && window.history && window.location)
@@ -314,10 +335,10 @@
 			});
 		}
 
-		function submitBarcode(rawBarcode)
+		function submitBarcode(rawBarcode, failClosed)
 		{
 			var barcode = String(rawBarcode === undefined || rawBarcode === null ? '' : rawBarcode).trim();
-			if (barcode === '' || currentTripId === null || finishing)
+			if (barcode === '' || currentTripId === null || finishing || (cameraSubmitting && !failClosed))
 			{
 				return Promise.resolve(null);
 			}
@@ -327,8 +348,7 @@
 			{
 				if (!isLinePayload(line))
 				{
-					setStatus(copy.scanError);
-					return null;
+					throw new Error('invalid_scan_payload');
 				}
 				lines = upsertLines(lines, line);
 				render();
@@ -338,13 +358,92 @@
 				}
 				clearInput();
 				return line;
-			}).catch(function ()
+			}).catch(function (error)
 			{
 				setStatus(copy.scanError);
+				if (failClosed) throw error;
 				return null;
 			}).finally(function ()
 			{
 				pendingScans--;
+			});
+		}
+
+		function lockCameraAfterFailedScan()
+		{
+			cameraLocked = true;
+			if (cameraSaveButton) cameraSaveButton.disabled = true;
+			if (cameraCancelButton) cameraCancelButton.disabled = true;
+			if (newTripButton) newTripButton.disabled = true;
+			if (addButton) addButton.disabled = true;
+			if (input) input.disabled = true;
+			if (cameraInput) cameraInput.disabled = true;
+			setStatus(copy.cameraUnverified);
+		}
+
+		function showNextCameraRead()
+		{
+			if (!cameraConfirmation || !cameraInput)
+			{
+				return;
+			}
+			if (pendingCameraReads.length === 0)
+			{
+				cameraConfirmation.hidden = true;
+				return;
+			}
+			cameraInput.value = pendingCameraReads[0];
+			cameraConfirmation.hidden = false;
+			cameraInput.focus();
+		}
+
+		function finishCameraRead(save)
+		{
+			if (pendingCameraReads.length === 0 || cameraSubmitting || cameraLocked)
+			{
+				return;
+			}
+			var barcode = cameraInput ? cameraInput.value.trim() : '';
+			if (save && barcode === '')
+			{
+				if (cameraInput) cameraInput.focus();
+				return;
+			}
+			if (save && pendingScans > 0)
+			{
+				setStatus(copy.finishPending);
+				return;
+			}
+			if (!save)
+			{
+				pendingCameraReads.shift();
+				showNextCameraRead();
+				return;
+			}
+			cameraSubmitting = true;
+			if (cameraSaveButton) cameraSaveButton.disabled = true;
+			if (cameraCancelButton) cameraCancelButton.disabled = true;
+			if (newTripButton) newTripButton.disabled = true;
+			if (addButton) addButton.disabled = true;
+			if (input) input.disabled = true;
+			submitBarcode(barcode, true).then(function (line)
+			{
+				if (line)
+				{
+					pendingCameraReads.shift();
+					showNextCameraRead();
+				}
+			}).catch(function () { lockCameraAfterFailedScan(); }).finally(function ()
+			{
+				cameraSubmitting = false;
+				if (!cameraLocked)
+				{
+					if (cameraSaveButton) cameraSaveButton.disabled = false;
+					if (cameraCancelButton) cameraCancelButton.disabled = false;
+					if (newTripButton) newTripButton.disabled = false;
+					if (addButton) addButton.disabled = false;
+					if (input) input.disabled = false;
+				}
 			});
 		}
 
@@ -354,9 +453,19 @@
 			{
 				return Promise.resolve(null);
 			}
+			if (cameraLocked)
+			{
+				setStatus(copy.cameraUnverified);
+				return Promise.resolve(null);
+			}
 			if (pendingScans > 0)
 			{
 				setStatus(copy.finishPending);
+				return Promise.resolve(null);
+			}
+			if (pendingCameraReads.length > 0)
+			{
+				setStatus(copy.cameraPending);
 				return Promise.resolve(null);
 			}
 			if (typeof window === 'undefined' || typeof window.confirm !== 'function'
@@ -431,18 +540,29 @@
 				}
 			});
 		}
+		if (cameraSaveButton) cameraSaveButton.addEventListener('click', function () { finishCameraRead(true); });
+		if (cameraCancelButton) cameraCancelButton.addEventListener('click', function () { finishCameraRead(false); });
+		if (cameraInput) cameraInput.addEventListener('keydown', function (event)
+		{
+			if (event.key === 'Enter')
+			{
+				event.preventDefault();
+				finishCameraRead(true);
+			}
+		});
 
 		// Reuse the enrichment card's camera scanner path: the core camera control fires this jQuery event
-		// with the input's data-target; we filter to this page's input and submit exactly as a manual add.
+		// with the input's data-target; hold this page's camera reads for confirmation before saving.
 		if (typeof window !== 'undefined' && typeof window.$ === 'function')
 		{
 			window.$(document).on('Grocy.BarcodeScanned', function (event, barcode, target)
 			{
-				if (target !== 'grocyai-capture-barcode')
+				if (target !== 'grocyai-capture-barcode' || cameraLocked)
 				{
 					return;
 				}
-				submitBarcode(barcode);
+				pendingCameraReads.push(String(barcode));
+				if (pendingCameraReads.length === 1) showNextCameraRead();
 			});
 		}
 

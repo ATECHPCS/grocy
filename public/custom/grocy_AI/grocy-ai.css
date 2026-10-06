@@ -125,6 +125,28 @@ details.grocy-ai-diagnostics:not([open]) > .grocy-ai-diagnostic-body {
 	font-size: 20px;
 }
 
+.grocy-ai-capture-camera-confirmation[hidden] {
+	display: none;
+}
+
+.grocy-ai-capture-line-name,
+.grocy-ai-capture-line-barcode {
+	display: block;
+}
+
+.grocy-ai-capture-line-barcode {
+	font-size: .9rem;
+}
+
+.grocy-ai-capture-review-line-name,
+.grocy-ai-capture-review-line-barcode {
+	display: block;
+}
+
+.grocy-ai-capture-review-line-barcode {
+	font-size: .9rem;
+}
+
 .grocy-ai-capture-review-status .btn {
 	min-height: 44px;
 }

@@ -65,7 +65,9 @@ class GrocyAiReceiptService
 		if ($hasResearch) $paired = $this->Rows('SELECT d.line_id FROM grocy_ai_capture_research_drafts d JOIN grocy_ai_capture_lines c ON c.id = d.line_id AND c.trip_id = d.trip_id WHERE d.trip_id = ? AND d.receipt_line_id = ? AND c.selected = 1 LIMIT 2', [$tripId, (int)$line['id']]);
 		$pairedId = count($paired) === 1 ? (int)$paired[0]['line_id'] : null;
 		if ($line['kind'] !== 'item' || $line['decision'] === 'ignore') return ['capture_candidates' => [], 'capture_options' => [], 'capture_match_status' => 'none', 'paired_capture_line_id' => $pairedId];
-		$needle = $this->MatchWords((string)$line['description']);
+		// Store item numbers printed before a receipt name are not package barcodes.
+		$receiptName = preg_replace('/^\s*[0-9]{6}(?=\s|$)/u', '', (string)$line['description'], 1);
+		$needle = $this->MatchWords($receiptName ?? (string)$line['description']);
 		$draftJoin = $hasResearch ? 'LEFT JOIN grocy_ai_capture_research_drafts d ON d.line_id = c.id AND d.trip_id = c.trip_id' : '';
 		$draftFields = $hasResearch ? 'd.selected_json, d.suggested_json, d.receipt_line_id' : 'NULL AS selected_json, NULL AS suggested_json, NULL AS receipt_line_id';
 		$captures = $this->Rows('SELECT c.id, c.seq, c.scanned_barcode, c.status, p.name AS product_name, ' . $draftFields . ' FROM grocy_ai_capture_lines c LEFT JOIN products p ON p.id = c.resolved_product_id ' . $draftJoin . ' WHERE c.trip_id = ? AND c.selected = 1 ORDER BY c.seq', [$tripId]);

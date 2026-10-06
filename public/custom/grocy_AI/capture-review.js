@@ -28,6 +28,7 @@
 		unknown: 'Unknown — needs product',
 		productFallback: 'Product #%s',
 		createProduct: 'Create product',
+		barcode: 'UPC',
 		noTrips: 'No trips yet. Capture one first.',
 		noTripSelected: 'Select a trip to review its items.',
 		emptyLines: 'This trip has no items.',
@@ -113,6 +114,7 @@
 			unknown: d.labelUnknown || DEFAULT_COPY.unknown,
 			productFallback: d.labelProductFallback || DEFAULT_COPY.productFallback,
 			createProduct: d.labelCreateProduct || DEFAULT_COPY.createProduct,
+			barcode: d.labelBarcode || DEFAULT_COPY.barcode,
 			noTrips: d.labelNoTrips || DEFAULT_COPY.noTrips,
 			noTripSelected: d.labelNoTripSelected || DEFAULT_COPY.noTripSelected,
 			emptyLines: d.labelEmptyLines || DEFAULT_COPY.emptyLines,
@@ -569,7 +571,10 @@
 			item.setAttribute('data-line-seq', String(line.seq));
 
 			var header = element('div', 'd-flex justify-content-between align-items-center');
-			header.appendChild(element('span', 'grocy-ai-capture-review-line-name', label.text));
+			var description = element('div', 'grocy-ai-capture-review-line-description');
+			description.appendChild(element('span', 'grocy-ai-capture-review-line-name', label.text));
+			description.appendChild(element('span', 'grocy-ai-capture-review-line-barcode text-muted', copy.barcode + ' ' + String(line.scanned_barcode)));
+			header.appendChild(description);
 			if (line.status !== 'known')
 			{
 				var createLink = element('a', 'btn btn-sm btn-outline-primary permission-MASTER_DATA_EDIT', copy.createProduct);
