@@ -77,13 +77,17 @@ checkDraft($review['purchase_unit_candidates'] === [['id' => 2, 'name' => 'Kilog
 checkDraft(array_column($input['choices']['quantity_units'], 'id') === [2, 3, 1] && $input['choices']['global_unit_conversions'] === [], 'classification includes complete active unit choices');
 $originalSuggestion = $db->query('SELECT suggested_json FROM grocy_ai_capture_research_drafts WHERE line_id = 1')->fetchColumn();
 $unitSuggestion = $db->prepare('UPDATE grocy_ai_capture_research_drafts SET suggested_json = ? WHERE line_id = 1');
-foreach (['6 x 330 mL', 'Kilogram Pieces', 'Tin', 'pumpkin'] as $package)
+foreach (['6 x 330 mL', '6 pack 330 mL', '6-pack 330 ml', 'pack of 6 330 mL', '6 count 330 mL', '6ct 330 mL', 'Kilogram Pieces', 'Tin', 'pumpkin'] as $package)
 {
 	$payload = json_decode($originalSuggestion, true); $payload['package'] = $package;
 	$unitSuggestion->execute([json_encode($payload)]);
 	$unitReview = $service->ReviewForTrip(1)['drafts'][0];
 	checkDraft($unitReview['purchase_unit_candidates'] === [] && $unitReview['selected']['qu_id_purchase'] === null && $unitReview['selected']['qu_id_stock'] === null, 'ambiguous, inactive and substring evidence stays blank: ' . $package);
 }
+$payload['package'] = '330 mL';
+$unitSuggestion->execute([json_encode($payload)]);
+$standaloneVolume = $service->ReviewForTrip(1)['drafts'][0];
+checkDraft($standaloneVolume['selected']['qu_id_purchase'] === 3 && $standaloneVolume['selected']['qu_id_stock'] === 3, 'standalone volume evidence remains clear');
 $unitSuggestion->execute([$originalSuggestion]);
 $unitEdited = $service->UpdateDraft(1, 1, $review['revision'], ['qu_id_purchase' => 1, 'qu_id_stock' => null], 'tester');
 checkDraft($unitEdited['selected']['qu_id_purchase'] === 1 && $unitEdited['selected']['qu_id_stock'] === null && $unitEdited['user_edits']['qu_id_stock'], 'explicit unit selection and null clear persist');

@@ -431,7 +431,7 @@ class GrocyAiCaptureResearchService
 		$matches = [];
 		foreach ($texts as $source => $text)
 		{
-			if (!is_string($text) || preg_match('/\d\s*(?:x|×)\s*\d/iu', $text)) continue;
+			if (!is_string($text) || preg_match('/\d\s*(?:x|×)\s*\d|(?<![\p{L}\p{N}])\d+\s*[- ]?\s*(?:packs?|pk|counts?|ct)(?![\p{L}])|(?<![\p{L}])pack\s+of\s+\d+/iu', $text)) continue;
 			foreach ($this->ActiveUnits() as $unit)
 			{
 				$tokens = array_filter([$unit['name'], $unit['name_plural']]);
