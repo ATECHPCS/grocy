@@ -36,6 +36,7 @@
 		finishSecond: 'Confirm again: Are you finished scanning this trip?',
 		finishError: 'Could not finish this trip. Your scans are saved; try again.',
 		finishPending: 'Wait for the current scan to finish, then try again.',
+		cameraPending: 'Confirm or cancel the scanned UPC before finishing.',
 		barcode: 'UPC',
 		empty: 'No items yet. Scan or enter a GTIN above.',
 		quantity: 'Quantity'
@@ -131,6 +132,7 @@
 			finishSecond: d.labelFinishSecond || DEFAULT_COPY.finishSecond,
 			finishError: d.labelFinishError || DEFAULT_COPY.finishError,
 			finishPending: d.labelFinishPending || DEFAULT_COPY.finishPending,
+			cameraPending: d.labelCameraPending || DEFAULT_COPY.cameraPending,
 			barcode: d.labelBarcode || DEFAULT_COPY.barcode,
 			empty: d.labelEmpty || DEFAULT_COPY.empty,
 			quantity: d.labelQuantity || DEFAULT_COPY.quantity
@@ -170,6 +172,7 @@
 		var pendingScans = 0;
 		var finishing = false;
 		var pendingCameraReads = [];
+		var cameraSubmitting = false;
 
 		function setStatus(message)
 		{
@@ -381,7 +384,7 @@
 
 		function finishCameraRead(save)
 		{
-			if (pendingCameraReads.length === 0)
+			if (pendingCameraReads.length === 0 || cameraSubmitting)
 			{
 				return;
 			}
@@ -391,9 +394,28 @@
 				if (cameraInput) cameraInput.focus();
 				return;
 			}
-			pendingCameraReads.shift();
-			showNextCameraRead();
-			if (save) submitBarcode(barcode);
+			if (!save)
+			{
+				pendingCameraReads.shift();
+				showNextCameraRead();
+				return;
+			}
+			cameraSubmitting = true;
+			if (cameraSaveButton) cameraSaveButton.disabled = true;
+			if (cameraCancelButton) cameraCancelButton.disabled = true;
+			submitBarcode(barcode).then(function (line)
+			{
+				if (line)
+				{
+					pendingCameraReads.shift();
+					showNextCameraRead();
+				}
+			}).finally(function ()
+			{
+				cameraSubmitting = false;
+				if (cameraSaveButton) cameraSaveButton.disabled = false;
+				if (cameraCancelButton) cameraCancelButton.disabled = false;
+			});
 		}
 
 		function finishScanning()
@@ -405,6 +427,11 @@
 			if (pendingScans > 0)
 			{
 				setStatus(copy.finishPending);
+				return Promise.resolve(null);
+			}
+			if (pendingCameraReads.length > 0)
+			{
+				setStatus(copy.cameraPending);
 				return Promise.resolve(null);
 			}
 			if (typeof window === 'undefined' || typeof window.confirm !== 'function'

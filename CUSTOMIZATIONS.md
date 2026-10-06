@@ -102,3 +102,5 @@ Paid capture web searches use the namespaced research migration v3 and an authen
 OpenAI UPC fallback review accepts the companion v2 evidence contract while retaining provider-only v1. Validation, citation DTOs, and mobile cards stay in the module service and public assets. The existing purchase review hook advances its asset token to `2.6.7`; the customization marker advances to `ATECHPCS-grocy_AI-29` to invalidate cached routes for the paid reservation endpoint. No additional upstream integration hook is introduced.
 
 The capture and review views show each saved scan's original UPC. Camera reads require an explicit confirm or edit before capture, while typed entry keeps its direct Add action. Both views use asset token `2.6.8`; the customization marker advances to `ATECHPCS-grocy_AI-30` so the production image invalidates cached Blade views.
+
+Receipt scan suggestions ignore one leading six-digit store item code when comparing OCR receipt descriptions with product names. The stored OCR description and product names retain their original text, and the suggestion still requires user pairing and allocation confirmation.
