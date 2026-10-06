@@ -64,6 +64,55 @@ $service->CompleteJob((int)$reclaim['id'], $reclaim['lease_token'], ['contract_v
 $review = $service->ReviewForTrip(1)['drafts'][0];
 checkDraft($review['selected']['name'] === 'My granola' && $review['name_alternatives'][0]['sources'] === ['bb-federation'] && $review['name_alternatives'][1]['sources'] === ['openfoodfacts'], 'provider retry cannot overwrite user edit and each name has its own sources');
 checkDraft($review['group_candidates'][0]['id'] === 1 && $review['taxonomy_candidates'][0]['slug'] === 'meat-seafood', 'exact active group and versioned taxonomy rule proposed');
+$draftId = $review['id'];
+checkDraft(method_exists($service, 'ClassificationInput'), 'bounded worker classification input is available');
+$input = $service->ClassificationInput($draftId);
+checkDraft($input['result_revision'] > 0 && $input['identity']['name'] === 'My granola' && $input['identity']['brand'] === 'Brand' && $input['identity']['receipt_description'] === 'Later correction', 'classification uses selected identity and linked receipt evidence');
+checkDraft($input['deterministic_candidates']['product_group_id'][0]['id'] === 1 && $input['deterministic_candidates']['taxonomy_leaf_slug'][0]['slug'] === 'meat-seafood', 'classification retains exact OFF precedence');
+checkDraft($review['parent_candidates'] === [], 'unmatched selected identity has no parent');
+$identityEdits = $db->query('SELECT user_edits_json FROM grocy_ai_capture_research_drafts WHERE line_id = 1')->fetchColumn();
+$db->exec("UPDATE grocy_ai_capture_research_drafts SET user_edits_json = '{\"name\":true,\"brand\":true,\"package\":true}' WHERE line_id = 1");
+$clearedIdentity = $service->ClassificationInput($draftId);
+checkDraft($clearedIdentity['identity']['brand'] === null && $clearedIdentity['identity']['package'] === null, 'explicitly cleared identity evidence is not restored from provider');
+$db->prepare('UPDATE grocy_ai_capture_research_drafts SET user_edits_json = ? WHERE line_id = 1')->execute([$identityEdits]);
+$db->exec('UPDATE grocy_ai_capture_lines SET selected = 0 WHERE id = 1');
+checkDraft($service->ClassificationInput($draftId) === null, 'deselected draft cannot be classified');
+$db->exec('UPDATE grocy_ai_capture_lines SET selected = 1 WHERE id = 1');
+$db->exec("INSERT INTO product_barcodes (product_id, barcode) VALUES (1, '4006381333931')");
+checkDraft($service->ClassificationInput($draftId) === null, 'existing exact barcode owner cannot be reclassified');
+$db->exec('DELETE FROM product_barcodes');
+$beforeClassification = $db->query('SELECT selected_json FROM grocy_ai_capture_research_drafts WHERE line_id = 1')->fetchColumn();
+$db->exec("UPDATE grocy_ai_capture_research_drafts SET selected_json = '{\"name\":\"Existing fish\"}' WHERE line_id = 1");
+$parentReview = $service->ReviewForTrip(1)['drafts'][0];
+checkDraft($parentReview['parent_candidates'][0]['id'] === 1 && $parentReview['parent_candidates'][0]['source'] === 'local_identity' && $parentReview['parent_candidates'][0]['compatibility'] === 'pending', 'unique active top-level identity gives pending parent candidate');
+$db->exec("INSERT INTO products (id, name) VALUES (92, 'Existing fish')");
+checkDraft($service->ReviewForTrip(1)['drafts'][0]['parent_candidates'] === [], 'ambiguous active parents remain unselected');
+$db->exec('DELETE FROM products WHERE id = 92');
+$db->exec('CREATE TABLE quantity_unit_conversions (product_id INTEGER NULL, from_qu_id INTEGER, to_qu_id INTEGER, factor REAL)');
+$db->exec("UPDATE grocy_ai_capture_research_drafts SET selected_json = '{\"name\":\"Existing fish\",\"qu_id_stock\":2}' WHERE line_id = 1");
+checkDraft($service->ReviewForTrip(1)['drafts'][0]['parent_candidates'] === [], 'known incompatible stock unit suppresses parent suggestion');
+$db->exec('INSERT INTO quantity_unit_conversions VALUES (1, 1, 2, 2)');
+checkDraft($service->ReviewForTrip(1)['drafts'][0]['parent_candidates'] === [], 'parent-only conversion cannot apply to a new child');
+$db->exec('INSERT INTO quantity_unit_conversions VALUES (NULL, 1, 2, 2)');
+checkDraft($service->ReviewForTrip(1)['drafts'][0]['parent_candidates'][0]['compatibility'] === 'compatible', 'global positive conversion makes known child stock unit compatible');
+$db->exec("UPDATE grocy_ai_capture_research_drafts SET selected_json = '{\"name\":\"Existing fish\",\"qu_id_stock\":1}' WHERE line_id = 1");
+checkDraft($service->ReviewForTrip(1)['drafts'][0]['parent_candidates'][0]['compatibility'] === 'compatible', 'equal stock units are compatible');
+$restoreSelected = $db->prepare('UPDATE grocy_ai_capture_research_drafts SET selected_json = ? WHERE line_id = 1');
+$restoreSelected->execute([$beforeClassification]);
+$insertBoundGroup = $db->prepare('INSERT INTO product_groups (id, name) VALUES (?, ?)');
+$insertBoundParent = $db->prepare('INSERT INTO products (id, name) VALUES (?, ?)');
+for ($index = 1000; $index < 1501; $index++)
+{
+	$insertBoundGroup->execute([$index, str_repeat('g', 250) . $index]);
+	$insertBoundParent->execute([$index, str_repeat('p', 250) . $index]);
+}
+$boundedInput = $service->ClassificationInput($draftId);
+checkDraft(count($boundedInput['choices']['product_groups']) === 200 && count($boundedInput['choices']['generic_parents']) === 500, 'worker catalog choices have independent count bounds');
+foreach ($boundedInput['choices']['product_groups'] as $group) checkDraft(mb_strlen($group['name']) <= 200, 'worker group names are bounded');
+foreach ($boundedInput['choices']['generic_parents'] as $parent) checkDraft(mb_strlen($parent['name']) <= 200, 'worker parent names are bounded');
+$db->exec('DELETE FROM products WHERE id >= 1000');
+$db->exec('DELETE FROM product_groups WHERE id >= 1000');
+checkDraft($db->query('SELECT selected_json FROM grocy_ai_capture_research_drafts WHERE line_id = 1')->fetchColumn() === $beforeClassification, 'classification never writes selections');
 checkDraft($review['possible_existing_products'][0]['id'] === 1 && !isset($review['selected']['product_group_id']), 'existing match and group remain unapplied');
 $sharedNameClaim = $service->ClaimJobs(1, 'shared-name-test')[0];
 checkDraft($sharedNameClaim['canonical_gtin'] === '00000096385074', 'second job claim is the expected barcode');
@@ -76,16 +125,23 @@ $unattributed = $service->ReviewForTrip(1)['drafts'][1]['name_alternatives'][0];
 checkDraft($unattributed['sources'] === [] && $unattributed['provenance'] === 'unknown', 'companion fallback with empty per-name source is labeled unknown');
 $db->exec("UPDATE grocy_ai_capture_research_drafts SET suggested_json = '{\"contract_version\":1,\"outcome\":\"found\",\"name_candidates\":[\"Existing fish\"],\"categories\":[\"Seafood\",\"Produce\"],\"sources\":[\"openfoodfacts\"]}' WHERE line_id = 1");
 $ambiguous = $service->ReviewForTrip(1)['drafts'][0];
+checkDraft($service->ClassificationInput($draftId)['deterministic_candidates']['taxonomy_leaf_slug'] === [], 'ambiguous classification has no deterministic leaf');
 checkDraft($ambiguous['group_candidates'] === [] && $ambiguous['taxonomy_candidates'] === [], 'ambiguous categories remain unset');
 $updateSuggestion = $db->prepare('UPDATE grocy_ai_capture_research_drafts SET suggested_json = ? WHERE line_id = 1');
 foreach (['Baby Food', 'Unsupported Category'] as $unsafeCategory)
 {
 	$updateSuggestion->execute([json_encode(['contract_version' => 1, 'outcome' => 'found', 'name_candidates' => ['Existing fish'], 'name_candidate_sources' => [['openfoodfacts']], 'categories' => ['Seafood', $unsafeCategory], 'sources' => ['openfoodfacts']], JSON_THROW_ON_ERROR)]);
 	$mixed = $service->ReviewForTrip(1)['drafts'][0];
+	checkDraft($service->ClassificationInput($draftId)['deterministic_candidates']['product_group_id'] === [], 'excluded category remains excluded in worker input');
 	checkDraft($mixed['taxonomy_candidates'] === [] && $mixed['group_candidates'] === [], 'excluded or unsupported category prevents category proposals');
 }
 $db->exec("UPDATE grocy_ai_capture_research_drafts SET suggested_json = '{\"contract_version\":1,\"outcome\":\"found\",\"name_candidates\":[\"Existing fish\"],\"categories\":[],\"sources\":[\"bb-federation\"]}' WHERE line_id = 1");
 $federation = $service->ReviewForTrip(1)['drafts'][0];
+$nameOnly = $service->ClassificationInput($draftId);
+checkDraft($nameOnly['identity']['name'] === 'My granola' && $nameOnly['deterministic_candidates']['taxonomy_leaf_slug'] === [] && $nameOnly['choices']['taxonomy_leaves'] !== [], 'name-only identified result supplies manual catalog choices for fallback');
+$db->exec("UPDATE grocy_ai_capture_research_drafts SET outcome = 'approved' WHERE line_id = 1");
+checkDraft($service->ClassificationInput($draftId) === null, 'finalized draft has no classification input');
+$db->exec("UPDATE grocy_ai_capture_research_drafts SET outcome = 'ready' WHERE line_id = 1");
 checkDraft($federation['taxonomy_candidates'] === [] && $federation['group_candidates'] === [] && $federation['name_alternatives'][0]['sources'] === [] && $federation['name_alternatives'][0]['provenance'] === 'unknown', 'legacy Federation-only name gives no OFF category or fabricated provenance');
 rejectDraft(fn() => $service->UpdateDraft(2, 1, 1, ['name' => 'wrong'], 'tester'));
 rejectDraft(fn() => $service->UpdateDraft(3, 3, 1, ['name' => 'No'], 'tester'));
@@ -103,5 +159,6 @@ checkDraft((int)$allocated['lines'][0]['allocations'][0]['capture_line_id'] === 
 $db->exec("INSERT INTO grocy_ai_capture_trip_cancellations (trip_id, actor) VALUES (1, 'tester')");
 rejectDraft(fn() => $service->UpdateDraft(1, 1, $edited['revision'], ['name' => 'No'], 'tester'));
 rejectDraft(fn() => $service->RetryJob(1, 1, 'tester'));
+checkDraft($service->ClassificationInput($draftId) === null, 'canceled draft has no classification input');
 checkDraft((int)$db->query('SELECT COUNT(*) FROM products')->fetchColumn() === $initialProductCount + 1 && (int)$db->query('SELECT COUNT(*) FROM stock_log')->fetchColumn() === 0, 'review never writes product or stock');
 echo "capture research drafts: PASS\n";

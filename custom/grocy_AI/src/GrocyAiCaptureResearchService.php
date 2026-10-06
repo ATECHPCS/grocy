@@ -105,6 +105,81 @@ class GrocyAiCaptureResearchService
 		];
 	}
 
+	/** Read-only worker evidence: choices are bounded independently of the full review catalog. */
+	public function ClassificationInput(int $draftId): ?array
+	{
+		$query = $this->Db->prepare("SELECT d.trip_id, d.line_id FROM grocy_ai_capture_research_drafts d JOIN grocy_ai_capture_lines l ON l.id = d.line_id AND l.trip_id = d.trip_id JOIN grocy_ai_capture_trips t ON t.id = d.trip_id JOIN grocy_ai_capture_research_jobs j ON j.id = d.job_id WHERE d.id = ? AND d.outcome = 'ready' AND d.result_revision > 0 AND l.status = 'unknown' AND l.selected = 1 AND l.resolved_product_id IS NULL AND t.status != 'committed' AND NOT EXISTS (SELECT 1 FROM grocy_ai_capture_trip_cancellations c WHERE c.trip_id = t.id) AND NOT EXISTS (SELECT 1 FROM product_barcodes b WHERE " . GrocyAiGtin::CanonicalSqlExpression('b.barcode') . " = j.canonical_gtin)");
+		$query->execute([$draftId]);
+		$row = $query->fetch(PDO::FETCH_ASSOC);
+		if ($row === false) return null;
+		$draft = $this->DraftRow((int)$row['trip_id'], (int)$row['line_id']);
+		$suggested = json_decode($draft['suggested_json'], true, 512, JSON_THROW_ON_ERROR);
+		$selected = json_decode($draft['selected_json'], true, 512, JSON_THROW_ON_ERROR);
+		if (($suggested['outcome'] ?? null) !== 'found' || empty($suggested['name_candidates'])) return null;
+		$edits = json_decode($draft['user_edits_json'], true, 512, JSON_THROW_ON_ERROR);
+		$name = self::ClassificationText($selected['name'] ?? $suggested['name_candidates'][0]);
+		if ($name === null) return null;
+		GrocyAiTaxonomyMigration::Bootstrap($this->Db);
+		$groups = $this->Db->query('SELECT id, name FROM product_groups WHERE active = 1 ORDER BY name, id LIMIT 200')->fetchAll(PDO::FETCH_ASSOC);
+		$leavesQuery = $this->Db->prepare('SELECT slug, label FROM grocy_ai_taxonomy_nodes WHERE version = ? AND depth = 2 ORDER BY label, slug LIMIT 200');
+		$leavesQuery->execute([GrocyAiTaxonomyMigration::VERSION]);
+		$leaves = $leavesQuery->fetchAll(PDO::FETCH_ASSOC);
+		$parents = $this->Db->query('SELECT id, name, qu_id_stock FROM products WHERE active = 1 AND parent_product_id IS NULL ORDER BY name, id LIMIT 500')->fetchAll(PDO::FETCH_ASSOC);
+		foreach ($groups as &$group) { $group['id'] = (int)$group['id']; $group['name'] = self::ClassificationText($group['name']); }
+		unset($group);
+		foreach ($leaves as &$leaf) { $leaf['label'] = self::ClassificationText($leaf['label']); }
+		unset($leaf);
+		foreach ($parents as &$parent) { $parent['id'] = (int)$parent['id']; $parent['qu_id_stock'] = (int)$parent['qu_id_stock']; $parent['name'] = self::ClassificationText($parent['name']); }
+		unset($parent);
+		$receiptDescription = null;
+		if ($draft['receipt_line_id'] !== null)
+		{
+			try { $receiptDescription = (new GrocyAiReceiptService($this->Db))->ResearchEvidence((int)$draft['trip_id'], (int)$draft['receipt_line_id'])['description']; }
+			catch (\InvalidArgumentException) { /* Removed receipt evidence is optional. */ }
+		}
+		return [
+			'contract_version' => 1,
+			'draft_id' => $draftId,
+			'result_revision' => (int)$draft['result_revision'],
+			'identity' => ['name' => $name, 'brand' => self::ClassificationText(!empty($edits['brand']) ? ($selected['brand'] ?? null) : ($selected['brand'] ?? $suggested['brand'] ?? null)), 'package' => self::ClassificationText(!empty($edits['package']) ? ($selected['package'] ?? null) : ($selected['package'] ?? $suggested['package'] ?? null)), 'receipt_description' => self::ClassificationText($receiptDescription)],
+			'choices' => ['product_groups' => $groups, 'taxonomy_leaves' => $leaves, 'generic_parents' => $parents],
+			'deterministic_candidates' => ['product_group_id' => $this->GroupCandidates($suggested), 'taxonomy_leaf_slug' => $this->TaxonomyCandidates($suggested), 'parent_product_id' => $this->ParentCandidates($draft, $selected, $suggested)]
+		];
+	}
+
+	private static function ClassificationText(mixed $value): ?string
+	{
+		if (!is_string($value)) return null;
+		$value = trim(preg_replace('/\p{C}/u', ' ', $value) ?? '');
+		return $value === '' ? null : mb_substr($value, 0, 200);
+	}
+
+	private function ParentCandidates(array $draft, array $selected, array $suggested): array
+	{
+		if ($draft['outcome'] !== 'ready' || $draft['line_status'] !== 'unknown' || ($suggested['outcome'] ?? null) !== 'found') return [];
+		$name = $selected['name'] ?? $suggested['name_candidates'][0] ?? null;
+		if (!is_string($name) || $name === '') return [];
+		$matches = [];
+		$query = $this->Db->query('SELECT id, name, qu_id_stock FROM products WHERE active = 1 AND parent_product_id IS NULL ORDER BY id');
+		foreach ($query as $parent)
+		{
+			if (mb_strtolower(trim($parent['name'])) !== mb_strtolower(trim($name))) continue;
+			$matches[] = ['id' => (int)$parent['id'], 'name' => $parent['name'], 'qu_id_stock' => (int)$parent['qu_id_stock'], 'source' => 'local_identity', 'compatibility' => 'pending'];
+			if (count($matches) > 1) return [];
+		}
+		if ($matches === [] || !isset($selected['qu_id_stock'])) return $matches;
+		$stock = (int)$selected['qu_id_stock'];
+		if ($stock !== $matches[0]['qu_id_stock'])
+		{
+			// Only global conversions apply to a child that has not yet been created.
+			$conversion = $this->Db->prepare('SELECT 1 FROM quantity_unit_conversions WHERE product_id IS NULL AND from_qu_id = ? AND to_qu_id = ? AND factor > 0 LIMIT 1');
+			$conversion->execute([$matches[0]['qu_id_stock'], $stock]);
+			if ($conversion->fetchColumn() === false) return [];
+		}
+		$matches[0]['compatibility'] = 'compatible';
+		return $matches;
+	}
+
 	/** @param array<string, mixed> $changes */
 	public function UpdateDraft(int $tripId, int $lineId, int $revision, array $changes, string $actor): array
 	{
@@ -264,7 +339,7 @@ class GrocyAiCaptureResearchService
 			catch (\InvalidArgumentException) { $evidence = null; }
 		}
 		if ($evidence !== null) $names[] = ['value' => $evidence['description'], 'sources' => ['receipt_ocr'], 'provenance' => 'attributed'];
-		return ['id' => (int)$draft['id'], 'line_id' => $lineId, 'seq' => (int)$draft['seq'], 'revision' => (int)$draft['revision'], 'outcome' => $draft['outcome'], 'line_status' => $draft['line_status'], 'resolved_product_id' => $draft['resolved_product_id'] === null ? null : (int)$draft['resolved_product_id'], 'resolved_product_name' => $draft['resolved_product_name'], 'job_state' => $job['state'], 'safe_error_code' => $job['safe_error_code'], 'scanned_barcode' => $draft['scanned_barcode'], 'canonical_gtin' => $job['canonical_gtin'], 'selected' => $selected, 'suggested' => $suggested, 'name_alternatives' => $names, 'receipt_evidence' => $evidence, 'group_candidates' => $this->GroupCandidates($suggested), 'taxonomy_candidates' => $this->TaxonomyCandidates($suggested), 'possible_existing_products' => $this->PossibleProducts($selected, $suggested), 'final_product_id' => $draft['final_product_id'] === null ? null : (int)$draft['final_product_id']];
+		return ['id' => (int)$draft['id'], 'line_id' => $lineId, 'seq' => (int)$draft['seq'], 'revision' => (int)$draft['revision'], 'outcome' => $draft['outcome'], 'line_status' => $draft['line_status'], 'resolved_product_id' => $draft['resolved_product_id'] === null ? null : (int)$draft['resolved_product_id'], 'resolved_product_name' => $draft['resolved_product_name'], 'job_state' => $job['state'], 'safe_error_code' => $job['safe_error_code'], 'scanned_barcode' => $draft['scanned_barcode'], 'canonical_gtin' => $job['canonical_gtin'], 'selected' => $selected, 'suggested' => $suggested, 'name_alternatives' => $names, 'receipt_evidence' => $evidence, 'group_candidates' => $this->GroupCandidates($suggested), 'taxonomy_candidates' => $this->TaxonomyCandidates($suggested), 'parent_candidates' => $this->ParentCandidates($draft, $selected, $suggested), 'possible_existing_products' => $this->PossibleProducts($selected, $suggested), 'final_product_id' => $draft['final_product_id'] === null ? null : (int)$draft['final_product_id']];
 	}
 
 	private function GroupCandidates(array $suggested): array
