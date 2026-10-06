@@ -597,3 +597,16 @@ The queue suite (`php8.5 custom/grocy_AI/tests/capture_research_queue.php`) requ
 Receipt review shows source labels for Open Food Facts, OpenAI classification, and local parent identity suggestions. Single valid candidates are provisional selections; Save research draft preserves all reviewer changes, including explicit clearing of Product group, Food classification, and Generic parent. Saved choices and clears take precedence over later classification results. Unavailable classification leaves manual controls available.
 
 Parent stock units are checked against live product and global conversion data when units or the parent change, then checked again in the approval transaction. Both approval confirmations name the final group, classification, and parent. Research and classification only suggest values: Approve new product changes the catalog, and Commit purchase remains a separate receipt and stock gate.
+
+
+### Capture purchase and stock unit suggestions
+
+Purchase capture review suggests Purchase unit and Stock unit from exact whole-unit package or receipt evidence against active local quantity units. Numeric multipack wording such as `6 x 330 mL` or `6 pack 330 mL`, and conflicting unit evidence, leaves both provisional choices blank. Where local evidence is absent, the existing OpenAI classification result can supply nullable unit IDs from the bounded active choices. Source labels identify local evidence, OpenAI classification, or a saved reviewer choice.
+
+A different purchase/stock pair needs an existing positive global Grocy conversion from purchase unit to stock unit. Reverse-only, zero/negative, product-specific, inactive, or missing conversions cannot authorize the suggested pair. Package wording never creates a conversion. Generic Parent stock-unit compatibility is checked during suggestion review and again in the product approval transaction.
+
+Changing or clearing either unit is a reviewer decision saved by Save research draft. Saved selections and explicit clears override later suggestions; unsaved choices survive refreshes and rejected saves. A temporarily incompatible pair may be saved as a draft, but Approve new product rejects it without partial catalog writes. Both units appear in the final approval confirmation. Research, classification, and draft edits create no products, barcodes, conversions, or stock entries. Approve new product and Commit purchase remain separate explicit actions.
+
+Unit suggestions reuse the existing single classification reservation and paid call per draft research result revision, with the existing UTC-day ceiling. A usable local category mapping does not trigger an OpenAI call solely to suggest units. Deploy matching Grocy and companion contracts together. Stored legacy four-field classification results remain valid: missing unit fields normalize to null, local evidence is recomputed, and manual controls remain usable. Existing trip #12 classification jobs receive no paid rerun.
+
+The purchase review asset token is `2.6.10`; the capture page retains `2.6.8`. The customization marker is `ATECHPCS-grocy_AI-32` to invalidate persisted route and Blade caches for this release.
