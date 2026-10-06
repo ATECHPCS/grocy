@@ -372,15 +372,32 @@ class GrocyAiCaptureResearchService
 		if ($classification !== false) $classification = ['state' => $classification['state'], 'result_revision' => (int)$classification['result_revision'], 'source' => 'openai-classification', 'result' => $classification['result_json'] === null ? null : json_decode($classification['result_json'], true, 512, JSON_THROW_ON_ERROR)];
 		elseif ($this->ClassificationInput((int)$draft['id']) !== null) $classification = ['state' => 'pending', 'result_revision' => (int)$draft['result_revision'], 'source' => null, 'result' => null];
 		$edits = json_decode($draft['user_edits_json'], true, 512, JSON_THROW_ON_ERROR);
+		if (is_array($classification['result'] ?? null)) $classification['result'] += ['qu_id_purchase' => null, 'qu_id_stock' => null];
 		$unitCandidates = $this->LocalUnitCandidates($selected, $suggested, $edits, $evidence);
+		$unitCandidatesByField = [];
 		foreach (['qu_id_purchase', 'qu_id_stock'] as $field)
 		{
-			if (!array_key_exists($field, $selected)) $selected[$field] = !array_key_exists($field, $edits) && count($unitCandidates) === 1 ? $unitCandidates[0]['id'] : null;
+			$unitCandidatesByField[$field] = $unitCandidates;
+			if ($unitCandidates === [] && ($classification['state'] ?? null) === 'suggested')
+			{
+				foreach ($this->ActiveUnits() as $unit) if ($unit['id'] === ($classification['result'][$field] ?? null)) $unitCandidatesByField[$field][] = $unit + ['source' => 'openai-classification'];
+			}
+		}
+		foreach (['qu_id_purchase', 'qu_id_stock'] as $field)
+		{
+			if (!array_key_exists($field, $selected)) $selected[$field] = !array_key_exists($field, $edits) && count($unitCandidatesByField[$field]) === 1 ? $unitCandidatesByField[$field][0]['id'] : null;
 		}
 		// A saved choice can make the proposed opposite unit incompatible. Leave it blank.
 		if ($selected['qu_id_purchase'] !== null && $selected['qu_id_stock'] !== null && !$this->CompatibleUnits((int)$selected['qu_id_purchase'], (int)$selected['qu_id_stock']))
 		{
 			foreach (['qu_id_purchase', 'qu_id_stock'] as $field) if (!array_key_exists($field, $edits) && !array_key_exists($field, json_decode($draft['selected_json'], true))) $selected[$field] = null;
+		}
+		if (isset($selected['parent_product_id'], $selected['qu_id_stock']) && !array_key_exists('qu_id_stock', $edits) && !array_key_exists('qu_id_stock', json_decode($draft['selected_json'], true)))
+		{
+			$parentQuery = $this->Db->prepare('SELECT qu_id_stock FROM products WHERE id = ? AND active = 1 AND parent_product_id IS NULL');
+			$parentQuery->execute([$selected['parent_product_id']]);
+			$parentStock = $parentQuery->fetchColumn();
+			if ($parentStock !== false && !$this->CompatibleUnits((int)$parentStock, $selected['qu_id_stock'])) $selected['qu_id_stock'] = null;
 		}
 		$candidates = ['product_group_id' => $this->GroupCandidates($suggested), 'taxonomy_leaf_slug' => $this->TaxonomyCandidates($suggested), 'parent_product_id' => $this->ParentCandidates($draft, $selected, $suggested)];
 		$catalog = ($classification['state'] ?? null) === 'suggested' ? $this->ReviewOptions() : ['product_groups' => [], 'taxonomy_leaves' => [], 'generic_parents' => []];
@@ -389,11 +406,11 @@ class GrocyAiCaptureResearchService
 			$value = $classification['result'][$field] ?? null;
 			if ($candidates[$field] === [] && ($classification['state'] ?? null) === 'suggested' && $value !== null)
 			{
-				foreach ($catalog[$choices] as $choice) if ($choice[$key] === $value) $candidates[$field][] = $choice + ['source' => 'openai-classification'];
+				foreach ($catalog[$choices] as $choice) if ($choice[$key] === $value && ($field !== 'parent_product_id' || $selected['qu_id_stock'] === null || $this->CompatibleUnits($choice['qu_id_stock'], $selected['qu_id_stock']))) $candidates[$field][] = $choice + ['source' => 'openai-classification'];
 			}
 			if (!array_key_exists($field, $edits) && !array_key_exists($field, $selected) && count($candidates[$field]) === 1) $selected[$field] = $candidates[$field][0][$key];
 		}
-		return ['id' => (int)$draft['id'], 'line_id' => $lineId, 'seq' => (int)$draft['seq'], 'revision' => (int)$draft['revision'], 'outcome' => $draft['outcome'], 'line_status' => $draft['line_status'], 'resolved_product_id' => $draft['resolved_product_id'] === null ? null : (int)$draft['resolved_product_id'], 'resolved_product_name' => $draft['resolved_product_name'], 'job_state' => $job['state'], 'safe_error_code' => $job['safe_error_code'], 'scanned_barcode' => $draft['scanned_barcode'], 'canonical_gtin' => $job['canonical_gtin'], 'selected' => $selected, 'user_edits' => $edits, 'suggested' => $suggested, 'classification' => $classification ?: null, 'name_alternatives' => $names, 'receipt_evidence' => $evidence, 'purchase_unit_candidates' => $unitCandidates, 'stock_unit_candidates' => $unitCandidates, 'group_candidates' => $candidates['product_group_id'], 'taxonomy_candidates' => $candidates['taxonomy_leaf_slug'], 'parent_candidates' => $candidates['parent_product_id'], 'possible_existing_products' => $this->PossibleProducts($selected, $suggested), 'final_product_id' => $draft['final_product_id'] === null ? null : (int)$draft['final_product_id']];
+		return ['id' => (int)$draft['id'], 'line_id' => $lineId, 'seq' => (int)$draft['seq'], 'revision' => (int)$draft['revision'], 'outcome' => $draft['outcome'], 'line_status' => $draft['line_status'], 'resolved_product_id' => $draft['resolved_product_id'] === null ? null : (int)$draft['resolved_product_id'], 'resolved_product_name' => $draft['resolved_product_name'], 'job_state' => $job['state'], 'safe_error_code' => $job['safe_error_code'], 'scanned_barcode' => $draft['scanned_barcode'], 'canonical_gtin' => $job['canonical_gtin'], 'selected' => $selected, 'user_edits' => $edits, 'suggested' => $suggested, 'classification' => $classification ?: null, 'name_alternatives' => $names, 'receipt_evidence' => $evidence, 'purchase_unit_candidates' => $unitCandidatesByField['qu_id_purchase'], 'stock_unit_candidates' => $unitCandidatesByField['qu_id_stock'], 'group_candidates' => $candidates['product_group_id'], 'taxonomy_candidates' => $candidates['taxonomy_leaf_slug'], 'parent_candidates' => $candidates['parent_product_id'], 'possible_existing_products' => $this->PossibleProducts($selected, $suggested), 'final_product_id' => $draft['final_product_id'] === null ? null : (int)$draft['final_product_id']];
 	}
 
 	private function ActiveUnits(?int $limit = null): array
@@ -793,16 +810,26 @@ class GrocyAiCaptureResearchService
 			{
 				$fields = ['product_group_id', 'taxonomy_leaf_slug', 'parent_product_id'];
 				$status = $result['status'] ?? null;
-				if (!in_array($status, ['suggested', 'inconclusive', 'unavailable', 'quota_exhausted', 'refused', 'malformed', 'timeout'], true) || count($result) !== 4 || array_diff($fields, array_keys($result))) $status = 'malformed';
+				if (!in_array($status, ['suggested', 'inconclusive', 'unavailable', 'quota_exhausted', 'refused', 'malformed', 'timeout'], true) || !in_array(count($result), [4, 6], true) || array_diff($fields, array_keys($result)) || array_diff(array_keys($result), array_merge(['status'], $fields, ['qu_id_purchase', 'qu_id_stock'])) || (count($result) === 6 && (!array_key_exists('qu_id_purchase', $result) || !array_key_exists('qu_id_stock', $result)))) $status = 'malformed';
 				$reserved = $this->Db->prepare('SELECT 1 FROM grocy_ai_capture_classification_reservations WHERE draft_id = ? AND result_revision = ?');
 				$reserved->execute([$row['draft_id'], $row['result_revision']]);
 				if ($status === 'suggested' && $reserved->fetchColumn() === false) throw new \RuntimeException('Classification reservation required');
-				$normalized = ['status' => $status, 'product_group_id' => null, 'taxonomy_leaf_slug' => null, 'parent_product_id' => null];
+				$normalized = ['status' => $status, 'product_group_id' => null, 'taxonomy_leaf_slug' => null, 'parent_product_id' => null, 'qu_id_purchase' => null, 'qu_id_stock' => null];
 				$snapshot = json_decode($row['input_json'], true, 512, JSON_THROW_ON_ERROR);
 				foreach (['product_group_id' => ['product_groups', 'id'], 'taxonomy_leaf_slug' => ['taxonomy_leaves', 'slug'], 'parent_product_id' => ['generic_parents', 'id']] as $field => [$choices, $key])
 				{
 					$value = $result[$field] ?? null;
 					if ($status === 'suggested' && $value !== null && in_array($value, array_column($snapshot['choices'][$choices], $key), true) && in_array($value, array_column($live['choices'][$choices], $key), true)) $normalized[$field] = $value;
+				}
+				foreach (['qu_id_purchase', 'qu_id_stock'] as $field)
+				{
+					$value = $result[$field] ?? null;
+					if ($status === 'suggested' && is_int($value) && in_array($value, array_column($snapshot['choices']['quantity_units'] ?? [], 'id'), true) && in_array($value, array_column($this->ActiveUnits(), 'id'), true)) $normalized[$field] = $value;
+				}
+				if ($normalized['qu_id_purchase'] !== null && $normalized['qu_id_stock'] !== null && !$this->CompatibleUnits($normalized['qu_id_purchase'], $normalized['qu_id_stock'])) $normalized['qu_id_purchase'] = $normalized['qu_id_stock'] = null;
+				if ($normalized['parent_product_id'] !== null && $normalized['qu_id_stock'] !== null)
+				{
+					foreach ($live['choices']['generic_parents'] as $parent) if ($parent['id'] === $normalized['parent_product_id'] && !$this->CompatibleUnits($parent['qu_id_stock'], $normalized['qu_id_stock'])) $normalized['parent_product_id'] = null;
 				}
 				$state = $status;
 			}

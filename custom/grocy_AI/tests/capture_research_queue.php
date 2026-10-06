@@ -280,6 +280,65 @@ $miss = $v1; $miss['contract_version'] = 2; $miss['outcome'] = 'miss'; $miss['na
 checkResearch($normalize->invoke(null, $miss, $miss['canonical_gtin']) === $miss, 'inconclusive version 2 remains needs input');
 
 
+require_once __DIR__ . '/../src/GrocyAiTaxonomyMigration.php';
+// Unit completion validates the current catalog and directed global conversions.
+$udb = new PDO('sqlite::memory:');
+$udb->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+$udb->exec('CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT, active INTEGER DEFAULT 1, parent_product_id INTEGER, qu_id_stock INTEGER DEFAULT 1)');
+$udb->exec('CREATE TABLE product_groups (id INTEGER PRIMARY KEY, name TEXT, active INTEGER DEFAULT 1)');
+$udb->exec('CREATE TABLE product_barcodes (id INTEGER PRIMARY KEY, product_id INTEGER, barcode TEXT)');
+$udb->exec('CREATE TABLE stock_log (id INTEGER PRIMARY KEY)');
+$udb->exec('CREATE TABLE quantity_units (id INTEGER PRIMARY KEY, name TEXT, active INTEGER DEFAULT 1)');
+$udb->exec('CREATE TABLE quantity_unit_conversions (from_qu_id INTEGER, to_qu_id INTEGER, factor REAL, product_id INTEGER)');
+$udb->exec("INSERT INTO quantity_units VALUES (1, 'Pack', 1), (2, 'Piece', 1), (3, 'Inactive', 0)");
+$us = new GrocyAiCaptureResearchService($udb);
+$udb->exec("INSERT INTO grocy_ai_capture_trips (id, status, module_version) VALUES (1, 'reviewing', 'test')");
+$udb->exec("INSERT INTO grocy_ai_capture_lines (id, trip_id, seq, scanned_barcode, canonical_gtin, status) VALUES (1, 1, 1, '4006381333931', '04006381333931', 'unknown')");
+$us->EnqueueUnknown(1, 1, '4006381333931');
+$uj = $us->ClaimJobs(1, 'test')[0];
+$us->CompleteJob($uj['id'], $uj['lease_token'], $v1);
+foreach (['valid', 'reverse', 'zero', 'product_specific', 'inactive', 'unknown', 'legacy', 'stored_legacy', 'parent', 'saved_parent', 'stale'] as $index => $case)
+{
+	$udb->exec('DELETE FROM quantity_unit_conversions');
+	$udb->exec('UPDATE quantity_units SET active = 1 WHERE id = 2');
+	$udb->exec('INSERT INTO quantity_unit_conversions VALUES (1, 2, 6, NULL)');
+	$udb->exec('DELETE FROM products');
+	$udb->exec("UPDATE grocy_ai_capture_research_drafts SET selected_json = '{\"name\":\"Web cereal\"}', user_edits_json = '{}'");
+	if (in_array($case, ['parent', 'saved_parent'], true)) $udb->exec("INSERT INTO products VALUES (9, 'Parent', 1, NULL, 2)");
+	if ($case === 'saved_parent') $udb->exec("UPDATE grocy_ai_capture_research_drafts SET selected_json = '{\"name\":\"Web cereal\",\"parent_product_id\":9}', user_edits_json = '{\"parent_product_id\":true}'");
+	$udb->exec('UPDATE grocy_ai_capture_research_drafts SET result_revision = ' . ($index + 1));
+	$uc = $us->ClaimClassifications(1, 'test')[0];
+	$us->ReserveClassification($uc['id'], $uc['lease_token'], 'test');
+	if ($case === 'reverse') $udb->exec('UPDATE quantity_unit_conversions SET from_qu_id = 2, to_qu_id = 1');
+	if ($case === 'zero') $udb->exec('UPDATE quantity_unit_conversions SET factor = 0');
+	if ($case === 'product_specific') $udb->exec('UPDATE quantity_unit_conversions SET product_id = 99');
+	if ($case === 'inactive') $udb->exec('UPDATE quantity_units SET active = 0 WHERE id = 2');
+	if ($case === 'stale') $udb->exec('UPDATE grocy_ai_capture_research_drafts SET result_revision = 99');
+	$ur = ['status'=>'suggested', 'product_group_id'=>null, 'taxonomy_leaf_slug'=>null, 'parent_product_id'=>null];
+	if (!in_array($case, ['legacy', 'stored_legacy'], true)) $ur += ['qu_id_purchase'=>$case === 'unknown' ? 999 : 1, 'qu_id_stock'=>2];
+	if ($case === 'parent') { $ur['parent_product_id'] = 9; $ur['qu_id_stock'] = 1; }
+	if ($case === 'saved_parent') { $ur['qu_id_purchase'] = 1; $ur['qu_id_stock'] = 1; }
+	$done = $us->CompleteClassification($uc['id'], $uc['lease_token'], $ur);
+	if ($case === 'stale') checkResearch($done['state'] === 'ignored', 'stale unit result ignored');
+	else
+	{
+		checkResearch($done['state'] === 'suggested', 'new and legacy unit contracts accepted');
+		$expected = match ($case) { 'valid'=>[1, 2], 'parent'=>[1, 1], 'saved_parent'=>[1, 1], 'inactive'=>[1, null], 'unknown'=>[null, 2], default=>[null, null] };
+		checkResearch([$done['result']['qu_id_purchase'], $done['result']['qu_id_stock']] === $expected, 'live unit validation: ' . $case);
+		if ($case === 'parent') checkResearch($done['result']['parent_product_id'] === null, 'incompatible model parent discarded');
+		if ($case === 'saved_parent') checkResearch($us->ReviewForTrip(1)['drafts'][0]['selected']['qu_id_stock'] === null, 'unit cannot preselect against saved parent');
+		if ($case === 'stored_legacy')
+		{
+			$udb->prepare('UPDATE grocy_ai_capture_classification_jobs SET result_json = ? WHERE id = ?')->execute([json_encode(['status'=>'suggested', 'product_group_id'=>null, 'taxonomy_leaf_slug'=>null, 'parent_product_id'=>null]), $uc['id']]);
+			checkResearch($us->ReviewForTrip(1)['drafts'][0]['classification']['result']['qu_id_stock'] === null, 'stored legacy normalized at review');
+		}
+		if ($case === 'valid') checkResearch($us->ReviewForTrip(1)['drafts'][0]['selected']['qu_id_stock'] === 2, 'classification units preselected for review');
+		if ($case === 'legacy') checkResearch($us->ReviewForTrip(1)['drafts'][0]['classification']['result']['qu_id_stock'] === null, 'legacy trip remains reviewable');
+	}
+}
+$udb->exec('DELETE FROM products');
+checkResearch((int)$udb->query('SELECT COUNT(*) FROM products')->fetchColumn() === 0 && (int)$udb->query('SELECT COUNT(*) FROM stock_log')->fetchColumn() === 0, 'unit completion performs no product or stock writes');
+
 // Classification has an independent immutable revision and append-only spend ledger.
 require_once __DIR__ . '/../src/GrocyAiTaxonomyMigration.php';
 checkResearch(method_exists(GrocyAiCaptureResearchService::class, 'ClaimClassifications'), 'classification queue missing');
