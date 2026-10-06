@@ -800,6 +800,18 @@ test('review queue retains stable scan keys across reorder and removal', async (
 	], reordered: 'scan:10', removed: 'scan:20', clamped: 'scan:10', first: 'scan:10', empty: null });
 });
 
+// Restricting the card to pan-y alone disables browser pinch zoom.
+for (const width of [320, 390]) test('@mobilequeue active card permits vertical scrolling and pinch zoom at ' + width, async ({ page }) =>
+{
+	await page.setViewportSize({ width, height: 844 });
+	await installReviewApi(page, { lines: [makeLine({ id: 1, seq: 1, scanned_barcode: UNKNOWN_GTIN })] });
+	await page.goto('/fixtures/capture-review.html');
+	await page.locator('#grocyai-capture-review-trips button').first().click();
+	const card = page.locator('.grocy-ai-review-card:visible');
+	await expect(card).toHaveCount(1);
+	expect(await card.evaluate(element => getComputedStyle(element).touchAction)).toBe('pan-y pinch-zoom');
+});
+
 for (const width of [320, 390]) test('@mobilequeue single card navigation, focus and swipe at ' + width, async ({ page }) =>
 {
 	await page.setViewportSize({ width, height: 844 });

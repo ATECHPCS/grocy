@@ -919,7 +919,7 @@ details.grocy-ai-diagnostics:not([open]) > .grocy-ai-diagnostic-body {
 .grocy-ai-review-heading:focus { outline: 2px solid #007bff; outline-offset: 3px; }
 @media (max-width: 767.98px) {
 	.grocy-ai-review-card:not(.is-active) { display: none; }
-	.grocy-ai-review-card { touch-action: pan-y; }
+	.grocy-ai-review-card { touch-action: pan-y pinch-zoom; }
 	.grocy-ai-review-card input:not([type="checkbox"]), .grocy-ai-review-card select, .grocy-ai-review-card button, .grocy-ai-review-card .btn { min-height: 44px; max-width: 100%; }
 	.grocy-ai-review-card .btn { white-space: normal; }
 	.grocy-ai-review-card .form-check-label { min-height: 44px; display: flex; align-items: center; }
