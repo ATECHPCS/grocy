@@ -55,14 +55,16 @@
 		var productListPromise = null;
 		var referenceRequests = {};
 		var pendingUnits = {};
+		var loadGeneration = 0;
 		var catalogPromise = request('/api/grocy-ai/capture/research/options', 'GET');
 		var canEditProducts = !window.Grocy || !Array.isArray(window.Grocy.UserPermissions) || window.Grocy.UserPermissions.some(function (permission) { return permission.permission_name === 'MASTER_DATA_EDIT' && Number(permission.has_permission) === 1; });
 		function load()
 		{
+			var generation = ++loadGeneration;
 			return Promise.all([request(base + '/research', 'GET'), catalogPromise]).then(function (results)
 			{
 				var payload = results[0], catalog = results[1];
-				if (!active) return;
+				if (!active || generation !== loadGeneration) return;
 				if (!payload || payload.contract_version !== 1 || Number(payload.trip_id) !== Number(options.tripId) || !Array.isArray(payload.drafts)) throw new Error('Research review is unavailable.');
 				if (!catalog || catalog.contract_version !== 1 || !Array.isArray(catalog.product_groups) || !Array.isArray(catalog.taxonomy_leaves) || !Array.isArray(catalog.generic_parents)) throw new Error('Product choices are unavailable. Reload and try again.');
 				Array.prototype.forEach.call(host.querySelectorAll('.grocy-ai-product-research'), function (card) { card.remove(); });
@@ -72,7 +74,7 @@
 					var line = options.lines.find(function (candidate) { return candidate.id === draft.line_id && candidate.selected && (candidate.status === 'unknown' || candidate.status === 'known' && draft.line_status === 'known' && Number(draft.resolved_product_id) > 0 && Number(candidate.resolved_product_id) === Number(draft.resolved_product_id)); });
 					if (line && draft.outcome !== 'approved' && draft.outcome !== 'linked') render(draft, line, catalog);
 				});
-			}).catch(function (error) { if (active && options.errorHost) options.errorHost.textContent = error.message === 'You need product edit permission.' ? 'You need purchase permission to review product research.' : error.message; });
+			}).catch(function (error) { if (active && generation === loadGeneration && options.errorHost) options.errorHost.textContent = error.message === 'You need product edit permission.' ? 'You need purchase permission to review product research.' : error.message; });
 		}
 		function render(draft, line, catalog)
 		{
