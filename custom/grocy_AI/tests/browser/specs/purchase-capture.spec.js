@@ -783,3 +783,19 @@ test('@units an older research response cannot overwrite a successful unit save'
 	await expect(page.getByLabel('Purchase unit', { exact: true })).toHaveValue('3');
 	await expect(page.getByLabel('Stock unit', { exact: true })).toHaveValue('');
 });
+
+// Losing stable identity or ignoring scan sequence breaks navigation.
+test('review queue retains stable scan keys across reorder and removal', async ({ page }) =>
+{
+	await page.addScriptTag({ path: require('path').resolve(__dirname, '../../../../../public/custom/grocy_AI/capture-review-queue.js') });
+	const result = await page.evaluate(() =>
+	{
+		const q = window.GrocyAICaptureReviewQueue;
+		const cards = q.build([{ id: 20, seq: 2, selected: 0 }, { id: 10, seq: 1, selected: 1 }], []).cards;
+		return { cards, reordered: q.retain(cards.slice().reverse(), 'scan:10', 0), removed: q.retain(cards, 'scan:30', 1), clamped: q.retain(cards.slice(0, 1), 'scan:30', 8), first: q.retain(cards, null, 0), empty: q.retain([], 'scan:10', 0) };
+	});
+	expect(result).toEqual({ cards: [
+		{ key: 'scan:10', kind: 'scan', scanLineId: 10, receiptKeys: [] },
+		{ key: 'scan:20', kind: 'scan', scanLineId: 20, receiptKeys: [] }
+	], reordered: 'scan:10', removed: 'scan:20', clamped: 'scan:10', first: 'scan:10', empty: null });
+});

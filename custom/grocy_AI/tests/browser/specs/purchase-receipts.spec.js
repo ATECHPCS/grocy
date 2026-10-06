@@ -575,3 +575,30 @@ test('finished receipts own price and store corrections while capture retains in
 	expect(state.writes.some(w => w.path.endsWith('/receipts/1') && w.body.shopping_location_id === 99)).toBe(true);
 	expect(state.writes.every(w => w.path.includes('/receipts'))).toBe(true);
 });
+
+// Saved pairing wins; shared allocations must never duplicate receipt editors.
+test('review queue assigns one receipt owner and references shared allocations', async ({ page }) =>
+{
+	await page.addScriptTag({ path: require('path').resolve(__dirname, '../../../../../public/custom/grocy_AI/capture-review-queue.js') });
+	const result = await page.evaluate(() => window.GrocyAICaptureReviewQueue.build([{ id: 10, seq: 1 }, { id: 20, seq: 2 }], [
+		{ receipt: { id: 7 }, lines: [
+			{ id: 1, kind: 'item', paired_capture_line_id: 10, allocations: [{ active: 1, capture_line_id: 20 }] },
+			{ id: 2, kind: 'item', allocations: [{ active: 1, capture_line_id: 10 }, { active: 1, capture_line_id: '10' }, { active: 1, capture_line_id: 20 }] },
+			{ id: 3, kind: 'item', capture_match_status: 'unique', capture_candidates: [{ capture_line_id: 10 }], allocations: [{ active: 0, capture_line_id: 10 }] },
+			{ id: 4, kind: 'tax', decision: 'needs_review' },
+			{ id: 5, allocations: [{ active: 1, capture_line_id: 20 }, { active: 1, capture_line_id: '20' }, { active: 0, capture_line_id: 10 }] },
+			{ id: 6, kind: 'item', paired_capture_line_id: 999 },
+			{ id: 7, kind: 'savings', decision: 'ignore' }
+		] }, { receipt: { id: 8 }, lines: [{ id: 1, kind: 'item' }] }
+	]));
+	expect(result).toEqual({ cards: [
+		{ key: 'scan:10', kind: 'scan', scanLineId: 10, receiptKeys: ['receipt:7:1', 'receipt:7:2'] },
+		{ key: 'scan:20', kind: 'scan', scanLineId: 20, receiptKeys: ['receipt:7:2', 'receipt:7:5'] },
+		{ key: 'receipt:7:2', kind: 'receipt', receiptId: 7, receiptLineId: 2, receiptKeys: ['receipt:7:2'] },
+		{ key: 'receipt:7:3', kind: 'receipt', receiptId: 7, receiptLineId: 3, receiptKeys: ['receipt:7:3'] },
+		{ key: 'receipt:7:4', kind: 'adjustment', receiptId: 7, receiptLineId: 4, receiptKeys: ['receipt:7:4'] },
+		{ key: 'receipt:7:6', kind: 'receipt', receiptId: 7, receiptLineId: 6, receiptKeys: ['receipt:7:6'] },
+		{ key: 'receipt:7:7', kind: 'adjustment', receiptId: 7, receiptLineId: 7, receiptKeys: ['receipt:7:7'] },
+		{ key: 'receipt:8:1', kind: 'receipt', receiptId: 8, receiptLineId: 1, receiptKeys: ['receipt:8:1'] }
+	], receiptOwnerByKey: { 'receipt:7:1': 'scan:10', 'receipt:7:2': 'receipt:7:2', 'receipt:7:3': 'receipt:7:3', 'receipt:7:4': 'receipt:7:4', 'receipt:7:5': 'scan:20', 'receipt:7:6': 'receipt:7:6', 'receipt:7:7': 'receipt:7:7', 'receipt:8:1': 'receipt:8:1' } });
+});
