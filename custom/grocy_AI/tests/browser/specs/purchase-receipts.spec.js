@@ -602,3 +602,129 @@ test('review queue assigns one receipt owner and references shared allocations',
 		{ key: 'receipt:8:1', kind: 'receipt', receiptId: 8, receiptLineId: 1, receiptKeys: ['receipt:8:1'] }
 	], receiptOwnerByKey: { 'receipt:7:1': 'scan:10', 'receipt:7:2': 'receipt:7:2', 'receipt:7:3': 'receipt:7:3', 'receipt:7:4': 'receipt:7:4', 'receipt:7:5': 'scan:20', 'receipt:7:6': 'receipt:7:6', 'receipt:7:7': 'receipt:7:7', 'receipt:8:1': 'receipt:8:1' } });
 });
+
+async function mountReceiptCards(page, desktop = false)
+{
+	await page.goto('/health');
+	await page.setContent('<main id="input-root"><div id="summaries"></div><section id="scan-10"></section><section id="receipt-7-2"></section><section id="receipt-8-1"></section><section id="receipt-7-3"></section><input id="research"></main>');
+	await page.addScriptTag({ path: require('path').resolve(__dirname, '../../../../../public/custom/grocy_AI/capture-receipts.js') });
+	await page.evaluate(desktop =>
+	{
+		window.receiptState = { drafts: {}, uploads: [] };
+		window.busyCalls = [];
+		window.receiptOptions = {
+			url: location.origin + '/api/grocy-ai/capture/trips/7', state: window.receiptState,
+			lines: [{ id: 10, seq: 1, selected: 1, resolved_product_id: 101 }], names: { 101: 'Milk' }, stores: [{ id: 9, name: 'Market' }], productNew: '/product/new',
+			onBusy: value => window.busyCalls.push(value), reload: () => window.remountReceipts(),
+			receipts: [
+				{ receipt: { id: 7, status: 'needs_review', merchant: 'Market', printed_total: 8, shopping_location_id: 9 }, totals: { entered_total: 7, difference: 1 }, lines: [
+					{ id: 1, description: 'Milk', quantity: 1, line_total: 2, decision: 'include', paired_capture_line_id: 10, allocations: [] },
+					{ id: 2, description: 'Shared milk', quantity: 2, line_total: 4, decision: 'include', allocations: [{ id: 1, active: 1, capture_line_id: 10, product_id: 101, quantity: 1, unit_price: 2 }, { id: 2, active: 1, capture_line_id: 20, product_id: 101, quantity: 1, unit_price: 2 }] },
+					{ id: 3, description: 'Unmounted adjustment', quantity: 1, line_total: 1, decision: 'needs_review', kind: 'tax' }
+				] },
+				{ receipt: { id: 8, status: 'finished', merchant: 'Other', printed_total: 3, difference_accepted_amount: 0 }, totals: { entered_total: 3, difference: 0 }, lines: [{ id: 1, description: 'Receipt only', quantity: 1, line_total: 3, decision: 'needs_review' }] }
+			]
+		};
+		if (!desktop)
+		{
+			window.receiptOptions.inputRoot = document.querySelector('#input-root');
+			window.receiptOptions.lineHostFor = (receipt, line) => document.getElementById(receipt.id === 7 && line.id === 1 ? 'scan-10' : 'receipt-' + receipt.id + '-' + line.id);
+		}
+		window.remountReceipts = () =>
+		{
+			if (window.receiptEditor) window.receiptEditor.dispose();
+			['scan-10', 'receipt-7-2', 'receipt-8-1', 'receipt-7-3'].forEach(id => document.getElementById(id).textContent = '');
+			window.receiptEditor = window.GrocyAIReceipts(document.getElementById('summaries'), window.receiptOptions);
+		};
+		window.remountReceipts();
+	}, desktop);
+}
+
+test('receipt card mounting keeps one authoritative editor and full receipt summaries', async ({ page }) =>
+{
+	await mountReceiptCards(page);
+	for (const id of ['scan-10', 'receipt-7-2', 'receipt-8-1', 'receipt-7-3']) await expect(page.locator('#' + id + ' .grocy-ai-receipt-line')).toHaveCount(1);
+	await expect(page.locator('#summaries .grocy-ai-receipt-line')).toHaveCount(0);
+	await expect(page.locator('.grocy-ai-receipt-line')).toHaveCount(4);
+	await expect(page.locator('#scan-10').getByLabel('Description', { exact: true })).toHaveValue('Milk');
+	await expect(page.locator('#receipt-7-2 .grocy-ai-receipt-allocation')).toHaveCount(3);
+	const summary = page.locator('#summaries .grocy-ai-receipt').first();
+	await expect(summary.getByLabel('Merchant', { exact: true })).toHaveValue('Market');
+	await expect(summary.getByRole('combobox', { name: /^Receipt store/ })).toHaveValue('9');
+	await expect(summary.getByLabel('Printed total', { exact: true })).toHaveValue('8');
+	await expect(summary.getByRole('img')).toHaveAttribute('src', /receipts\/7\/image$/);
+	await expect(summary.getByText('Entered total: 7 · Difference: 1', { exact: true })).toBeVisible();
+	await expect(summary.getByRole('button', { name: 'Accept difference and leave as is' })).toBeVisible();
+	await expect(summary.getByRole('button', { name: 'Finish receipt', exact: true })).toBeVisible();
+	await expect(page.getByRole('button', { name: 'Reopen receipt', exact: true })).toBeVisible();
+});
+
+test('receipt card mounting preserves drafts across card changes and rejected saves', async ({ page }) =>
+{
+	await mountReceiptCards(page);
+	await page.route('**/receipts/7/lines/1', route => route.fulfill({ status: 409, json: { error_message: 'Receipt changed; review again.' } }));
+	const scan = page.locator('#scan-10');
+	await scan.getByLabel('Description', { exact: true }).fill('Typed milk');
+	await scan.getByLabel('Confirmed unit price').fill('2.50');
+	await page.evaluate(() => document.querySelector('#scan-10').hidden = true);
+	await page.locator('#receipt-8-1').getByLabel('Description', { exact: true }).fill('Typed receipt only');
+	await page.evaluate(() => { window.remountReceipts(); document.querySelector('#scan-10').hidden = false; });
+	await expect(scan.getByLabel('Description', { exact: true })).toHaveValue('Typed milk');
+	await expect(scan.getByLabel('Confirmed unit price')).toHaveValue('2.50');
+	await expect(page.locator('#receipt-8-1').getByLabel('Description', { exact: true })).toHaveValue('Typed receipt only');
+	expect(await page.evaluate(() => window.receiptEditor.hasUnsavedEdits())).toBe(true);
+	await scan.getByRole('button', { name: 'Save line', exact: true }).click();
+	await expect(page.getByRole('status')).toHaveText('Receipt changed; review again.');
+	await expect(scan.getByLabel('Description', { exact: true })).toHaveValue('Typed milk');
+	expect(await page.evaluate(() => window.receiptEditor.hasUnsavedEdits())).toBe(true);
+});
+
+test('receipt card mounting disposes input tracking and locks only receipt controls', async ({ page }) =>
+{
+	await mountReceiptCards(page);
+	let release;
+	const gate = new Promise(resolve => release = resolve);
+	await page.route('**/receipts/7/lines/1', async route => { await gate; await route.fulfill({ status: 409, json: { error_message: 'Rejected' } }); });
+	await page.evaluate(() => { window.remountReceipts(); window.busyCalls = []; });
+	await page.locator('#scan-10').getByLabel('Description', { exact: true }).fill('Single draft event');
+	expect(await page.evaluate(() => window.busyCalls)).toEqual([true]);
+	await page.locator('#scan-10').getByRole('button', { name: 'Save line', exact: true }).click();
+	await expect(page.locator('#scan-10').getByLabel('Description', { exact: true })).toBeDisabled();
+	await expect(page.locator('#receipt-8-1').getByLabel('Description', { exact: true })).toBeDisabled();
+	await expect(page.locator('#research')).toBeEnabled();
+	release();
+	await expect(page.getByRole('status')).toHaveText('Rejected');
+	await expect(page.locator('#scan-10').getByLabel('Description', { exact: true })).toBeEnabled();
+	await page.evaluate(() => { window.receiptEditor.dispose(); window.busyCalls = []; });
+	await page.locator('#scan-10').getByLabel('Description', { exact: true }).fill('After disposal');
+	expect(await page.evaluate(() => window.busyCalls)).toEqual([]);
+	expect(await page.evaluate(() => window.receiptState.drafts['/receipts/7/lines/1'].Description.value)).toBe('Single draft event');
+});
+
+test('receipt card mounting keeps desktop receipt editing without a card callback', async ({ page }) =>
+{
+	await mountReceiptCards(page, true);
+	await expect(page.locator('#summaries .grocy-ai-receipt-line')).toHaveCount(4);
+	await page.locator('.grocy-ai-receipt-line').first().getByLabel('Description', { exact: true }).fill('Desktop milk');
+	await page.evaluate(() => window.remountReceipts());
+	await expect(page.locator('.grocy-ai-receipt-line').first().getByLabel('Description', { exact: true })).toHaveValue('Desktop milk');
+	expect(await page.evaluate(() => window.receiptEditor.hasUnsavedEdits())).toBe(true);
+});
+
+
+test('receipt card mounting falls back to an editable summary when a card host is missing', async ({ page }) =>
+{
+	await mountReceiptCards(page);
+	await page.evaluate(() =>
+	{
+		window.receiptOptions.lineHostFor = () => null;
+		window.remountReceipts();
+	});
+	await expect(page.locator('#summaries .grocy-ai-receipt-line')).toHaveCount(4);
+	await expect(page.locator('.grocy-ai-receipt-line')).toHaveCount(4);
+	const first = page.locator('#summaries .grocy-ai-receipt-line').first();
+	await first.getByLabel('Description', { exact: true }).fill('Fallback milk');
+	expect(await page.evaluate(() => window.receiptEditor.hasUnsavedEdits())).toBe(true);
+	await page.evaluate(() => window.remountReceipts());
+	await expect(first.getByLabel('Description', { exact: true })).toHaveValue('Fallback milk');
+});

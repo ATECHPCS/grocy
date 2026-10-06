@@ -29,6 +29,9 @@
 	root.GrocyAIReceipts = function (host, options)
 	{
 		var busy = false;
+		var disposed = false;
+		var inputRoot = options.inputRoot || host;
+		var lineEditors = [];
 		var state = options.state;
 		var dirty = Object.keys(state.drafts).length > 0;
 		var readOnly = options.readOnly;
@@ -131,11 +134,15 @@
 
 		function lock(value)
 		{
+			if (disposed) return;
 			busy = value;
 			if (host.isConnected) options.onBusy(value || dirty);
-			Array.prototype.forEach.call(host.querySelectorAll('input,select,button'), function (node)
+			[host].concat(lineEditors).forEach(function (parent)
 			{
-				node.disabled = value || readOnly;
+				Array.prototype.forEach.call(parent.querySelectorAll('input,select,button'), function (node)
+				{
+					node.disabled = value || readOnly;
+				});
 			});
 		}
 
@@ -274,6 +281,7 @@
 			var box = el('fieldset', '', 'grocy-ai-receipt-line');
 			box.appendChild(el('legend', 'Receipt line #' + line.id));
 			parent.appendChild(box);
+			lineEditors.push(box);
 			var path = receiptPath + '/lines/' + line.id;
 			box.setAttribute('data-draft-scope', path);
 			if (line.paired_capture_line_id)
@@ -420,7 +428,9 @@
 			card.appendChild(el('p', 'Reconcile by correcting the printed total or line amounts. Edits reopen the receipt and clear difference acceptance.'));
 			(view.lines || []).forEach(function (line)
 			{
-				renderLine(card, path, line);
+				var lineHost = options.lineHostFor ? options.lineHostFor(receipt, line) : card;
+				// Keep every line editable if a queue card could not be mounted.
+				renderLine(lineHost || card, path, line);
 			});
 			button(card, 'Add manual line', function ()
 			{
@@ -534,8 +544,9 @@
 			uploadFiles(camera);
 		});
 		(options.receipts || []).forEach(render);
-		host.addEventListener('input', function (event)
+		function trackInput(event)
 		{
+			if (!host.contains(event.target) && !lineEditors.some(function (box) { return box.contains(event.target); })) return;
 			if (event.target.type !== 'file')
 			{
 				var scope = event.target.getAttribute('data-draft-scope');
@@ -547,8 +558,20 @@
 				options.onBusy(true);
 				status.textContent = 'Unsaved changes — save this section before committing.';
 			}
-		});
+		}
+		inputRoot.addEventListener('input', trackInput);
 		lock(false);
+		return {
+			dispose: function ()
+			{
+				disposed = true;
+				inputRoot.removeEventListener('input', trackInput);
+			},
+			hasUnsavedEdits: function ()
+			{
+				return Object.keys(state.drafts).length > 0;
+			}
+		};
 	};
 	root.GrocyAIReceiptReason = reason;
 })(window);
