@@ -58,6 +58,10 @@ approvalReject(fn() => $approval->ApproveDraft(1, 1, $revision, [...$fields, 'lo
 approvalReject(fn() => $approval->ApproveDraft(1, 1, $revision, [...$fields, 'qu_id_stock' => 99], 'test'));
 approvalReject(fn() => $approval->ApproveDraft(1, 1, $revision, [...$fields, 'product_group_id' => 99], 'test'));
 approvalReject(fn() => $approval->ApproveDraft(1, 1, $revision, [...$fields, 'parent_product_id' => 99], 'test'));
+$savedUnits = $research->UpdateDraft(1, 1, $revision, ['qu_id_purchase' => 1, 'qu_id_stock' => 2], 'test');
+$revision = $savedUnits['revision'];
+approvalReject(fn() => $approval->ApproveDraft(1, 1, $revision, [...$fields, 'qu_id_stock' => 2], 'test'));
+approvalCheck((int)$db->query('SELECT COUNT(*) FROM products')->fetchColumn() === 0, 'incompatible draft unit pair cannot create product');
 $result = $approval->ApproveDraft(1, 1, $revision, $fields, 'test');
 $id = (int)$result['product_id'];
 approvalCheck($id > 0 && $db->query('SELECT barcode FROM product_barcodes')->fetchColumn() === '4006381333931', 'approval attaches original scan');
@@ -94,9 +98,11 @@ $db->prepare('INSERT INTO product_barcodes (product_id, barcode) VALUES (?, ?)')
 $approval->LinkDraft(1, 5, 1, $id, 'test');
 approvalCheck((int)$db->query("SELECT COUNT(*) FROM product_barcodes WHERE product_id = $id AND barcode = '00036000291452'")->fetchColumn() === 1, 'link preserves existing exact barcode');
 approvalCheck((int)$db->query("SELECT COUNT(*) FROM product_barcodes WHERE product_id = $id AND barcode IN ('00036000291452', '036000291452')")->fetchColumn() === 1, 'canonical equivalent uses one stored barcode');
+$schemaBeforeTaxonomy = $db->query("SELECT name, sql FROM sqlite_master WHERE name LIKE 'grocy_ai_taxonomy_%' ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
+$catalogBeforeTaxonomy = $db->query('SELECT * FROM grocy_ai_taxonomy_classifications ORDER BY product_id')->fetchAll(PDO::FETCH_ASSOC);
 $countBeforeTaxonomy = (int)$db->query('SELECT COUNT(*) FROM products')->fetchColumn();
 approvalReject(fn() => $approval->ApproveDraft(1, 6, 1, [...$fields, 'name' => 'Taxonomy item', 'taxonomy_leaf_slug' => 'stale-leaf'], 'test'));
-approvalCheck((int)$db->query('SELECT COUNT(*) FROM products')->fetchColumn() === $countBeforeTaxonomy && (int)$db->query("SELECT COUNT(*) FROM sqlite_master WHERE name = 'grocy_ai_taxonomy_classifications'")->fetchColumn() === 0, 'invalid taxonomy rolls back product and bootstrap');
+approvalCheck((int)$db->query('SELECT COUNT(*) FROM products')->fetchColumn() === $countBeforeTaxonomy && $db->query("SELECT name, sql FROM sqlite_master WHERE name LIKE 'grocy_ai_taxonomy_%' ORDER BY name")->fetchAll(PDO::FETCH_ASSOC) === $schemaBeforeTaxonomy && $db->query('SELECT * FROM grocy_ai_taxonomy_classifications ORDER BY product_id')->fetchAll(PDO::FETCH_ASSOC) === $catalogBeforeTaxonomy, 'invalid taxonomy rolls back product and bootstrap');
 $taxResult = $approval->ApproveDraft(1, 6, 1, [...$fields, 'name' => 'Taxonomy item', 'taxonomy_leaf_slug' => 'meat-seafood'], 'test');
 approvalCheck((int)$db->query('SELECT COUNT(*) FROM grocy_ai_taxonomy_classifications WHERE product_id = ' . (int)$taxResult['product_id'])->fetchColumn() === 1, 'valid taxonomy assignment commits with product');
 $db->prepare('INSERT INTO quantity_unit_conversions (from_qu_id, to_qu_id, factor, product_id) VALUES (1, 2, 2, ?)')->execute([$id]);

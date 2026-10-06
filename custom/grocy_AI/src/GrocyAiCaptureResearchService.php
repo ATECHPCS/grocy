@@ -156,7 +156,7 @@ class GrocyAiCaptureResearchService
 			'draft_id' => $draftId,
 			'result_revision' => (int)$draft['result_revision'],
 			'identity' => ['name' => $name, 'brand' => self::ClassificationText(!empty($edits['brand']) ? ($selected['brand'] ?? null) : ($selected['brand'] ?? $suggested['brand'] ?? null)), 'package' => self::ClassificationText(!empty($edits['package']) ? ($selected['package'] ?? null) : ($selected['package'] ?? $suggested['package'] ?? null)), 'receipt_description' => self::ClassificationText($receiptDescription)],
-			'choices' => ['product_groups' => $groups, 'taxonomy_leaves' => $leaves, 'generic_parents' => $parents],
+			'choices' => ['product_groups' => $groups, 'taxonomy_leaves' => $leaves, 'generic_parents' => $parents] + $this->UnitChoices(),
 			'deterministic_candidates' => $candidates
 		];
 	}
@@ -197,13 +197,20 @@ class GrocyAiCaptureResearchService
 	/** @param array<string, mixed> $changes */
 	public function UpdateDraft(int $tripId, int $lineId, int $revision, array $changes, string $actor): array
 	{
-		if ($revision < 1 || $changes === [] || array_diff(array_keys($changes), ['name', 'brand', 'package', 'product_group_id', 'taxonomy_leaf_slug', 'parent_product_id']) !== []) throw new \InvalidArgumentException('Invalid draft changes');
+		if ($revision < 1 || $changes === [] || array_diff(array_keys($changes), ['name', 'brand', 'package', 'product_group_id', 'taxonomy_leaf_slug', 'parent_product_id', 'qu_id_purchase', 'qu_id_stock']) !== []) throw new \InvalidArgumentException('Invalid draft changes');
 		foreach ($changes as $key => $value)
 		{
 			if (in_array($key, ['name', 'brand', 'package'], true) && $value !== null && (!is_string($value) || trim($value) !== $value || $value === '' || mb_strlen($value) > 200)) throw new \InvalidArgumentException('Invalid draft field');
 			if ($key === 'name' && $value === null) throw new \InvalidArgumentException('Name is required');
-			if (in_array($key, ['product_group_id', 'parent_product_id'], true) && $value !== null && (!is_int($value) || $value < 1)) throw new \InvalidArgumentException('Invalid group');
+			if (in_array($key, ['product_group_id', 'parent_product_id', 'qu_id_purchase', 'qu_id_stock'], true) && $value !== null && (!is_int($value) || $value < 1)) throw new \InvalidArgumentException('Invalid group');
 			if ($key === 'taxonomy_leaf_slug' && $value !== null && (!is_string($value) || preg_match('/^[a-z0-9_-]{1,100}$/D', $value) !== 1)) throw new \InvalidArgumentException('Invalid taxonomy leaf');
+		}
+		foreach (['qu_id_purchase', 'qu_id_stock'] as $field)
+		{
+			if (!isset($changes[$field])) continue;
+			$query = $this->Db->prepare('SELECT 1 FROM quantity_units WHERE id = ? AND active = 1');
+			$query->execute([$changes[$field]]);
+			if ($query->fetchColumn() === false) throw new \InvalidArgumentException('Inactive quantity unit');
 		}
 		if (isset($changes['product_group_id']))
 		{
@@ -231,7 +238,7 @@ class GrocyAiCaptureResearchService
 			$edits = json_decode($draft['user_edits_json'], true, 512, JSON_THROW_ON_ERROR);
 			foreach ($changes as $key => $value)
 			{
-				if ($value === null) unset($selected[$key]); else $selected[$key] = $value;
+				if ($value === null && !in_array($key, ['qu_id_purchase', 'qu_id_stock'], true)) unset($selected[$key]); else $selected[$key] = $value;
 				$edits[$key] = true;
 			}
 			return ['selected_json' => json_encode($selected, JSON_THROW_ON_ERROR), 'user_edits_json' => json_encode($edits, JSON_THROW_ON_ERROR)];
@@ -332,7 +339,7 @@ class GrocyAiCaptureResearchService
 		return ['revision' => (int)$draft['revision'], 'selected' => json_decode($draft['selected_json'], true), 'user_edits' => json_decode($draft['user_edits_json'], true), 'receipt_line_id' => $draft['receipt_line_id'] === null ? null : (int)$draft['receipt_line_id']];
 	}
 
-	private function ReviewDraft(int $tripId, int $lineId): array
+	public function ReviewDraft(int $tripId, int $lineId): array
 	{
 		$draft = $this->DraftRow($tripId, $lineId);
 		$job = $this->Db->prepare('SELECT canonical_gtin, state, safe_error_code FROM grocy_ai_capture_research_jobs WHERE id = ?');
@@ -365,6 +372,16 @@ class GrocyAiCaptureResearchService
 		if ($classification !== false) $classification = ['state' => $classification['state'], 'result_revision' => (int)$classification['result_revision'], 'source' => 'openai-classification', 'result' => $classification['result_json'] === null ? null : json_decode($classification['result_json'], true, 512, JSON_THROW_ON_ERROR)];
 		elseif ($this->ClassificationInput((int)$draft['id']) !== null) $classification = ['state' => 'pending', 'result_revision' => (int)$draft['result_revision'], 'source' => null, 'result' => null];
 		$edits = json_decode($draft['user_edits_json'], true, 512, JSON_THROW_ON_ERROR);
+		$unitCandidates = $this->LocalUnitCandidates($selected, $suggested, $edits, $evidence);
+		foreach (['qu_id_purchase', 'qu_id_stock'] as $field)
+		{
+			if (!array_key_exists($field, $selected)) $selected[$field] = !array_key_exists($field, $edits) && count($unitCandidates) === 1 ? $unitCandidates[0]['id'] : null;
+		}
+		// A saved choice can make the proposed opposite unit incompatible. Leave it blank.
+		if ($selected['qu_id_purchase'] !== null && $selected['qu_id_stock'] !== null && !$this->CompatibleUnits((int)$selected['qu_id_purchase'], (int)$selected['qu_id_stock']))
+		{
+			foreach (['qu_id_purchase', 'qu_id_stock'] as $field) if (!array_key_exists($field, $edits) && !array_key_exists($field, json_decode($draft['selected_json'], true))) $selected[$field] = null;
+		}
 		$candidates = ['product_group_id' => $this->GroupCandidates($suggested), 'taxonomy_leaf_slug' => $this->TaxonomyCandidates($suggested), 'parent_product_id' => $this->ParentCandidates($draft, $selected, $suggested)];
 		$catalog = ($classification['state'] ?? null) === 'suggested' ? $this->ReviewOptions() : ['product_groups' => [], 'taxonomy_leaves' => [], 'generic_parents' => []];
 		foreach (['product_group_id' => ['product_groups', 'id'], 'taxonomy_leaf_slug' => ['taxonomy_leaves', 'slug'], 'parent_product_id' => ['generic_parents', 'id']] as $field => [$choices, $key])
@@ -376,7 +393,57 @@ class GrocyAiCaptureResearchService
 			}
 			if (!array_key_exists($field, $edits) && !array_key_exists($field, $selected) && count($candidates[$field]) === 1) $selected[$field] = $candidates[$field][0][$key];
 		}
-		return ['id' => (int)$draft['id'], 'line_id' => $lineId, 'seq' => (int)$draft['seq'], 'revision' => (int)$draft['revision'], 'outcome' => $draft['outcome'], 'line_status' => $draft['line_status'], 'resolved_product_id' => $draft['resolved_product_id'] === null ? null : (int)$draft['resolved_product_id'], 'resolved_product_name' => $draft['resolved_product_name'], 'job_state' => $job['state'], 'safe_error_code' => $job['safe_error_code'], 'scanned_barcode' => $draft['scanned_barcode'], 'canonical_gtin' => $job['canonical_gtin'], 'selected' => $selected, 'user_edits' => $edits, 'suggested' => $suggested, 'classification' => $classification ?: null, 'name_alternatives' => $names, 'receipt_evidence' => $evidence, 'group_candidates' => $candidates['product_group_id'], 'taxonomy_candidates' => $candidates['taxonomy_leaf_slug'], 'parent_candidates' => $candidates['parent_product_id'], 'possible_existing_products' => $this->PossibleProducts($selected, $suggested), 'final_product_id' => $draft['final_product_id'] === null ? null : (int)$draft['final_product_id']];
+		return ['id' => (int)$draft['id'], 'line_id' => $lineId, 'seq' => (int)$draft['seq'], 'revision' => (int)$draft['revision'], 'outcome' => $draft['outcome'], 'line_status' => $draft['line_status'], 'resolved_product_id' => $draft['resolved_product_id'] === null ? null : (int)$draft['resolved_product_id'], 'resolved_product_name' => $draft['resolved_product_name'], 'job_state' => $job['state'], 'safe_error_code' => $job['safe_error_code'], 'scanned_barcode' => $draft['scanned_barcode'], 'canonical_gtin' => $job['canonical_gtin'], 'selected' => $selected, 'user_edits' => $edits, 'suggested' => $suggested, 'classification' => $classification ?: null, 'name_alternatives' => $names, 'receipt_evidence' => $evidence, 'purchase_unit_candidates' => $unitCandidates, 'stock_unit_candidates' => $unitCandidates, 'group_candidates' => $candidates['product_group_id'], 'taxonomy_candidates' => $candidates['taxonomy_leaf_slug'], 'parent_candidates' => $candidates['parent_product_id'], 'possible_existing_products' => $this->PossibleProducts($selected, $suggested), 'final_product_id' => $draft['final_product_id'] === null ? null : (int)$draft['final_product_id']];
+	}
+
+	private function ActiveUnits(?int $limit = null): array
+	{
+		$columns = $this->Db->query("PRAGMA table_info(quantity_units)")->fetchAll(PDO::FETCH_COLUMN, 1);
+		if (!in_array('name', $columns, true)) return [];
+		$plural = in_array('name_plural', $columns, true) ? 'name_plural' : 'NULL AS name_plural';
+		$rows = $this->Db->query('SELECT id, name, ' . $plural . ' FROM quantity_units WHERE active = 1 ORDER BY name, id' . ($limit === null ? '' : ' LIMIT ' . $limit))->fetchAll(PDO::FETCH_ASSOC);
+		return array_map(static fn(array $row): array => ['id' => (int)$row['id'], 'name' => $row['name'], 'name_plural' => $row['name_plural']], $rows);
+	}
+
+	private function UnitChoices(): array
+	{
+		$units = $this->ActiveUnits(201);
+		$exists = $this->Db->query("SELECT 1 FROM sqlite_master WHERE name = 'quantity_unit_conversions'")->fetchColumn();
+		$conversions = $exists === false ? [] : $this->Db->query('SELECT c.from_qu_id, c.to_qu_id, c.factor FROM quantity_unit_conversions c JOIN quantity_units f ON f.id = c.from_qu_id AND f.active = 1 JOIN quantity_units t ON t.id = c.to_qu_id AND t.active = 1 WHERE c.product_id IS NULL AND c.factor > 0 ORDER BY c.from_qu_id, c.to_qu_id LIMIT 501')->fetchAll(PDO::FETCH_ASSOC);
+		if (count($units) > 200 || count($conversions) > 500) return [];
+		return ['quantity_units' => $units, 'global_unit_conversions' => array_map(static fn(array $row): array => ['from_qu_id' => (int)$row['from_qu_id'], 'to_qu_id' => (int)$row['to_qu_id'], 'factor' => (float)$row['factor']], $conversions)];
+	}
+
+	private function CompatibleUnits(int $purchase, int $stock): bool
+	{
+		if ($purchase === $stock) return true;
+		if ($this->Db->query("SELECT 1 FROM sqlite_master WHERE name = 'quantity_unit_conversions'")->fetchColumn() === false) return false;
+		$query = $this->Db->prepare('SELECT 1 FROM quantity_unit_conversions WHERE product_id IS NULL AND from_qu_id = ? AND to_qu_id = ? AND factor > 0 LIMIT 1');
+		$query->execute([$purchase, $stock]);
+		return $query->fetchColumn() !== false;
+	}
+
+	private function LocalUnitCandidates(array $selected, array $suggested, array $edits, ?array $evidence): array
+	{
+		$package = !empty($edits['package']) ? ($selected['package'] ?? null) : ($selected['package'] ?? $suggested['package'] ?? null);
+		$texts = ['local_package' => $package, 'receipt_ocr' => $evidence['description'] ?? null];
+		$aliases = ['kilogram' => ['kg'], 'gram' => ['g'], 'milliliter' => ['ml'], 'millilitre' => ['ml'], 'liter' => ['l'], 'litre' => ['l'], 'ounce' => ['oz'], 'pound' => ['lb', 'lbs']];
+		$matches = [];
+		foreach ($texts as $source => $text)
+		{
+			if (!is_string($text) || preg_match('/\d\s*(?:x|×)\s*\d/iu', $text)) continue;
+			foreach ($this->ActiveUnits() as $unit)
+			{
+				$tokens = array_filter([$unit['name'], $unit['name_plural']]);
+				$tokens = array_merge($tokens, $aliases[mb_strtolower(trim($unit['name']))] ?? []);
+				foreach ($tokens as $token)
+				{
+					if (trim($token) === '') continue;
+					if (preg_match('/(?<![\p{L}\p{N}])' . preg_quote(trim($token), '/') . '(?![\p{L}\p{N}])/iu', $text)) $matches[$unit['id']] ??= ['id' => $unit['id'], 'name' => $unit['name'], 'source' => $source];
+				}
+			}
+		}
+		return count($matches) === 1 ? array_values($matches) : [];
 	}
 
 	private function GroupCandidates(array $suggested): array

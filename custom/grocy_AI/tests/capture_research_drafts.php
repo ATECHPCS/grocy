@@ -14,6 +14,8 @@ function rejectDraft(callable $operation): void { try { $operation(); } catch (I
 $db = new PDO('sqlite::memory:');
 $db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 $db->exec('PRAGMA foreign_keys = ON');
+$db->exec("CREATE TABLE quantity_units (id INTEGER PRIMARY KEY, name TEXT, name_plural TEXT, active INTEGER DEFAULT 1)");
+$db->exec("INSERT INTO quantity_units VALUES (1, 'Piece', 'Pieces', 1), (2, 'Kilogram', 'Kilograms', 1), (3, 'Milliliter', 'Milliliters', 1), (4, 'Tin', 'Tins', 0)");
 $db->exec('CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, parent_product_id INTEGER NULL, qu_id_stock INTEGER NOT NULL DEFAULT 1)');
 $db->exec('CREATE TABLE product_groups (id INTEGER PRIMARY KEY, name TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1)');
 $db->exec('CREATE TABLE product_barcodes (id INTEGER PRIMARY KEY, product_id INTEGER NOT NULL, barcode TEXT NOT NULL)');
@@ -71,6 +73,30 @@ checkDraft(($review['classification']['state'] ?? null) === 'pending', 'eligible
 checkDraft($input['result_revision'] > 0 && $input['identity']['name'] === 'My granola' && $input['identity']['brand'] === 'Brand' && $input['identity']['receipt_description'] === 'Later correction', 'classification uses selected identity and linked receipt evidence');
 checkDraft($input['deterministic_candidates']['product_group_id'][0]['id'] === 1 && $input['deterministic_candidates']['taxonomy_leaf_slug'][0]['slug'] === 'meat-seafood', 'classification retains exact OFF precedence');
 checkDraft($review['parent_candidates'] === [], 'unmatched selected identity has no parent');
+checkDraft($review['purchase_unit_candidates'] === [['id' => 2, 'name' => 'Kilogram', 'source' => 'local_package']] && $review['selected']['qu_id_purchase'] === 2 && $review['selected']['qu_id_stock'] === 2, 'exact package abbreviation suggests one active unit for both roles');
+checkDraft(array_column($input['choices']['quantity_units'], 'id') === [2, 3, 1] && $input['choices']['global_unit_conversions'] === [], 'classification includes complete active unit choices');
+$originalSuggestion = $db->query('SELECT suggested_json FROM grocy_ai_capture_research_drafts WHERE line_id = 1')->fetchColumn();
+$unitSuggestion = $db->prepare('UPDATE grocy_ai_capture_research_drafts SET suggested_json = ? WHERE line_id = 1');
+foreach (['6 x 330 mL', 'Kilogram Pieces', 'Tin', 'pumpkin'] as $package)
+{
+	$payload = json_decode($originalSuggestion, true); $payload['package'] = $package;
+	$unitSuggestion->execute([json_encode($payload)]);
+	$unitReview = $service->ReviewForTrip(1)['drafts'][0];
+	checkDraft($unitReview['purchase_unit_candidates'] === [] && $unitReview['selected']['qu_id_purchase'] === null && $unitReview['selected']['qu_id_stock'] === null, 'ambiguous, inactive and substring evidence stays blank: ' . $package);
+}
+$unitSuggestion->execute([$originalSuggestion]);
+$unitEdited = $service->UpdateDraft(1, 1, $review['revision'], ['qu_id_purchase' => 1, 'qu_id_stock' => null], 'tester');
+checkDraft($unitEdited['selected']['qu_id_purchase'] === 1 && $unitEdited['selected']['qu_id_stock'] === null && $unitEdited['user_edits']['qu_id_stock'], 'explicit unit selection and null clear persist');
+checkDraft($service->ReviewForTrip(1)['drafts'][0]['selected']['qu_id_stock'] === null, 'refresh preserves explicit unit clear');
+rejectDraft(fn() => $service->UpdateDraft(1, 1, $unitEdited['revision'], ['qu_id_purchase' => 4], 'tester'));
+rejectDraft(fn() => $service->UpdateDraft(1, 1, $unitEdited['revision'], ['qu_id_stock' => '1'], 'tester'));
+$review = $unitEdited;
+$insertUnit = $db->prepare('INSERT INTO quantity_units (id, name, name_plural) VALUES (?, ?, ?)');
+for ($unitId = 1000; $unitId < 1198; $unitId++) $insertUnit->execute([$unitId, 'Unit ' . $unitId, 'Units ' . $unitId]);
+$overUnits = $service->ClassificationInput($draftId);
+checkDraft(!array_key_exists('quantity_units', $overUnits['choices']) && !array_key_exists('global_unit_conversions', $overUnits['choices']), 'overlarge unit catalog omits both AI unit choices without truncation');
+checkDraft($service->ReviewForTrip(1)['drafts'][0]['purchase_unit_candidates'][0]['id'] === 2, 'overlarge AI catalog preserves local suggestions');
+$db->exec('DELETE FROM quantity_units WHERE id >= 1000');
 $identityCleared = $service->UpdateDraft(1, 1, $review['revision'], ['brand' => null, 'package' => null], 'tester');
 checkDraft(!isset($identityCleared['selected']['brand']) && !isset($identityCleared['selected']['package']) && $identityCleared['user_edits']['brand'] && $identityCleared['user_edits']['package'], 'UpdateDraft persists both explicit identity clears');
 checkDraft($identityCleared['suggested']['brand'] === 'Brand' && $identityCleared['suggested']['package'] === '1 kg', 'provider identity remains available for audit');
@@ -105,8 +131,17 @@ $db->exec("UPDATE grocy_ai_capture_research_drafts SET selected_json = '{\"name\
 checkDraft($service->ReviewForTrip(1)['drafts'][0]['parent_candidates'] === [], 'known incompatible stock unit suppresses parent suggestion');
 $db->exec('INSERT INTO quantity_unit_conversions VALUES (1, 1, 2, 2)');
 checkDraft($service->ReviewForTrip(1)['drafts'][0]['parent_candidates'] === [], 'parent-only conversion cannot apply to a new child');
+$db->exec('INSERT INTO quantity_unit_conversions VALUES (NULL, 1, 2, 0), (NULL, 2, 3, -1), (NULL, 4, 1, 2)');
+checkDraft($service->ClassificationInput($draftId)['choices']['global_unit_conversions'] === [], 'zero negative inactive and product conversions excluded');
+$db->exec('DELETE FROM quantity_unit_conversions WHERE product_id IS NULL');
 $db->exec('INSERT INTO quantity_unit_conversions VALUES (NULL, 1, 2, 2)');
+checkDraft($service->ClassificationInput($draftId)['choices']['global_unit_conversions'] === [['from_qu_id' => 1, 'to_qu_id' => 2, 'factor' => 2.0]], 'global choices retain conversion direction');
 checkDraft($service->ReviewForTrip(1)['drafts'][0]['parent_candidates'][0]['compatibility'] === 'compatible', 'global positive conversion makes known child stock unit compatible');
+$insertConversion = $db->prepare('INSERT INTO quantity_unit_conversions VALUES (NULL, 1, 2, 2)');
+for ($conversionIndex = 0; $conversionIndex < 500; $conversionIndex++) $insertConversion->execute();
+$overConversions = $service->ClassificationInput($draftId);
+checkDraft(!array_key_exists('quantity_units', $overConversions['choices']) && !array_key_exists('global_unit_conversions', $overConversions['choices']), 'overlarge conversions omit both AI unit choices');
+$db->exec('DELETE FROM quantity_unit_conversions WHERE rowid > (SELECT MIN(rowid) FROM quantity_unit_conversions WHERE product_id IS NULL)');
 $db->exec("UPDATE grocy_ai_capture_research_drafts SET selected_json = '{\"name\":\"Existing fish\",\"qu_id_stock\":1}' WHERE line_id = 1");
 checkDraft($service->ReviewForTrip(1)['drafts'][0]['parent_candidates'][0]['compatibility'] === 'compatible', 'equal stock units are compatible');
 $restoreSelected = $db->prepare('UPDATE grocy_ai_capture_research_drafts SET selected_json = ? WHERE line_id = 1');
