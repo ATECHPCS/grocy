@@ -2,7 +2,7 @@
 {
 	'use strict';
 
-	var sources = { 'bb-federation': 'Barcode Lookup Federation', openfoodfacts: 'Open Food Facts', receipt_ocr: 'Receipt OCR' };
+	var sources = { 'bb-federation': 'Barcode Lookup Federation', openfoodfacts: 'Open Food Facts', receipt_ocr: 'Receipt OCR', 'openai-classification': 'OpenAI classification', local_identity: 'Local product identity' };
 	function node(tag, className, value)
 	{
 		var result = document.createElement(tag);
@@ -152,6 +152,7 @@
 			}
 			if (draft.receipt_evidence) card.appendChild(node('p', null, 'Receipt evidence: ' + draft.receipt_evidence.description + ' (Receipt OCR; supporting evidence)'));
 			if (draft.suggested && draft.suggested.categories && draft.suggested.categories.length) card.appendChild(node('p', 'text-muted', 'Open Food Facts categories: ' + draft.suggested.categories.join(', ')));
+			if (draft.classification) card.appendChild(node('p', 'grocy-ai-product-research-classification', draft.classification.state === 'suggested' ? 'Classification suggestions ready' : draft.classification.state === 'leased' ? 'Classification in progress; manual choices are available.' : draft.classification.state === 'not_needed' ? 'Open Food Facts classification suggestions ready' : 'Classification unavailable; choose manually.'));
 			var name = field(card, 'Proposed name', draft.selected.name);
 			card.appendChild(node('p', 'grocy-ai-product-research-notes text-muted', 'Brand and package are research notes only; they are not saved to the Grocy product by this approval. Save research draft stores your corrections for review.'));
 			if (draft.suggested && draft.suggested.brand) card.appendChild(node('p', 'grocy-ai-product-research-brand-source', draft.suggested.brand + ' — Open Food Facts'));
@@ -160,16 +161,16 @@
 			var packageField = field(card, 'Package research note', draft.selected.package == null ? draft.suggested.package : draft.selected.package);
 			var groups = [{ value: '', label: 'No product group' }].concat(catalog.product_groups.map(function (groupOption)
 			{
-				var suggested = draft.group_candidates.some(function (candidate) { return Number(candidate.id) === Number(groupOption.id); });
-				return { value: groupOption.id, label: groupOption.name + (suggested ? ' · Open Food Facts suggestion' : '') };
+				var suggested = draft.group_candidates.find(function (candidate) { return Number(candidate.id) === Number(groupOption.id); });
+				return { value: groupOption.id, label: groupOption.name + (suggested ? ' · ' + (sources[suggested.source] || suggested.source) + ' suggestion' : '') };
 			}));
 			var group = select(card, 'Product group', groups, draft.selected.product_group_id);
 			var taxonomy = select(card, 'Food classification', [{ value: '', label: 'Unclassified' }].concat(catalog.taxonomy_leaves.map(function (leafOption)
 			{
-				var suggested = draft.taxonomy_candidates.some(function (candidate) { return candidate.slug === leafOption.slug; });
-				return { value: leafOption.slug, label: leafOption.label + (suggested ? ' · Open Food Facts suggestion' : '') };
+				var suggested = draft.taxonomy_candidates.find(function (candidate) { return candidate.slug === leafOption.slug; });
+				return { value: leafOption.slug, label: leafOption.label + (suggested ? ' · ' + (sources[suggested.source] || suggested.source) + ' suggestion' : '') };
 			})), draft.selected.taxonomy_leaf_slug);
-			var parent = select(card, 'Generic parent', [{ value: '', label: 'No generic parent' }].concat(catalog.generic_parents.map(function (product) { return { value: product.id, label: product.name + ' (#' + product.id + ')' }; })), '');
+			var parent = select(card, 'Generic parent', [{ value: '', label: 'No generic parent' }].concat(catalog.generic_parents.map(function (product) { var candidate = (draft.parent_candidates || []).find(function (item) { return Number(item.id) === Number(product.id); }); return { value: product.id, label: product.name + ' (#' + product.id + ')' + (candidate ? ' · ' + (sources[candidate.source] || candidate.source) + ' suggestion' : '') }; })), draft.selected.parent_product_id);
 			var savedEvidenceId = draft.receipt_evidence ? String(draft.receipt_evidence.receipt_line_id) : '';
 			var evidenceChoices = (options.receipts || []).flatMap(function (receipt)
 			{
@@ -183,13 +184,15 @@
 			if (draft.receipt_evidence && !evidence.value) { var current = node('option', null, 'Receipt #' + draft.receipt_evidence.receipt_id + ' · line #' + savedEvidenceId + ': ' + draft.receipt_evidence.description); current.value = savedEvidenceId; evidence.appendChild(current); evidence.value = savedEvidenceId; }
 			var controls = node('div', 'grocy-ai-product-research-actions');
 			card.appendChild(controls);
-			var initialFields = { name: name.value.trim(), brand: brand.value.trim() || null, package: packageField.value.trim() || null, product_group_id: group.value ? Number(group.value) : null, taxonomy_leaf_slug: taxonomy.value || null };
+			var initialFields = { name: name.value.trim(), brand: brand.value.trim() || null, package: packageField.value.trim() || null, product_group_id: group.value ? Number(group.value) : null, taxonomy_leaf_slug: taxonomy.value || null, parent_product_id: parent.value ? Number(parent.value) : null };
+			var touchedFields = {};
+			[['product_group_id', group], ['taxonomy_leaf_slug', taxonomy], ['parent_product_id', parent]].forEach(function (entry) { entry[1].addEventListener('change', function () { touchedFields[entry[0]] = true; }); });
 			button(controls, 'Save research draft', function ()
 			{
-				var values = { name: name.value.trim(), brand: brand.value.trim() || null, package: packageField.value.trim() || null, product_group_id: group.value ? Number(group.value) : null, taxonomy_leaf_slug: taxonomy.value || null };
+				var values = { name: name.value.trim(), brand: brand.value.trim() || null, package: packageField.value.trim() || null, product_group_id: group.value ? Number(group.value) : null, taxonomy_leaf_slug: taxonomy.value || null, parent_product_id: parent.value ? Number(parent.value) : null };
 				if (!values.name) { message.textContent = 'Enter a product name.'; return; }
 				var changes = {};
-				Object.keys(values).forEach(function (key) { if (values[key] !== initialFields[key]) changes[key] = values[key]; });
+				Object.keys(values).forEach(function (key) { if (values[key] !== initialFields[key] || touchedFields[key]) changes[key] = values[key]; });
 				if (!Object.keys(changes).length) { message.textContent = 'No research draft changes to save.'; return; }
 				mutate(path + '/research', 'PUT', { revision: draft.revision, changes: changes });
 			});
@@ -213,6 +216,35 @@
 			var location = reference('Location', 'locations', options.locationId);
 			var purchaseUnit = reference('Purchase unit', 'quantity_units', null);
 			var stockUnit = reference('Stock unit', 'quantity_units', null);
+			var parentCompatible = true;
+			var compatibilityGeneration = 0;
+			var compatibilityMessage = node('p', 'grocy-ai-product-research-compatibility');
+			compatibilityMessage.setAttribute('role', 'status');
+			card.appendChild(compatibilityMessage);
+			function checkParentUnits()
+			{
+				var generation = ++compatibilityGeneration;
+				parentCompatible = !parent.value || !stockUnit.value;
+				compatibilityMessage.textContent = '';
+				if (parentCompatible) return;
+				compatibilityMessage.textContent = 'Checking generic parent stock unit…';
+				Promise.all([request('/api/objects/products/' + encodeURIComponent(parent.value), 'GET'), request('/api/objects/quantity_unit_conversions', 'GET')]).then(function (results)
+				{
+					if (!active || generation !== compatibilityGeneration) return;
+					var product = results[0], conversions = results[1];
+					if (!product || !Array.isArray(conversions)) throw new Error('Unavailable compatibility check');
+					parentCompatible = Number(product.active) !== 0 && product.parent_product_id == null && (Number(product.qu_id_stock) === Number(stockUnit.value) || conversions.some(function (conversion) { return conversion.product_id == null && Number(conversion.from_qu_id) === Number(product.qu_id_stock) && Number(conversion.to_qu_id) === Number(stockUnit.value) && Number(conversion.factor) > 0; }));
+					compatibilityMessage.textContent = parentCompatible ? 'Generic parent stock unit is compatible.' : 'Generic parent needs a compatible stock unit. Choose another parent or stock unit.';
+				}).catch(function ()
+				{
+					if (!active || generation !== compatibilityGeneration) return;
+					parentCompatible = true;
+					compatibilityMessage.textContent = 'Could not check parent units. Approval will validate compatibility.';
+				});
+			}
+			parent.addEventListener('change', checkParentUnits);
+			stockUnit.addEventListener('change', checkParentUnits);
+			purchaseUnit.addEventListener('change', checkParentUnits);
 			function confirmWrite(kind, summary, body)
 			{
 				if (!window.confirm('Review ' + kind + ': ' + summary + '. Continue?')) return;
@@ -223,6 +255,7 @@
 			{
 				var fields = { name: name.value.trim(), location_id: Number(location.value), qu_id_purchase: Number(purchaseUnit.value), qu_id_stock: Number(stockUnit.value) };
 				if (!fields.name || !fields.location_id || !fields.qu_id_purchase || !fields.qu_id_stock) { message.textContent = 'Enter a name, location, purchase unit, and stock unit first.'; return; }
+				if (!parentCompatible) { message.textContent = 'Review generic parent stock unit compatibility first.'; return; }
 				if (group.value) fields.product_group_id = Number(group.value);
 				if (taxonomy.value) fields.taxonomy_leaf_slug = taxonomy.value;
 				if (parent.value) fields.parent_product_id = Number(parent.value);

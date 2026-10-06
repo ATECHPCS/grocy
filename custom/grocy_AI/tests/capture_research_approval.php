@@ -104,6 +104,11 @@ $countBeforeParent = (int)$db->query('SELECT COUNT(*) FROM products')->fetchColu
 approvalReject(fn() => $approval->ApproveDraft(1, 7, 1, [...$fields, 'name' => 'Child item', 'qu_id_purchase' => 2, 'qu_id_stock' => 2, 'parent_product_id' => $id], 'test'));
 approvalCheck((int)$db->query('SELECT COUNT(*) FROM products')->fetchColumn() === $countBeforeParent, 'parent-only conversion rejection rolls back child');
 $db->exec('INSERT INTO quantity_unit_conversions (from_qu_id, to_qu_id, factor) VALUES (1, 2, 2)');
+// A parent changed after review must be checked against its current stock unit.
+$db->prepare('UPDATE products SET qu_id_stock = 2 WHERE id = ?')->execute([$id]);
+approvalReject(fn() => $approval->ApproveDraft(1, 7, 1, [...$fields, 'name' => 'Stale parent review', 'parent_product_id' => $id], 'test'));
+approvalCheck((int)$db->query('SELECT COUNT(*) FROM products')->fetchColumn() === $countBeforeParent, 'live parent unit mismatch rolls back approval');
+$db->prepare('UPDATE products SET qu_id_stock = 1 WHERE id = ?')->execute([$id]);
 $child = $approval->ApproveDraft(1, 7, 1, [...$fields, 'name' => 'Child item', 'qu_id_purchase' => 2, 'qu_id_stock' => 2, 'parent_product_id' => $id], 'test');
 approvalCheck((int)$db->query('SELECT parent_product_id FROM products WHERE id = ' . (int)$child['product_id'])->fetchColumn() === $id, 'compatible parent accepted');
 $converted = $approval->ApproveDraft(1, 8, 1, [...$fields, 'name' => 'Converted item', 'qu_id_stock' => 2], 'test');

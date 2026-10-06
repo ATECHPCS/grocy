@@ -123,7 +123,7 @@ foreach ($boundedInput['choices']['generic_parents'] as $parent) checkDraft(mb_s
 $db->exec('DELETE FROM products WHERE id >= 1000');
 $db->exec('DELETE FROM product_groups WHERE id >= 1000');
 checkDraft($db->query('SELECT selected_json FROM grocy_ai_capture_research_drafts WHERE line_id = 1')->fetchColumn() === $beforeClassification, 'classification never writes selections');
-checkDraft($review['possible_existing_products'][0]['id'] === 1 && !isset($review['selected']['product_group_id']), 'existing match and group remain unapplied');
+checkDraft($review['possible_existing_products'][0]['id'] === 1 && $review['selected']['product_group_id'] === 1, 'existing match remains unlinked and single group is provisionally preselected');
 $sharedNameClaim = $service->ClaimJobs(1, 'shared-name-test')[0];
 checkDraft($sharedNameClaim['canonical_gtin'] === '00000096385074', 'second job claim is the expected barcode');
 $service->CompleteJob((int)$sharedNameClaim['id'], $sharedNameClaim['lease_token'], ['contract_version' => 1, 'canonical_gtin' => '00000096385074', 'outcome' => 'found', 'name_candidates' => ['Shared Milk'], 'name_candidate_sources' => [['bb-federation', 'openfoodfacts']], 'brand' => null, 'package' => null, 'categories' => [], 'sources' => ['bb-federation', 'openfoodfacts']]);
@@ -166,6 +166,19 @@ rejectDraft(fn() => $receiptService->UpdateAllocation(1, 1, ['capture_line_id' =
 $service->SetReceiptEvidence(1, 1, null, 'tester');
 $allocated = $receiptService->UpdateAllocation(1, 1, ['capture_line_id' => 5, 'product_id' => 2, 'quantity' => 1, 'unit_price' => 1], 'tester');
 checkDraft((int)$allocated['lines'][0]['allocations'][0]['capture_line_id'] === 5, 'allocation succeeds after conflicting evidence is cleared');
+$resultRevision = (int)$db->query('SELECT result_revision FROM grocy_ai_capture_research_drafts WHERE line_id = 1')->fetchColumn();
+$db->prepare("INSERT INTO grocy_ai_capture_classification_jobs (draft_id, result_revision, input_json, state, result_json, lease_hash, lease_expires_at) VALUES (?, ?, '{}', 'suggested', ?, 'test', CURRENT_TIMESTAMP) ON CONFLICT(draft_id, result_revision) DO UPDATE SET state = 'suggested', result_json = excluded.result_json")->execute([$draftId, $resultRevision, json_encode(['status' => 'suggested', 'product_group_id' => 2, 'taxonomy_leaf_slug' => 'produce', 'parent_product_id' => 1])]);
+$aiReview = $service->ReviewForTrip(1)['drafts'][0];
+checkDraft($aiReview['group_candidates'][0]['source'] === 'openai-classification' && $aiReview['taxonomy_candidates'][0]['source'] === 'openai-classification' && $aiReview['parent_candidates'][0]['source'] === 'openai-classification', 'AI suggestions expose independent source-labeled candidates');
+checkDraft($aiReview['selected']['product_group_id'] === 2 && $aiReview['selected']['taxonomy_leaf_slug'] === 'produce', 'AI single candidates preselect untouched fields');
+$cleared = $service->UpdateDraft(1, 1, $aiReview['revision'], ['product_group_id' => null, 'taxonomy_leaf_slug' => null, 'parent_product_id' => null], 'tester');
+checkDraft(!isset($cleared['selected']['product_group_id'], $cleared['selected']['taxonomy_leaf_slug'], $cleared['selected']['parent_product_id']), 'explicit clearing wins over stored classification');
+$db->prepare('UPDATE grocy_ai_capture_classification_jobs SET result_json = ? WHERE draft_id = ? AND result_revision = ?')->execute([json_encode(['status' => 'suggested', 'product_group_id' => 1, 'taxonomy_leaf_slug' => 'produce', 'parent_product_id' => 1]), $draftId, $resultRevision]);
+$lateReview = $service->ReviewForTrip(1)['drafts'][0];
+checkDraft(!isset($lateReview['selected']['product_group_id'], $lateReview['selected']['taxonomy_leaf_slug'], $lateReview['selected']['parent_product_id']), 'late classification never overrides explicit clearing');
+$reviewBefore = $service->ReviewForTrip(1)['drafts'][0];
+$parentCleared = $service->UpdateDraft(1, 1, $reviewBefore['revision'], ['parent_product_id' => null], 'tester');
+checkDraft(isset($parentCleared['user_edits']['parent_product_id']), 'review exposes explicit parent clearing');
 $db->exec("INSERT INTO grocy_ai_capture_trip_cancellations (trip_id, actor) VALUES (1, 'tester')");
 rejectDraft(fn() => $service->UpdateDraft(1, 1, $edited['revision'], ['name' => 'No'], 'tester'));
 rejectDraft(fn() => $service->RetryJob(1, 1, 'tester'));
