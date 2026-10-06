@@ -495,19 +495,29 @@
 			var receiptViews = receiptReadiness ? receiptReadiness.receipts : [];
 			reviewQueue = window.GrocyAICaptureReviewQueue.build(currentLines, receiptViews);
 			var receiptByKey = {};
+			var unresolvedScans = {};
+			var unresolvedReceipts = {};
+			function recordIssue(issue, receiptId)
+			{
+				var capture = /^capture_line_(\d+)_/.exec(issue);
+				var receipt = /^receipt_(\d+)_line_(\d+)_/.exec(issue);
+				var line = /^line_(\d+)_/.exec(issue);
+				if (capture) unresolvedScans[capture[1]] = true;
+				if (receipt) unresolvedReceipts['receipt:' + receipt[1] + ':' + receipt[2]] = true;
+				if (line && receiptId !== undefined) unresolvedReceipts['receipt:' + receiptId + ':' + line[1]] = true;
+			}
+			// Server-scoped issues determine which cards need work; header issues stay in the summary.
+			(receiptReadiness ? receiptReadiness.reasons : []).forEach(function (issue) { recordIssue(issue); });
 			receiptViews.forEach(function (view)
 			{
 				(view.lines || []).forEach(function (line) { receiptByKey['receipt:' + view.receipt.id + ':' + line.id] = line; });
+				(view.issues || []).forEach(function (issue) { recordIssue(issue, view.receipt.id); });
 			});
 			function unresolved(card)
 			{
-				var scan = currentLines.find(function (line) { return line.id === card.scanLineId; });
-				return (scan && Number(scan.selected) !== 0 && scan.status !== 'known') || card.receiptKeys.some(function (key)
-				{
-					var line = receiptByKey[key];
-					return line && (line.decision === 'needs_review' || line.decision === 'include' && (!line.kind || line.kind === 'item') && !(line.allocations || []).some(function (allocation) { return Number(allocation.active) !== 0; }));
-				});
+				return !!unresolvedScans[card.scanLineId] || card.receiptKeys.some(function (key) { return !!unresolvedReceipts[key]; });
 			}
+
 			if (activeReviewKey === null)
 			{
 				var first = reviewQueue.cards.findIndex(unresolved);
@@ -534,7 +544,7 @@
 				var item = scan ? renderLine(scan) : element('li', 'list-group-item');
 				item.classList.add('grocy-ai-review-card');
 				item.setAttribute('data-review-key', card.key);
-				item.setAttribute('data-review-status', unresolved(card) ? 'Needs review' : scan ? (Number(scan.selected) === 0 ? 'Not included' : 'Known product') : receiptByKey[card.key].decision === 'ignore' ? 'Ignored' : 'Included');
+				item.setAttribute('data-review-status', unresolved(card) ? 'Needs review' : scan ? (Number(scan.selected) === 0 ? 'Not included' : scan.status === 'known' ? 'Known product' : 'Needs product') : receiptByKey[card.key].decision === 'ignore' ? 'Ignored' : 'Included');
 				var heading = element('h3', 'grocy-ai-review-heading', scan ? 'Scan #' + scan.seq : (card.kind === 'adjustment' ? 'Receipt adjustment' : 'Receipt item') + ' · #' + card.receiptId);
 				heading.tabIndex = -1; item.insertBefore(heading, item.firstChild);
 				hosts[card.key] = item; linesList.appendChild(item);

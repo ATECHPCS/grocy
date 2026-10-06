@@ -868,7 +868,7 @@ test('@mobilequeue late receipt save cannot replace a switched trip', async ({ p
 	let release;
 	await page.route('**/receipts/1/lines/1', async route => { await new Promise(resolve => release = resolve); await json(route, {}); });
 	let releaseTrip;
-	await page.route('**/trips/8/receipt-readiness', async route => { await new Promise(resolve => releaseTrip = resolve); await json(route, { ready: false, reasons: ['no_receipts'], receipts: [] }); });
+	await page.route('**/trips/8/receipt-readiness', async route => { await new Promise(resolve => releaseTrip = resolve); await json(route, { ready: false, reasons: ['no_receipts', 'capture_line_82_product_review_required'], receipts: [] }); });
 	await page.goto('/fixtures/capture-review.html');
 	await page.locator('[data-trip-id="7"]').click();
 	await page.getByLabel('Description', { exact: true }).fill('Edited old receipt');
@@ -962,4 +962,33 @@ test('@mobilequeue only confirmed deletion clears removed scan research edits', 
 	await page.getByRole('button', { name: 'Delete', exact: true }).click();
 	await expect(page.locator('.grocy-ai-review-card')).toHaveCount(0);
 	await expect(page.locator('#grocyai-capture-review-commit')).toBeEnabled();
+});
+
+for (const scenario of [
+	{ name: 'capture quantity mismatch', reasons: ['capture_line_202_quantity_unmatched'], quantity: 2 },
+	{ name: 'capture product review', reasons: ['capture_line_202_product_review_required'] },
+	{ name: 'excluded allocated scan', reasons: ['capture_line_202_unselected_allocated'], selected: 0 },
+	{ name: 'receipt allocation conflict', reasons: ['receipt_9_line_20_product_conflict'] },
+	{ name: 'receipt local store issue', reasons: [], issues: ['line_20_store_conflict'] },
+	{ name: 'shared receipt allocation issue', reasons: ['receipt_9_line_20_quantity_overallocated'], shared: true }
+]) test('@readinessqueue selects the server-conflicted card: ' + scenario.name, async ({ page }) =>
+{
+	const lines = [makeLine({ id: 101, seq: 1, selected: 1, status: 'known', resolved_product_id: 101 }), makeLine({ id: 202, seq: 2, selected: scenario.selected ?? 1, quantity: scenario.quantity || 1, status: 'known', resolved_product_id: 102 })];
+	if (scenario.shared) lines.push(makeLine({ id: 303, seq: 3, selected: 1, status: 'known', resolved_product_id: 102 }));
+	await installReviewApi(page, { lines });
+	const receiptLines = [10, 20].map((id, index) => ({ id, kind: 'item', description: 'Receipt item ' + id, decision: 'include', quantity: 1, line_total: 2, allocations: [{ id, active: 1, capture_line_id: lines[index].id, product_id: lines[index].resolved_product_id, quantity: 1, unit_price: 2 }] }));
+	if (scenario.shared) receiptLines[1].allocations.push({ id: 21, active: 1, capture_line_id: 303, product_id: 102, quantity: 1, unit_price: 2 });
+	await page.route('**/trips/7/receipt-readiness', route => json(route, { ready: false, reasons: ['receipt_9_unfinished', 'receipt_9_total_difference'].concat(scenario.reasons), receipts: [{ receipt: { id: 9, status: 'needs_review', merchant: 'Market' }, lines: receiptLines, totals: { entered_total: 4, printed_total: 5, difference: 1 }, issues: ['total_difference'].concat(scenario.issues || []) }] }));
+	await page.goto('/fixtures/capture-review.html');
+	await page.locator('#grocyai-capture-review-trips button').first().click();
+	await expect(page.locator('.grocy-ai-review-card:visible')).toHaveAttribute('data-review-key', 'scan:202');
+	await expect(page.locator('#grocyai-review-announcement')).toContainText('Needs review');
+	await expect(page.locator('[data-review-key="scan:101"]')).toHaveAttribute('data-review-status', 'Known product');
+	await expect(page.locator('#grocyai-capture-review-commit')).toBeDisabled();
+	if (scenario.shared)
+	{
+		await page.getByRole('button', { name: 'Review shared receipt line: Receipt item 20' }).click();
+		await expect(page.locator('.grocy-ai-review-card:visible')).toHaveAttribute('data-review-key', 'receipt:9:20');
+		await expect(page.locator('#grocyai-review-announcement')).toContainText('Needs review');
+	}
 });
