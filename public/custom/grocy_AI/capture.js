@@ -335,26 +335,10 @@
 			});
 		}
 
-		function scanBucket(barcode)
-		{
-			var normalized = String(barcode).replace(/[ -]/g, '');
-			return /^(?:[0-9]{8}|[0-9]{12,14})$/.test(normalized) ? normalized.padStart(14, '0') : normalized;
-		}
-
-		function matchingLines(haystack, barcode)
-		{
-			var normalized = String(barcode).replace(/[ -]/g, '');
-			var bucket = scanBucket(barcode);
-			return haystack.filter(function (line)
-			{
-				return String(line.canonical_gtin || '') === bucket || String(line.scanned_barcode) === normalized;
-			});
-		}
-
-		function submitBarcode(rawBarcode, reconcileOnFailure)
+		function submitBarcode(rawBarcode, failClosed)
 		{
 			var barcode = String(rawBarcode === undefined || rawBarcode === null ? '' : rawBarcode).trim();
-			if (barcode === '' || currentTripId === null || finishing || (cameraSubmitting && !reconcileOnFailure))
+			if (barcode === '' || currentTripId === null || finishing || (cameraSubmitting && !failClosed))
 			{
 				return Promise.resolve(null);
 			}
@@ -377,7 +361,7 @@
 			}).catch(function (error)
 			{
 				setStatus(copy.scanError);
-				if (reconcileOnFailure) throw error;
+				if (failClosed) throw error;
 				return null;
 			}).finally(function ()
 			{
@@ -385,27 +369,7 @@
 			});
 		}
 
-		function reconcileCameraRead(tripId, barcode, before)
-		{
-			return fetchJson(tripsEndpoint + '/' + encodeURIComponent(String(tripId)), { method: 'GET' }).then(function (payload)
-			{
-				if (!payload || !payload.trip || String(payload.trip.id) !== String(tripId) || payload.trip.status !== 'open'
-					|| !Array.isArray(payload.lines) || payload.lines.some(function (line)
-					{
-						return !isLinePayload(line) || String(line.trip_id) !== String(tripId);
-					})) throw new Error('invalid_reconciliation');
-				var matches = matchingLines(payload.lines, barcode);
-				if (matches.length > 1) throw new Error('ambiguous_reconciliation');
-				var after = matches[0] || null;
-				var beforeQuantity = before ? Number(before.quantity) : 0;
-				if (!Number.isFinite(beforeQuantity) || beforeQuantity < 0) throw new Error('invalid_previous_quantity');
-				if ((!before && !after) || (before && after && String(after.id) === String(before.id)
-					&& Number(after.quantity) === beforeQuantity)) return 'unchanged';
-				throw new Error('ambiguous_reconciliation');
-			}).catch(function () { return 'unverified'; });
-		}
-
-		function lockCameraAfterUnverifiedScan()
+		function lockCameraAfterFailedScan()
 		{
 			cameraLocked = true;
 			if (cameraSaveButton) cameraSaveButton.disabled = true;
@@ -462,15 +426,6 @@
 			if (newTripButton) newTripButton.disabled = true;
 			if (addButton) addButton.disabled = true;
 			if (input) input.disabled = true;
-			var tripId = currentTripId;
-			var matches = matchingLines(lines, barcode);
-			var before = matches.length === 1 ? matches[0] : null;
-			if (matches.length > 1)
-			{
-				cameraSubmitting = false;
-				lockCameraAfterUnverifiedScan();
-				return;
-			}
 			submitBarcode(barcode, true).then(function (line)
 			{
 				if (line)
@@ -478,13 +433,7 @@
 					pendingCameraReads.shift();
 					showNextCameraRead();
 				}
-			}).catch(function ()
-			{
-				return reconcileCameraRead(tripId, barcode, before).then(function (outcome)
-				{
-					if (outcome === 'unverified') lockCameraAfterUnverifiedScan();
-				});
-			}).finally(function ()
+			}).catch(function () { lockCameraAfterFailedScan(); }).finally(function ()
 			{
 				cameraSubmitting = false;
 				if (!cameraLocked)

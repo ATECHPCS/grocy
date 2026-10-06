@@ -103,6 +103,6 @@ OpenAI UPC fallback review accepts the companion v2 evidence contract while reta
 
 The capture and review views show each saved scan's original UPC. Camera reads require an explicit confirm or edit before capture, while typed entry keeps its direct Add action. Both views use asset token `2.6.8`; the customization marker advances to `ATECHPCS-grocy_AI-30` so the production image invalidates cached Blade views.
 
-If a camera scan POST loses its response, capture reloads the open trip without cache and compares that UPC's quantity with the quantity before submission. Only unchanged quantity permits retry. Any quantity change, unavailable trip, or ambiguous read locks scanning until page reload and review, avoiding a duplicate purchase quantity. Typed Add retains its existing submission path and is paused while a camera save is in flight.
+Any failed camera scan POST, including a lost or malformed response, locks capture until page reload and manual trip review. The page never infers whether the POST saved the scan and offers no immediate retry, avoiding an accidental duplicate purchase quantity. Typed Add retains its existing submission path and is paused while a camera save is in flight.
 
 Receipt scan suggestions ignore one leading six-digit store item code when comparing OCR receipt descriptions with product names. The stored OCR description and product names retain their original text, and the suggestion still requires user pairing and allocation confirmation.
