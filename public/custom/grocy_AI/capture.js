@@ -37,6 +37,8 @@
 		finishError: 'Could not finish this trip. Your scans are saved; try again.',
 		finishPending: 'Wait for the current scan to finish, then try again.',
 		cameraPending: 'Confirm or cancel the scanned UPC before finishing.',
+		cameraUnverified: 'Scan outcome could not be verified. Reload this page and review the trip before scanning again.',
+		cameraRecovered: 'Scan saved. The item is confirmed in this trip.',
 		barcode: 'UPC',
 		empty: 'No items yet. Scan or enter a GTIN above.',
 		quantity: 'Quantity'
@@ -133,6 +135,8 @@
 			finishError: d.labelFinishError || DEFAULT_COPY.finishError,
 			finishPending: d.labelFinishPending || DEFAULT_COPY.finishPending,
 			cameraPending: d.labelCameraPending || DEFAULT_COPY.cameraPending,
+			cameraUnverified: d.labelCameraUnverified || DEFAULT_COPY.cameraUnverified,
+			cameraRecovered: d.labelCameraRecovered || DEFAULT_COPY.cameraRecovered,
 			barcode: d.labelBarcode || DEFAULT_COPY.barcode,
 			empty: d.labelEmpty || DEFAULT_COPY.empty,
 			quantity: d.labelQuantity || DEFAULT_COPY.quantity
@@ -173,6 +177,7 @@
 		var finishing = false;
 		var pendingCameraReads = [];
 		var cameraSubmitting = false;
+		var cameraLocked = false;
 
 		function setStatus(message)
 		{
@@ -267,7 +272,7 @@
 
 		function startTrip()
 		{
-			if (finishing)
+			if (finishing || cameraLocked || cameraSubmitting)
 			{
 				return Promise.resolve(null);
 			}
@@ -332,7 +337,23 @@
 			});
 		}
 
-		function submitBarcode(rawBarcode)
+		function scanBucket(barcode)
+		{
+			var normalized = String(barcode).replace(/[ -]/g, '');
+			return /^(?:[0-9]{8}|[0-9]{12,14})$/.test(normalized) ? normalized.padStart(14, '0') : normalized;
+		}
+
+		function matchingLines(haystack, barcode)
+		{
+			var normalized = String(barcode).replace(/[ -]/g, '');
+			var bucket = scanBucket(barcode);
+			return haystack.filter(function (line)
+			{
+				return String(line.canonical_gtin || '') === bucket || String(line.scanned_barcode) === normalized;
+			});
+		}
+
+		function submitBarcode(rawBarcode, reconcileOnFailure)
 		{
 			var barcode = String(rawBarcode === undefined || rawBarcode === null ? '' : rawBarcode).trim();
 			if (barcode === '' || currentTripId === null || finishing)
@@ -345,8 +366,7 @@
 			{
 				if (!isLinePayload(line))
 				{
-					setStatus(copy.scanError);
-					return null;
+					throw new Error('invalid_scan_payload');
 				}
 				lines = upsertLines(lines, line);
 				render();
@@ -356,14 +376,56 @@
 				}
 				clearInput();
 				return line;
-			}).catch(function ()
+			}).catch(function (error)
 			{
 				setStatus(copy.scanError);
+				if (reconcileOnFailure) throw error;
 				return null;
 			}).finally(function ()
 			{
 				pendingScans--;
 			});
+		}
+
+		function reconcileCameraRead(tripId, barcode, before)
+		{
+			return fetchJson(tripsEndpoint + '/' + encodeURIComponent(String(tripId)), { method: 'GET' }).then(function (payload)
+			{
+				if (!payload || !payload.trip || String(payload.trip.id) !== String(tripId) || payload.trip.status !== 'open'
+					|| !Array.isArray(payload.lines) || payload.lines.some(function (line)
+					{
+						return !isLinePayload(line) || String(line.trip_id) !== String(tripId);
+					})) throw new Error('invalid_reconciliation');
+				var matches = matchingLines(payload.lines, barcode);
+				if (matches.length > 1) throw new Error('ambiguous_reconciliation');
+				var after = matches[0] || null;
+				var beforeQuantity = before ? Number(before.quantity) : 0;
+				if (!Number.isFinite(beforeQuantity) || beforeQuantity < 0) throw new Error('invalid_previous_quantity');
+				if (after && Number.isFinite(Number(after.quantity))
+					&& (!before || String(after.id) === String(before.id))
+					&& Number(after.quantity) === beforeQuantity + 1)
+				{
+					lines = payload.lines;
+					render();
+					if (after.status === 'known') resolveProductName(after.resolved_product_id);
+					return 'saved';
+				}
+				if ((!before && !after) || (before && after && String(after.id) === String(before.id)
+					&& Number(after.quantity) === beforeQuantity)) return 'unchanged';
+				throw new Error('ambiguous_reconciliation');
+			}).catch(function () { return 'unverified'; });
+		}
+
+		function lockCameraAfterUnverifiedScan()
+		{
+			cameraLocked = true;
+			if (cameraSaveButton) cameraSaveButton.disabled = true;
+			if (cameraCancelButton) cameraCancelButton.disabled = true;
+			if (newTripButton) newTripButton.disabled = true;
+			if (addButton) addButton.disabled = true;
+			if (input) input.disabled = true;
+			if (cameraInput) cameraInput.disabled = true;
+			setStatus(copy.cameraUnverified);
 		}
 
 		function showNextCameraRead()
@@ -384,7 +446,7 @@
 
 		function finishCameraRead(save)
 		{
-			if (pendingCameraReads.length === 0 || cameraSubmitting)
+			if (pendingCameraReads.length === 0 || cameraSubmitting || cameraLocked)
 			{
 				return;
 			}
@@ -403,18 +465,44 @@
 			cameraSubmitting = true;
 			if (cameraSaveButton) cameraSaveButton.disabled = true;
 			if (cameraCancelButton) cameraCancelButton.disabled = true;
-			submitBarcode(barcode).then(function (line)
+			if (newTripButton) newTripButton.disabled = true;
+			var tripId = currentTripId;
+			var matches = matchingLines(lines, barcode);
+			var before = matches.length === 1 ? matches[0] : null;
+			if (matches.length > 1)
+			{
+				cameraSubmitting = false;
+				lockCameraAfterUnverifiedScan();
+				return;
+			}
+			submitBarcode(barcode, true).then(function (line)
 			{
 				if (line)
 				{
 					pendingCameraReads.shift();
 					showNextCameraRead();
 				}
+			}).catch(function ()
+			{
+				return reconcileCameraRead(tripId, barcode, before).then(function (outcome)
+				{
+					if (outcome === 'saved')
+					{
+						pendingCameraReads.shift();
+						showNextCameraRead();
+						setStatus(copy.cameraRecovered);
+					}
+					else if (outcome === 'unverified') lockCameraAfterUnverifiedScan();
+				});
 			}).finally(function ()
 			{
 				cameraSubmitting = false;
-				if (cameraSaveButton) cameraSaveButton.disabled = false;
-				if (cameraCancelButton) cameraCancelButton.disabled = false;
+				if (!cameraLocked)
+				{
+					if (cameraSaveButton) cameraSaveButton.disabled = false;
+					if (cameraCancelButton) cameraCancelButton.disabled = false;
+					if (newTripButton) newTripButton.disabled = false;
+				}
 			});
 		}
 
@@ -422,6 +510,11 @@
 		{
 			if (currentTripId === null || finishing)
 			{
+				return Promise.resolve(null);
+			}
+			if (cameraLocked)
+			{
+				setStatus(copy.cameraUnverified);
 				return Promise.resolve(null);
 			}
 			if (pendingScans > 0)
@@ -523,7 +616,7 @@
 		{
 			window.$(document).on('Grocy.BarcodeScanned', function (event, barcode, target)
 			{
-				if (target !== 'grocyai-capture-barcode')
+				if (target !== 'grocyai-capture-barcode' || cameraLocked)
 				{
 					return;
 				}
