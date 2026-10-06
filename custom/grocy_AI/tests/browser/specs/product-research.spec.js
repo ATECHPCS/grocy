@@ -376,3 +376,36 @@ test('parent stock unit mismatch blocks confirmation before approval', async ({ 
 	await page.getByRole('button', { name: 'Approve new product' }).click();
 	expect(data.writes.some(w => w.path.endsWith('/approve'))).toBe(false);
 });
+
+for (const state of ['pending', 'queued', 'leased'])
+{
+	test('classification ' + state + ' work remains visible with manual controls', async ({ page }) =>
+	{
+		const data = await setup(page);
+		data.draft.classification = { state, result: null };
+		await page.locator('#grocyai-capture-review-trips button').click();
+		const status = page.locator('.grocy-ai-product-research-classification');
+		await expect(status).toBeVisible();
+		await expect(status).toContainText(state === 'leased' ? 'in progress' : 'queued');
+		await expect(status).not.toContainText('unavailable');
+		await expect(page.getByLabel('Product group')).toBeEnabled();
+		await expect(page.getByLabel('Food classification')).toBeEnabled();
+		await expect(page.getByLabel('Generic parent')).toBeEnabled();
+		expect(data.writes).toHaveLength(0);
+	});
+}
+
+test('explicitly cleared brand and package stay blank after draft reload', async ({ page }) =>
+{
+	const data = await setup(page);
+	data.draft.suggested.brand = 'Provider brand';
+	data.draft.suggested.package = '1 L';
+	data.draft.selected.brand = null;
+	delete data.draft.selected.package;
+	data.draft.user_edits = { brand: true, package: true };
+	await page.locator('#grocyai-capture-review-trips button').click();
+	await expect(page.getByLabel('Brand research note')).toHaveValue('');
+	await expect(page.getByLabel('Package research note')).toHaveValue('');
+	await expect(page.getByText('Provider brand — Open Food Facts')).toBeVisible();
+	expect(data.writes).toHaveLength(0);
+});

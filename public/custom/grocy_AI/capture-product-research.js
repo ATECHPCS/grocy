@@ -152,13 +152,13 @@
 			}
 			if (draft.receipt_evidence) card.appendChild(node('p', null, 'Receipt evidence: ' + draft.receipt_evidence.description + ' (Receipt OCR; supporting evidence)'));
 			if (draft.suggested && draft.suggested.categories && draft.suggested.categories.length) card.appendChild(node('p', 'text-muted', 'Open Food Facts categories: ' + draft.suggested.categories.join(', ')));
-			if (draft.classification) card.appendChild(node('p', 'grocy-ai-product-research-classification', draft.classification.state === 'suggested' ? 'Classification suggestions ready' : draft.classification.state === 'leased' ? 'Classification in progress; manual choices are available.' : draft.classification.state === 'not_needed' ? 'Open Food Facts classification suggestions ready' : 'Classification unavailable; choose manually.'));
+			if (draft.classification) card.appendChild(node('p', 'grocy-ai-product-research-classification', draft.classification.state === 'suggested' ? 'Classification suggestions ready' : ['pending', 'queued'].indexOf(draft.classification.state) !== -1 ? 'Classification queued; manual choices are available.' : draft.classification.state === 'leased' ? 'Classification in progress; manual choices are available.' : draft.classification.state === 'not_needed' ? 'Open Food Facts classification suggestions ready' : 'Classification unavailable; choose manually.'));
 			var name = field(card, 'Proposed name', draft.selected.name);
 			card.appendChild(node('p', 'grocy-ai-product-research-notes text-muted', 'Brand and package are research notes only; they are not saved to the Grocy product by this approval. Save research draft stores your corrections for review.'));
 			if (draft.suggested && draft.suggested.brand) card.appendChild(node('p', 'grocy-ai-product-research-brand-source', draft.suggested.brand + ' — Open Food Facts'));
 			if (draft.suggested && draft.suggested.package) card.appendChild(node('p', 'grocy-ai-product-research-package-source', draft.suggested.package + ' — Open Food Facts'));
-			var brand = field(card, 'Brand research note', draft.selected.brand == null ? draft.suggested.brand : draft.selected.brand);
-			var packageField = field(card, 'Package research note', draft.selected.package == null ? draft.suggested.package : draft.selected.package);
+			var brand = field(card, 'Brand research note', draft.selected.brand == null && !(draft.user_edits || {}).brand ? draft.suggested.brand : draft.selected.brand);
+			var packageField = field(card, 'Package research note', draft.selected.package == null && !(draft.user_edits || {}).package ? draft.suggested.package : draft.selected.package);
 			var groups = [{ value: '', label: 'No product group' }].concat(catalog.product_groups.map(function (groupOption)
 			{
 				var suggested = draft.group_candidates.find(function (candidate) { return Number(candidate.id) === Number(groupOption.id); });

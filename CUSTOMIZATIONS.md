@@ -106,3 +106,9 @@ The capture and review views show each saved scan's original UPC. Camera reads r
 Any failed camera scan POST, including a lost or malformed response, locks capture until page reload and manual trip review. The page never infers whether the POST saved the scan and offers no immediate retry, avoiding an accidental duplicate purchase quantity. Typed Add retains its existing submission path and is paused while a camera save is in flight.
 
 Receipt scan suggestions ignore one leading six-digit store item code when comparing OCR receipt descriptions with product names. The stored OCR description and product names retain their original text, and the suggestion still requires user pairing and allocation confirmation.
+
+## Capture classification suggestions
+
+The additional upstream configuration default is `AI_CAPTURE_CLASSIFICATION_DAILY_LIMIT=20` in `config-dist.php` (environment override `GROCY_AI_CAPTURE_CLASSIFICATION_DAILY_LIMIT`). It limits append-only UTC-day reservations independently of capture web search. The module registers worker-only `POST /api/grocy-ai/capture/research/classifications/claim`, `POST /api/grocy-ai/capture/research/classifications/{jobId}/reserve`, `POST /api/grocy-ai/capture/research/classifications/{jobId}/complete`, and `POST /api/grocy-ai/capture/research/classifications/{jobId}/fail`; each requires explicit Grocy API credentials and the private worker key. Eligible unclaimed work is exposed as pending in the review DTO. Suggestions and manual choices remain subject to explicit approval and normal persistence checks.
+
+The purchase review asset token advances to `2.6.9`, and `custom/grocy_AI/version.json` advances to `ATECHPCS-grocy_AI-31` so the image overlay invalidates persisted route/Blade caches and phones request the updated classification UI. The capture page retains token `2.6.8` because its assets did not change.

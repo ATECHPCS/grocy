@@ -363,6 +363,7 @@ class GrocyAiCaptureResearchService
 		$classificationQuery->execute([$draft['id'], $draft['result_revision']]);
 		$classification = $classificationQuery->fetch(PDO::FETCH_ASSOC);
 		if ($classification !== false) $classification = ['state' => $classification['state'], 'result_revision' => (int)$classification['result_revision'], 'source' => 'openai-classification', 'result' => $classification['result_json'] === null ? null : json_decode($classification['result_json'], true, 512, JSON_THROW_ON_ERROR)];
+		elseif ($this->ClassificationInput((int)$draft['id']) !== null) $classification = ['state' => 'pending', 'result_revision' => (int)$draft['result_revision'], 'source' => null, 'result' => null];
 		$edits = json_decode($draft['user_edits_json'], true, 512, JSON_THROW_ON_ERROR);
 		$candidates = ['product_group_id' => $this->GroupCandidates($suggested), 'taxonomy_leaf_slug' => $this->TaxonomyCandidates($suggested), 'parent_product_id' => $this->ParentCandidates($draft, $selected, $suggested)];
 		$catalog = ($classification['state'] ?? null) === 'suggested' ? $this->ReviewOptions() : ['product_groups' => [], 'taxonomy_leaves' => [], 'generic_parents' => []];
