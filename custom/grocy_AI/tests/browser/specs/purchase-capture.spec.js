@@ -479,22 +479,21 @@ test.describe('purchase capture — scan loop', function ()
 		expect(state.scans).toBe(2);
 	});
 
-	test('@cap a lost response after the server saved a camera scan does not offer a duplicate retry', async function ({ page })
+	test('@cap a lost response with a new saved scan locks capture for review', async function ({ page })
 	{
 		const state = await installScanApi(page, { savedResponseFailures: 1 });
 		await page.goto('/fixtures/capture.html');
 		await expect(page.locator('#grocyai-capture-status')).toContainText('Trip started');
 		await page.evaluate(function (gtin) { window.Grocy.BarcodeScanned(gtin, 'grocyai-capture-barcode'); }, KNOWN_GTIN);
 		await page.locator('#grocyai-capture-camera-save-button').click();
-		await expect(page.locator('.grocy-ai-capture-line-barcode')).toHaveText('UPC ' + KNOWN_GTIN);
-		await expect(page.locator('.grocy-ai-capture-line-quantity')).toHaveText('× 1');
-		await expect(page.locator('#grocyai-capture-camera-confirmation')).toBeHidden();
-		await expect(page.locator('#grocyai-capture-status')).toContainText('Scan saved');
+		await expect(page.locator('#grocyai-capture-camera-confirmation')).toBeVisible();
+		await expect(page.locator('#grocyai-capture-camera-save-button')).toBeDisabled();
+		await expect(page.locator('#grocyai-capture-status')).toContainText('Reload this page');
 		expect(state.scans).toBe(1);
 		expect(state.byBarcode[KNOWN_GTIN].quantity).toBe(1);
 	});
 
-	test('@cap a lost camera response reconciles one increment to an existing scan', async function ({ page })
+	test('@cap a lost camera response with one increment to an existing scan remains ambiguous', async function ({ page })
 	{
 		const state = await installScanApi(page);
 		await page.goto('/fixtures/capture.html');
@@ -505,8 +504,10 @@ test.describe('purchase capture — scan loop', function ()
 		state.savedResponseFailures = 1;
 		await page.evaluate(function (gtin) { window.Grocy.BarcodeScanned(gtin, 'grocyai-capture-barcode'); }, KNOWN_GTIN);
 		await page.locator('#grocyai-capture-camera-save-button').click();
-		await expect(page.locator('.grocy-ai-capture-line-quantity')).toHaveText('× 2');
-		await expect(page.locator('#grocyai-capture-camera-confirmation')).toBeHidden();
+		await expect(page.locator('#grocyai-capture-camera-confirmation')).toBeVisible();
+		await expect(page.locator('#grocyai-capture-camera-save-button')).toBeDisabled();
+		await expect(page.locator('#grocyai-capture-status')).toContainText('Reload this page');
+		expect(state.byBarcode[KNOWN_GTIN].quantity).toBe(2);
 		expect(state.scans).toBe(2);
 	});
 
@@ -534,6 +535,16 @@ test.describe('purchase capture — scan loop', function ()
 		await page.locator('#grocyai-capture-camera-save-button').click();
 		await expect.poll(function () { return state.scans; }).toBe(1);
 		await expect(page.locator('#grocyai-capture-new-trip-button')).toBeDisabled();
+		await expect(page.locator('#grocyai-capture-add-button')).toBeDisabled();
+		await expect(page.locator('#grocyai-capture-barcode')).toBeDisabled();
+		await page.evaluate(function (gtin)
+		{
+			const input = document.getElementById('grocyai-capture-barcode');
+			input.value = gtin;
+			input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+		}, KNOWN_GTIN);
+		await page.evaluate(function (gtin) { window.Grocy.BarcodeScanned(gtin, 'grocyai-capture-barcode'); }, UNKNOWN_GTIN);
+		expect(state.scans).toBe(1);
 		state.releaseScan();
 		await expect(page.locator('#grocyai-capture-camera-confirmation')).toBeVisible();
 		expect(state.tripCreations).toBe(1);

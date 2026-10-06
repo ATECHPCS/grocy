@@ -38,7 +38,6 @@
 		finishPending: 'Wait for the current scan to finish, then try again.',
 		cameraPending: 'Confirm or cancel the scanned UPC before finishing.',
 		cameraUnverified: 'Scan outcome could not be verified. Reload this page and review the trip before scanning again.',
-		cameraRecovered: 'Scan saved. The item is confirmed in this trip.',
 		barcode: 'UPC',
 		empty: 'No items yet. Scan or enter a GTIN above.',
 		quantity: 'Quantity'
@@ -136,7 +135,6 @@
 			finishPending: d.labelFinishPending || DEFAULT_COPY.finishPending,
 			cameraPending: d.labelCameraPending || DEFAULT_COPY.cameraPending,
 			cameraUnverified: d.labelCameraUnverified || DEFAULT_COPY.cameraUnverified,
-			cameraRecovered: d.labelCameraRecovered || DEFAULT_COPY.cameraRecovered,
 			barcode: d.labelBarcode || DEFAULT_COPY.barcode,
 			empty: d.labelEmpty || DEFAULT_COPY.empty,
 			quantity: d.labelQuantity || DEFAULT_COPY.quantity
@@ -356,7 +354,7 @@
 		function submitBarcode(rawBarcode, reconcileOnFailure)
 		{
 			var barcode = String(rawBarcode === undefined || rawBarcode === null ? '' : rawBarcode).trim();
-			if (barcode === '' || currentTripId === null || finishing)
+			if (barcode === '' || currentTripId === null || finishing || (cameraSubmitting && !reconcileOnFailure))
 			{
 				return Promise.resolve(null);
 			}
@@ -401,15 +399,6 @@
 				var after = matches[0] || null;
 				var beforeQuantity = before ? Number(before.quantity) : 0;
 				if (!Number.isFinite(beforeQuantity) || beforeQuantity < 0) throw new Error('invalid_previous_quantity');
-				if (after && Number.isFinite(Number(after.quantity))
-					&& (!before || String(after.id) === String(before.id))
-					&& Number(after.quantity) === beforeQuantity + 1)
-				{
-					lines = payload.lines;
-					render();
-					if (after.status === 'known') resolveProductName(after.resolved_product_id);
-					return 'saved';
-				}
 				if ((!before && !after) || (before && after && String(after.id) === String(before.id)
 					&& Number(after.quantity) === beforeQuantity)) return 'unchanged';
 				throw new Error('ambiguous_reconciliation');
@@ -456,6 +445,11 @@
 				if (cameraInput) cameraInput.focus();
 				return;
 			}
+			if (save && pendingScans > 0)
+			{
+				setStatus(copy.finishPending);
+				return;
+			}
 			if (!save)
 			{
 				pendingCameraReads.shift();
@@ -466,6 +460,8 @@
 			if (cameraSaveButton) cameraSaveButton.disabled = true;
 			if (cameraCancelButton) cameraCancelButton.disabled = true;
 			if (newTripButton) newTripButton.disabled = true;
+			if (addButton) addButton.disabled = true;
+			if (input) input.disabled = true;
 			var tripId = currentTripId;
 			var matches = matchingLines(lines, barcode);
 			var before = matches.length === 1 ? matches[0] : null;
@@ -486,13 +482,7 @@
 			{
 				return reconcileCameraRead(tripId, barcode, before).then(function (outcome)
 				{
-					if (outcome === 'saved')
-					{
-						pendingCameraReads.shift();
-						showNextCameraRead();
-						setStatus(copy.cameraRecovered);
-					}
-					else if (outcome === 'unverified') lockCameraAfterUnverifiedScan();
+					if (outcome === 'unverified') lockCameraAfterUnverifiedScan();
 				});
 			}).finally(function ()
 			{
@@ -502,6 +492,8 @@
 					if (cameraSaveButton) cameraSaveButton.disabled = false;
 					if (cameraCancelButton) cameraCancelButton.disabled = false;
 					if (newTripButton) newTripButton.disabled = false;
+					if (addButton) addButton.disabled = false;
+					if (input) input.disabled = false;
 				}
 			});
 		}

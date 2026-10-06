@@ -51,7 +51,6 @@ $grocyAiAssetVersion = '2.6.8';
 	data-label-finish-pending="{{ $__t('Wait for the current scan to finish, then try again.') }}"
 	data-label-camera-pending="{{ $__t('Confirm or cancel the scanned UPC before finishing.') }}"
 	data-label-camera-unverified="{{ $__t('Scan outcome could not be verified. Reload this page and review the trip before scanning again.') }}"
-	data-label-camera-recovered="{{ $__t('Scan saved. The item is confirmed in this trip.') }}"
 	data-label-barcode="{{ $__t('UPC') }}"
 	data-label-empty="{{ $__t('No items yet. Scan or enter a GTIN above.') }}"
 	data-label-quantity="{{ $__t('Quantity') }}">
