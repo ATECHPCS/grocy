@@ -58,6 +58,21 @@ approvalReject(fn() => $approval->ApproveDraft(1, 1, $revision, [...$fields, 'lo
 approvalReject(fn() => $approval->ApproveDraft(1, 1, $revision, [...$fields, 'qu_id_stock' => 99], 'test'));
 approvalReject(fn() => $approval->ApproveDraft(1, 1, $revision, [...$fields, 'product_group_id' => 99], 'test'));
 approvalReject(fn() => $approval->ApproveDraft(1, 1, $revision, [...$fields, 'parent_product_id' => 99], 'test'));
+// Rejected unit pairs must leave every native table unchanged.
+$nativeSnapshot = fn() => array_map(fn($table) => $db->query('SELECT * FROM ' . $table . ' ORDER BY id')->fetchAll(PDO::FETCH_ASSOC), ['products', 'product_barcodes', 'quantity_units', 'quantity_unit_conversions', 'stock_log']);
+$db->exec('INSERT INTO quantity_units VALUES (3, 0)');
+$beforeRejectedUnits = $nativeSnapshot();
+foreach (['qu_id_purchase', 'qu_id_stock'] as $unitField)
+{
+	approvalReject(fn() => $approval->ApproveDraft(1, 1, $revision, [...$fields, $unitField => 3], 'test'));
+	approvalReject(fn() => $approval->ApproveDraft(1, 1, $revision, [...$fields, $unitField => null], 'test'));
+	approvalCheck($nativeSnapshot() === $beforeRejectedUnits, 'inactive or cleared units leave native rows unchanged');
+}
+$db->exec('INSERT INTO quantity_unit_conversions (id, from_qu_id, to_qu_id, factor) VALUES (90, 2, 1, 2), (91, 1, 2, 0)');
+$beforeRejectedUnits = $nativeSnapshot();
+approvalReject(fn() => $approval->ApproveDraft(1, 1, $revision, [...$fields, 'qu_id_stock' => 2], 'test'));
+approvalCheck($nativeSnapshot() === $beforeRejectedUnits, 'reverse or nonpositive conversion leaves native rows unchanged');
+$db->exec('DELETE FROM quantity_unit_conversions WHERE id IN (90, 91)');
 $savedUnits = $research->UpdateDraft(1, 1, $revision, ['qu_id_purchase' => 1, 'qu_id_stock' => 2], 'test');
 $revision = $savedUnits['revision'];
 approvalReject(fn() => $approval->ApproveDraft(1, 1, $revision, [...$fields, 'qu_id_stock' => 2], 'test'));
@@ -107,8 +122,10 @@ $taxResult = $approval->ApproveDraft(1, 6, 1, [...$fields, 'name' => 'Taxonomy i
 approvalCheck((int)$db->query('SELECT COUNT(*) FROM grocy_ai_taxonomy_classifications WHERE product_id = ' . (int)$taxResult['product_id'])->fetchColumn() === 1, 'valid taxonomy assignment commits with product');
 $db->prepare('INSERT INTO quantity_unit_conversions (from_qu_id, to_qu_id, factor, product_id) VALUES (1, 2, 2, ?)')->execute([$id]);
 $countBeforeParent = (int)$db->query('SELECT COUNT(*) FROM products')->fetchColumn();
+$beforeRejectedParent = $nativeSnapshot();
 approvalReject(fn() => $approval->ApproveDraft(1, 7, 1, [...$fields, 'name' => 'Child item', 'qu_id_purchase' => 2, 'qu_id_stock' => 2, 'parent_product_id' => $id], 'test'));
 approvalCheck((int)$db->query('SELECT COUNT(*) FROM products')->fetchColumn() === $countBeforeParent, 'parent-only conversion rejection rolls back child');
+approvalCheck($nativeSnapshot() === $beforeRejectedParent, 'incompatible parent leaves all native rows unchanged');
 $db->exec('INSERT INTO quantity_unit_conversions (from_qu_id, to_qu_id, factor) VALUES (1, 2, 2)');
 // A parent changed after review must be checked against its current stock unit.
 $db->prepare('UPDATE products SET qu_id_stock = 2 WHERE id = ?')->execute([$id]);

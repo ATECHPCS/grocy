@@ -908,7 +908,7 @@ $captureReviewAssetMatch = [];
 preg_match('/\$grocyAiAssetVersion = \'([^\']+)\'/', $captureTemplate, $captureAssetMatch);
 preg_match('/\$grocyAiAssetVersion = \'([^\']+)\'/', $captureReviewTemplate, $captureReviewAssetMatch);
 $stableVersion = json_decode(file_get_contents($repoRoot . '/custom/grocy_AI/version.json'), true, 512, JSON_THROW_ON_ERROR);
-check(($captureAssetMatch[1] ?? null) === '2.6.8' && ($captureReviewAssetMatch[1] ?? null) === '2.6.9', 'Capture retains the UPC asset token and review refreshes classification assets');
+check(($captureAssetMatch[1] ?? null) === '2.6.8' && ($captureReviewAssetMatch[1] ?? null) === '2.6.10', 'Capture retains the UPC asset token and review refreshes unit suggestion assets');
 check(($stableVersion['Customization'] ?? null) === 'ATECHPCS-grocy_AI-31', 'Capture view changes invalidate the persisted production Blade cache');
 check(($assetVersionMatch[1] ?? null) === $moduleVersion, 'The grocy_AI asset token matches the portable module version');
 check(substr_count($productFormTemplate, '{{ $grocyAiAssetVersion }}') === 4, 'All custom product-form assets use the grocy_AI token');
