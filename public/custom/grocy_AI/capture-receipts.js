@@ -284,6 +284,21 @@
 			lineEditors.push(box);
 			var path = receiptPath + '/lines/' + line.id;
 			box.setAttribute('data-draft-scope', path);
+			if ((line.kind === undefined || line.kind === 'item') && line.decision !== 'ignore')
+			{
+				var disregard = button(box, 'Disregard receipt item', function ()
+				{
+					if (busy || readOnly) return;
+					if ((line.allocations || []).some(function (allocation) { return Number(allocation.active) !== 0; }))
+					{
+						status.textContent = 'Remove this receipt item’s allocations before disregarding it. Use Remove allocation below, then try again.';
+						return;
+					}
+					if (!window.confirm('Disregard receipt item “' + line.description + '”? It will be excluded from the purchase and unapproved receipt research. Its receipt amount and history will be kept. Unsaved edits to this line will be discarded.')) return;
+					save(path, 'PUT', { decision: 'ignore' }, path);
+				});
+				disregard.className = 'btn btn-outline-danger mb-2';
+			}
 			if (line.paired_capture_line_id)
 			{
 				var pairedLine = (options.lines || []).find(function (item) { return Number(item.id) === Number(line.paired_capture_line_id); });
