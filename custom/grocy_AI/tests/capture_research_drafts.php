@@ -66,6 +66,23 @@ $service->CompleteJob((int)$reclaim['id'], $reclaim['lease_token'], ['contract_v
 $review = $service->ReviewForTrip(1)['drafts'][0];
 checkDraft($review['selected']['name'] === 'My granola' && $review['name_alternatives'][0]['sources'] === ['bb-federation'] && $review['name_alternatives'][1]['sources'] === ['openfoodfacts'], 'provider retry cannot overwrite user edit and each name has its own sources');
 checkDraft($review['group_candidates'][0]['id'] === 1 && $review['taxonomy_candidates'][0]['slug'] === 'meat-seafood', 'exact active group and versioned taxonomy rule proposed');
+$db->exec('PRAGMA foreign_keys = OFF');
+$db->exec('PRAGMA query_only = ON');
+try
+{
+	$readOnlyService = new GrocyAiCaptureResearchService($db);
+	checkDraft((int)$db->query('PRAGMA foreign_keys')->fetchColumn() === 1, 'research read enables foreign keys on a fresh connection without database writes');
+	$readOnlyOptions = $readOnlyService->ReviewOptions();
+	$readOnlyReview = $readOnlyService->ReviewForTrip(1);
+	checkDraft($readOnlyOptions['taxonomy_version'] === 'v1' && $readOnlyReview['drafts'][0]['taxonomy_candidates'][0]['slug'] === 'meat-seafood', 'installed taxonomy serves research review without database writes');
+}
+finally
+{
+	$db->exec('PRAGMA query_only = OFF');
+}
+$db->exec("DELETE FROM grocy_ai_taxonomy_mapping_rules WHERE provider_category = 'seafood'");
+\GrocyAI\Services\GrocyAiTaxonomyMigration::Bootstrap($db);
+checkDraft((int)$db->query("SELECT COUNT(*) FROM grocy_ai_taxonomy_mapping_rules WHERE provider_category = 'seafood'")->fetchColumn() === 1, 'missing source-controlled taxonomy mapping is restored during bootstrap');
 $draftId = $review['id'];
 checkDraft(method_exists($service, 'ClassificationInput'), 'bounded worker classification input is available');
 $input = $service->ClassificationInput($draftId);
