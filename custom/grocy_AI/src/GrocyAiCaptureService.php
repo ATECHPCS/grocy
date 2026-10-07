@@ -259,10 +259,11 @@ class GrocyAiCaptureService
 			{
 				throw new \InvalidArgumentException('delete is exclusive');
 			}
-			$this->Receipts ??= new GrocyAiReceiptService($this->Db);
-			if ((int)$this->Db->query('SELECT COUNT(*) FROM grocy_ai_receipts WHERE trip_id = ' . $tripId)->fetchColumn() > 0)
+			$linked = $this->Db->prepare('SELECT 1 FROM grocy_ai_receipt_allocations WHERE trip_id = ? AND capture_line_id = ? LIMIT 1');
+			$linked->execute([$tripId, $lineId]);
+			if ($linked->fetchColumn() !== false)
 			{
-				throw new \DomainException('A trip with receipts cannot delete capture lines; remove their allocations and deselect them instead');
+				throw new \DomainException('This scan has receipt allocation history; exclude it from the purchase instead');
 			}
 			$this->Db->prepare('DELETE FROM grocy_ai_capture_lines WHERE id = ?')->execute([$lineId]);
 			$this->WriteAudit($tripId, $lineId, $actor, 'delete_line', $beforeRow, null);

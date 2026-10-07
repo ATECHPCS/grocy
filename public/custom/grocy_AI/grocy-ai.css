@@ -151,6 +151,27 @@ details.grocy-ai-diagnostics:not([open]) > .grocy-ai-diagnostic-body {
 	min-height: 44px;
 }
 
+.grocy-ai-capture-review-open-actions {
+	display: flex;
+	gap: 8px;
+	width: 100%;
+	margin-top: 8px;
+}
+
+.grocy-ai-capture-review-open-actions > .btn {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	flex: 1 1 0;
+	min-width: 0;
+	white-space: normal;
+	text-align: center;
+}
+
+.grocy-ai-capture-delete-trip {
+	margin-top: 8px;
+}
+
 #grocy-ai-upc {
 	min-height: 44px;
 }

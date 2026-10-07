@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-foreach (['GrocyAiGtin', 'GrocyAiBarcodeService', 'GrocyAiCaptureMigration', 'GrocyAiReceiptMigration', 'GrocyAiReceiptService', 'GrocyAiCaptureService'] as $name)
+foreach (['GrocyAiGtin', 'GrocyAiBarcodeService', 'GrocyAiCaptureMigration', 'GrocyAiReceiptMigration', 'GrocyAiReceiptService', 'GrocyAiCaptureResearchMigration', 'GrocyAiCaptureService'] as $name)
 {
 	require_once __DIR__ . '/../src/' . $name . '.php';
 }
