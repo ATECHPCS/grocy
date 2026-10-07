@@ -33,6 +33,7 @@
 		var inputRoot = options.inputRoot || host;
 		var lineEditors = [];
 		var state = options.state;
+		state.pairingChoices = state.pairingChoices || {};
 		var dirty = Object.keys(state.drafts).length > 0;
 		var readOnly = options.readOnly;
 		var status;
@@ -336,15 +337,23 @@
 						choices.push([String(item.capture_line_id), 'Scanned #' + item.seq + ' — ' + (item.display_name || 'UPC ' + item.scanned_barcode)]);
 					});
 					var suggestedId = line.paired_capture_line_id ? String(line.paired_capture_line_id) : line.capture_match_status === 'unique' && candidates.length ? String(candidates[0].capture_line_id) : '';
-					var scanned = select(box, 'Scanned item for this receipt line', choices, suggestedId);
-					box.appendChild(el('p', 'Pair the UPC with this receipt description for product review. Confirm product details before adding a purchase allocation.'));
-					button(box, 'Pair scanned item', function ()
+					var pairing = el('div', '', 'grocy-ai-receipt-pairing');
+					box.appendChild(pairing);
+					// This selection is an action input, not an edit saved by Save line.
+					var scanned = select(pairing, 'Scanned item for this receipt line', choices, Object.prototype.hasOwnProperty.call(state.pairingChoices, path) ? state.pairingChoices[path] : suggestedId);
+					scanned.addEventListener('change', function () { state.pairingChoices[path] = scanned.value; });
+					pairing.appendChild(el('p', 'Pair the UPC with this receipt description for product review. Confirm product details before adding a purchase allocation.'));
+					var pairingMessage = el('p', '', 'grocy-ai-receipt-pairing-message');
+					pairingMessage.setAttribute('role', 'status');
+					button(pairing, 'Pair scanned item', function ()
 					{
-						if (!scanned.value) { status.textContent = 'Choose a scanned UPC first.'; return; }
+						if (!scanned.value) { pairingMessage.textContent = 'Choose a scanned UPC first.'; return; }
+						if (state.drafts[path]) { pairingMessage.textContent = 'Save or discard edits to this receipt line before pairing.'; return; }
 						var selected = unknownScans.find(function (item) { return String(item.id) === scanned.value; });
-						if (!selected) { status.textContent = 'This scan is no longer available. Reload the trip.'; return; }
-						run(function () { return request('/lines/' + selected.seq + '/receipt-evidence', 'PUT', { receipt_line_id: Number(line.id) }); });
+						if (!selected) { pairingMessage.textContent = 'This scan is no longer available. Reload the trip.'; return; }
+						run(function () { return request('/lines/' + selected.seq + '/receipt-evidence', 'PUT', { receipt_line_id: Number(line.id) }).then(function (result) { delete state.pairingChoices[path]; return result; }); }, path + '/pairing');
 					});
+					pairing.appendChild(pairingMessage);
 				}
 			}
 			var description = field(box, 'Description', line.description);

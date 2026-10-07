@@ -862,3 +862,33 @@ test('disregard matched receipt item explains allocation removal without saving'
 	await expect(page.locator('.grocy-ai-receipts')).toContainText('Remove this receipt item’s allocations before disregarding it.');
 	expect(state.writes.filter(write => write.path.endsWith('/lines/1'))).toHaveLength(0);
 });
+
+test('manually choosing a scanned UPC can pair without saving unrelated receipt edits', async ({ page }) =>
+{
+	const state = await setup(page);
+	await page.getByLabel('Add receipt photos').setInputFiles(photo);
+	await expect(page.locator('.grocy-ai-receipt')).toHaveCount(1);
+	state.lines = [{ id: 100, trip_id: 7, seq: 1, scanned_barcode: '012345678905', canonical_gtin: '00012345678905', resolved_product_id: null, status: 'unknown', quantity: 1, price: null, best_before_override: null, selected: 1, applied_at: null, outcome: null, created_at: '', updated_at: '' }];
+	state.receipts[0].lines = [{ id: 1, description: 'Store item', quantity: 1, line_total: 2, decision: 'needs_review', allocations: [], capture_match_status: 'none', capture_candidates: [] }];
+	await page.locator('#grocyai-capture-review-trips button').click();
+	await openReceiptDetails(page);
+	await page.locator('#grocyai-review-next').click();
+	const editor = page.locator('.grocy-ai-receipt-line');
+	await editor.getByLabel('Scanned item for this receipt line').selectOption('100');
+	await expect(page.locator('#grocyai-review-announcement')).not.toContainText('Unsaved changes');
+	await page.getByLabel('Merchant').fill('Unsaved merchant correction');
+	await editor.getByLabel('Description', { exact: true }).fill('Unreviewed description correction');
+	await editor.getByRole('button', { name: 'Pair scanned item', exact: true }).click();
+	await expect(editor).toContainText('Save or discard edits to this receipt line before pairing.');
+	expect(state.writes.filter(write => write.path.endsWith('/receipt-evidence'))).toHaveLength(0);
+	await expect(editor.getByLabel('Description', { exact: true })).toHaveValue('Unreviewed description correction');
+	await editor.getByRole('button', { name: 'Discard line edits', exact: true }).click();
+	await expect(editor.getByLabel('Description', { exact: true })).toHaveValue('Store item');
+	await expect(editor.getByLabel('Scanned item for this receipt line')).toHaveValue('100');
+	await editor.getByRole('button', { name: 'Pair scanned item', exact: true }).click();
+	await expect.poll(() => state.writes.filter(write => write.path.endsWith('/receipt-evidence')).map(write => write.body)).toEqual([{ receipt_line_id: 1 }]);
+	await openReceiptDetails(page);
+	await expect(page.getByLabel('Merchant')).toHaveValue('Unsaved merchant correction');
+	expect(state.writes.filter(write => write.path.endsWith('/allocation'))).toHaveLength(0);
+	await expect(page.getByRole('button', { name: 'Commit purchase', exact: true })).toBeDisabled();
+});
