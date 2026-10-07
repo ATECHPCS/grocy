@@ -43,7 +43,7 @@
 	{
 		return fetch(url, { method: method, credentials: 'same-origin', cache: 'no-store', headers: { Accept: 'application/json', 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) }).then(function (response)
 		{
-			if (!response.ok) throw new Error(response.status === 403 ? 'You need product edit permission.' : response.status === 409 ? 'This draft changed. Reload and review it again.' : 'Could not save product review.');
+			if (!response.ok) throw new Error(response.status === 403 ? 'You need product edit permission.' : response.status === 409 ? 'This draft changed. Reload and review it again.' : method === 'GET' ? 'Could not load product research. Reload and try again.' : 'Could not save product review.');
 			return response.json();
 		});
 	}

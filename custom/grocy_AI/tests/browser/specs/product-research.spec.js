@@ -6,7 +6,7 @@ function draft(state = 'ready')
 {
 	return { id: 5, line_id: 31, seq: 1, revision: 2, outcome: state === 'ready' ? 'provisional' : 'needs_input', line_status: 'unknown', resolved_product_id: null, resolved_product_name: null, job_state: state, safe_error_code: state === 'retryable_failure' ? 'provider_unavailable' : null, scanned_barcode: line.scanned_barcode, canonical_gtin: line.canonical_gtin, selected: { name: 'Oat Milk', brand: 'Acme', package: '1 L' }, suggested: { sources: ['openfoodfacts'], categories: ['en:beverages'] }, name_alternatives: [{ value: 'Oat Milk', sources: ['bb-federation'], provenance: 'attributed' }, { value: 'Oat Drink', sources: ['openfoodfacts'], provenance: 'attributed' }], receipt_evidence: { receipt_line_id: 19, description: 'OAT MILK 1L' }, group_candidates: [{ id: 3, name: 'Beverages', source: 'openfoodfacts', provider_category: 'en:beverages' }], taxonomy_candidates: [{ slug: 'plant-milk', label: 'Plant milk', source: 'openfoodfacts', provider_category: 'en:beverages', ruleset_version: 1 }], possible_existing_products: [{ id: 82, name: 'Oat Milk', reason: 'exact_name' }], final_product_id: null };
 }
-async function setup(page, state = 'ready')
+async function setup(page, state = 'ready', settings = {})
 {
 	const data = { draft: draft(state), writes: [], receipts: [], lines: [line], drafts: null, approved: false, evidenceReject: false, referenceGets: [], catalogGets: 0, catalog: { contract_version: 1, taxonomy_version: 'v1', product_groups: [{ id: 3, name: 'Beverages' }, { id: 4, name: 'Pantry' }], taxonomy_leaves: [{ slug: 'plant-milk', label: 'Plant milk' }, { slug: 'produce', label: 'Produce' }], generic_parents: [{ id: 95, name: 'Generic Produce', qu_id_stock: 2 }] } };
 	await page.route('**/api/objects/**', route => { const path = new URL(route.request().url()).pathname; data.referenceGets.push(path); return route.fulfill({ json: path.endsWith('/products/95') ? { id: 95, name: 'Generic Produce', active: 1, parent_product_id: null, qu_id_stock: data.parentStockUnit || 2 } : path.endsWith('/quantity_unit_conversions') ? [] : path.endsWith('/locations') ? [{ id: 1, name: 'Pantry', active: 1 }] : path.endsWith('/products') ? [{ id: 82, name: 'Oat Milk', active: 1 }, { id: 91, name: 'Completely Different Pantry Item', active: 1 }] : [{ id: 2, name: 'Each', active: 1 }] }); });
@@ -15,7 +15,7 @@ async function setup(page, state = 'ready')
 		const path = new URL(route.request().url()).pathname;
 		const method = route.request().method();
 		if (method !== 'GET') data.writes.push({ path, body: route.request().postDataJSON() });
-		if (path.endsWith('/research/options')) { data.catalogGets++; return route.fulfill({ json: data.catalog }); }
+		if (path.endsWith('/research/options')) { data.catalogGets++; return settings.catalogFailure ? route.fulfill({ status: 503, json: { error_message: 'Unavailable' } }) : route.fulfill({ json: data.catalog }); }
 		if (path.endsWith('/trips')) return route.fulfill({ json: { trips: [trip] } });
 		if (path.endsWith('/trips/7')) return route.fulfill({ json: { trip, lines: data.approved ? data.lines.map(v => v.id === 31 ? { ...v, status: 'known', resolved_product_id: 82 } : v) : data.lines, checksum: 'a'.repeat(64) } });
 		if (path.endsWith('/receipt-readiness')) return route.fulfill({ json: { ready: false, reasons: [data.approved ? 'no_receipts' : 'unknown_product'], receipts: data.receipts } });
@@ -29,9 +29,16 @@ async function setup(page, state = 'ready')
 	});
 	await page.goto('/fixtures/capture-review.html');
 	await page.locator('#grocyai-capture-review-trips button').click();
-	await expect(page.locator('.grocy-ai-product-research')).toBeVisible();
+	if (!settings.catalogFailure) await expect(page.locator('.grocy-ai-product-research')).toBeVisible();
 	return data;
 }
+
+test('product research load failure identifies loading rather than saving', async ({ page }) =>
+{
+	await setup(page, 'ready', { catalogFailure: true });
+	await expect(page.locator('.grocy-ai-capture-review-detail')).toContainText('Could not load product research. Reload and try again.');
+	await expect(page.locator('.grocy-ai-capture-review-detail')).not.toContainText('Could not save product review.');
+});
 
 test('product research card shows status, provenance, evidence, and keeps commit disabled', async ({ page }) =>
 {

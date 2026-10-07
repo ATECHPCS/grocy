@@ -800,6 +800,25 @@ test('review queue retains stable scan keys across reorder and removal', async (
 	], reordered: 'scan:10', removed: 'scan:20', clamped: 'scan:10', first: 'scan:10', empty: null });
 });
 
+test('@mobilequeue many trip checks stay collapsed until requested', async ({ page }) =>
+{
+	await page.setViewportSize({ width: 390, height: 844 });
+	await installReviewApi(page, { lines: [makeLine({ id: 1, seq: 1, scanned_barcode: UNKNOWN_GTIN })] });
+	const reasons = Array.from({ length: 48 }, (_, index) => 'capture_line_' + (index + 1) + '_product_review_required');
+	await page.route('**/trips/7/receipt-readiness', route => json(route, { ready: false, reasons, receipts: [] }));
+	await page.goto('/fixtures/capture-review.html');
+	await page.locator('#grocyai-capture-review-trips button').first().click();
+	const readiness = page.locator('#grocyai-receipt-readiness');
+	await expect(readiness).toContainText('48 review checks remain');
+	await expect(readiness.getByRole('button', { name: /View 48 review checks/ })).toBeVisible();
+	await expect(readiness.locator('#grocyai-receipt-readiness-details')).toBeHidden();
+	await expect(page.locator('#grocyai-capture-review-commit')).toBeDisabled();
+	await readiness.getByRole('button', { name: /View 48 review checks/ }).click();
+	await expect(readiness.locator('#grocyai-receipt-readiness-details')).toBeVisible();
+	await expect(readiness.locator('li')).toHaveCount(48);
+	expect(await readiness.evaluate(element => element.getBoundingClientRect().height)).toBeLessThan(844);
+});
+
 // Restricting the card to pan-y alone disables browser pinch zoom.
 for (const width of [320, 390]) test('@mobilequeue active card permits vertical scrolling and pinch zoom at ' + width, async ({ page }) =>
 {
