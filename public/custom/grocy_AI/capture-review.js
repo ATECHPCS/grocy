@@ -34,7 +34,8 @@
 		emptyLines: 'This trip has no items.',
 		loadError: 'Could not load the trip. Try again.',
 		saveError: 'That change could not be saved. Try again.',
-		deleteLabel: 'Delete',
+		deleteLabel: 'Delete scan',
+		deleteTrip: 'Delete trip',
 		selected: 'Include in purchase',
 		quantity: 'Quantity',
 		location: 'Default location',
@@ -121,6 +122,7 @@
 			loadError: d.labelLoadError || DEFAULT_COPY.loadError,
 			saveError: d.labelSaveError || DEFAULT_COPY.saveError,
 			deleteLabel: d.labelDelete || DEFAULT_COPY.deleteLabel,
+			deleteTrip: d.labelDeleteTrip || DEFAULT_COPY.deleteTrip,
 			selected: d.labelSelected || DEFAULT_COPY.selected,
 			quantity: d.labelQuantity || DEFAULT_COPY.quantity,
 			location: d.labelLocation || DEFAULT_COPY.location,
@@ -186,7 +188,13 @@
 			{
 				if (!response.ok)
 				{
-					throw new Error('http_status');
+					return response.json().catch(function () { return null; }).then(function (body)
+					{
+						var error = new Error('http_status');
+						error.status = response.status;
+						error.serverMessage = body && typeof body.error_message === 'string' ? body.error_message : null;
+						throw error;
+					});
 				}
 				return response.json();
 			});
@@ -389,16 +397,51 @@
 					currentLines.forEach(function (line) { if (line.status === 'known') { resolveProductName(line.resolved_product_id); } });
 					return loadTrip(currentTripId);
 				}
-			}).catch(function () { flashError(); });
+			}).catch(function (error)
+			{
+				flashError(body.delete === true && error.status === 409 && typeof error.serverMessage === 'string' && error.serverMessage.indexOf('This scan has receipt allocation history;') === 0 ? error.serverMessage : null);
+			});
 		}
 
-		function flashError()
+		function flashError(message)
 		{
 			var notice = document.getElementById('grocyai-capture-review-error');
 			if (notice)
 			{
-				notice.textContent = copy.saveError;
+				notice.textContent = message || copy.saveError;
 			}
+		}
+
+		function cancelTrip()
+		{
+			if (currentTripId === null || receiptBusy) return;
+			var tripId = currentTripId;
+			if (!window.confirm('Delete trip #' + tripId + ' from the active list? Receipt and scan history will be kept for audit.')) return;
+			if (!window.confirm('Final confirmation: delete trip #' + tripId + '? This cannot be undone from this screen.')) return;
+			var button = document.getElementById('grocyai-capture-review-delete-trip');
+			if (button) button.disabled = true;
+			return fetchJson(tripUrl(tripId) + '/cancel', { method: 'POST', body: '{}' }).then(function (result)
+			{
+				if (!result || result.canceled !== true || Number(result.trip_id) !== Number(tripId)) throw new Error('invalid_cancel_response');
+				if (currentTripId !== tripId) return;
+				++loadRevision;
+				currentTripId = null;
+				currentTrip = null;
+				currentLines = [];
+				receiptReadiness = null;
+				activeReviewKey = null;
+				delete receiptStates[tripId];
+				delete researchStates[tripId];
+				var url = new URL(window.location.href);
+				url.searchParams.delete('trip');
+				window.history.replaceState(null, '', url.pathname + url.search + url.hash);
+				renderDetail();
+				return loadTripList();
+			}).catch(function ()
+			{
+				if (button) button.disabled = false;
+				flashError('The trip could not be deleted. Reload it and try again.');
+			});
 		}
 
 		function locationSelect(id, current, rows, onChange)
@@ -462,10 +505,11 @@
 			statusRow.appendChild(element('span', 'badge badge-secondary', currentTrip.status));
 			if (currentTrip.status === 'open')
 			{
-				var continueLink = element('a', 'btn btn-outline-primary ml-3', copy.continueScanning);
+				var openActions = element('div', 'grocy-ai-capture-review-open-actions');
+				var continueLink = element('a', 'btn btn-outline-primary', copy.continueScanning);
 				continueLink.setAttribute('href', captureUrl + '?trip=' + encodeURIComponent(String(currentTripId)));
-				statusRow.appendChild(continueLink);
-				var reviewingButton = element('button', 'btn btn-outline-primary ml-3', copy.markReviewing);
+				openActions.appendChild(continueLink);
+				var reviewingButton = element('button', 'btn btn-outline-primary', copy.markReviewing);
 				reviewingButton.type = 'button';
 				reviewingButton.addEventListener('click', function ()
 				{
@@ -477,7 +521,16 @@
 					reviewingButton.disabled = true;
 					putTrip({ status: 'reviewing' }).finally(function () { reviewingButton.disabled = false; });
 				});
-				statusRow.appendChild(reviewingButton);
+				openActions.appendChild(reviewingButton);
+				statusRow.appendChild(openActions);
+			}
+			if (currentTrip.status !== 'committed' && !currentLines.some(function (line) { return line.applied_at !== null; }))
+			{
+				var deleteTripButton = element('button', 'btn btn-outline-danger grocy-ai-capture-delete-trip', copy.deleteTrip);
+				deleteTripButton.id = 'grocyai-capture-review-delete-trip';
+				deleteTripButton.type = 'button';
+				deleteTripButton.addEventListener('click', cancelTrip);
+				statusRow.appendChild(deleteTripButton);
 			}
 			detailEl.appendChild(statusRow);
 
@@ -805,7 +858,10 @@
 			// Delete.
 			var deleteButton = element('button', 'btn btn-sm btn-outline-danger mb-0 align-self-center', copy.deleteLabel);
 			deleteButton.type = 'button';
-			deleteButton.addEventListener('click', function () { putLine(line.seq, { delete: true }); });
+			deleteButton.addEventListener('click', function ()
+			{
+				if (window.confirm('Delete scan #' + line.seq + ' from this trip? Receipt lines will remain for review.')) putLine(line.seq, { delete: true });
+			});
 			controls.appendChild(deleteButton);
 
 			item.appendChild(controls);

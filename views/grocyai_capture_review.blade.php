@@ -1,7 +1,7 @@
 @extends('layout.default')
 
 @php
-$grocyAiAssetVersion = '2.6.12';
+$grocyAiAssetVersion = '2.6.13';
 @endphp
 @push('pageStyles')
 <link rel="stylesheet"
@@ -50,7 +50,8 @@ $grocyAiAssetVersion = '2.6.12';
 	data-label-empty-lines="{{ $__t('This trip has no items.') }}"
 	data-label-load-error="{{ $__t('Could not load the trip. Try again.') }}"
 	data-label-save-error="{{ $__t('That change could not be saved. Try again.') }}"
-	data-label-delete="{{ $__t('Delete') }}"
+	data-label-delete="{{ $__t('Delete scan') }}"
+	data-label-delete-trip="{{ $__t('Delete trip') }}"
 	data-label-selected="{{ $__t('Include in purchase') }}"
 	data-label-quantity="{{ $__t('Quantity') }}"
 	data-label-price="{{ $__t('Price (optional)') }}"

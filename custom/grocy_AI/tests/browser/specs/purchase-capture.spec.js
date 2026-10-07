@@ -591,6 +591,74 @@ test.describe('purchase capture — scan loop', function ()
 
 test.describe('purchase capture — review and commit', function ()
 {
+	test('@cap @mob deletes an unlinked scan while its trip has a receipt', async function ({ page })
+	{
+		const state = await installReviewApi(page, { lines: [makeLine({ id: 101, seq: 1, scanned_barcode: UNKNOWN_GTIN }), makeLine({ id: 102, seq: 2, scanned_barcode: KNOWN_GTIN, status: 'known', resolved_product_id: 101 })] });
+		await page.route('**/trips/7/receipt-readiness', route => json(route, { ready: false, reasons: ['receipt_3_unfinished'], receipts: [{ receipt: { id: 3, status: 'needs_review', merchant: 'Store' }, lines: [], totals: { entered_total: 0, printed_total: null, difference: null }, issues: [] }] }));
+		await page.route('**/trips/7/lines/1', route =>
+		{
+			if (route.request().postDataJSON().delete !== true) return json(route, {}, 400);
+			state.lines = state.lines.filter(line => line.seq !== 1);
+			return json(route, { trip: makeTrip({ status: 'reviewing', checksum: CHECKSUM }), lines: state.lines });
+		});
+		await page.goto('/fixtures/capture-review.html?trip=7');
+		await page.locator('#grocyai-capture-review-trips button').first().click();
+		page.once('dialog', dialog => dialog.accept());
+		await page.getByRole('button', { name: 'Delete scan' }).click();
+		await expect(page.locator('.grocy-ai-review-card')).toHaveCount(1);
+		await expect(page.locator('#grocyai-review-progress')).toHaveText('1 of 1');
+		expect(state.lines.map(line => line.seq)).toEqual([2]);
+		await expectNoForbiddenWrites(page);
+	});
+
+	test('@cap @mob a receipt-linked scan explains why deletion is blocked', async function ({ page })
+	{
+		await installReviewApi(page);
+		await page.route('**/trips/7/lines/1', route => json(route, { error_message: 'This scan has receipt allocation history; exclude it from the purchase instead.' }, 409));
+		await page.goto('/fixtures/capture-review.html?trip=7');
+		await page.locator('#grocyai-capture-review-trips button').first().click();
+		page.once('dialog', dialog => dialog.accept());
+		await page.getByRole('button', { name: 'Delete scan' }).click();
+		await expect(page.locator('#grocyai-capture-review-error')).toContainText('receipt allocation history');
+		await expectNoForbiddenWrites(page);
+	});
+
+	test('@cap @mob deletes an uncommitted trip through audited cancellation after two confirmations', async function ({ page })
+	{
+		const state = await installReviewApi(page, { open: true });
+		let cancelled = false;
+		await page.route('**/capture/trips', route => json(route, { trips: cancelled ? [] : [makeTrip({ status: 'open' })] }));
+		await page.route('**/trips/7/cancel', route => { cancelled = true; return json(route, { trip_id: 7, canceled: true }); });
+		await page.goto('/fixtures/capture-review.html?trip=7');
+		await page.locator('#grocyai-capture-review-trips button').first().click();
+		const decisions = [true, false, true, true];
+		page.on('dialog', dialog => decisions.shift() ? dialog.accept() : dialog.dismiss());
+		await page.getByRole('button', { name: 'Delete trip' }).click();
+		expect(cancelled).toBe(false);
+		await page.getByRole('button', { name: 'Delete trip' }).click();
+		await expect(page.locator('#grocyai-capture-review-trips button')).toHaveCount(0);
+		await expect(page.locator('#grocyai-capture-review-detail')).toContainText('Select a trip to review its items.');
+		expect(cancelled).toBe(true);
+		expect(state.commits).toBe(0);
+		await expectNoForbiddenWrites(page);
+	});
+
+	for (const width of [320, 390]) test('@cap @mob open-trip scan actions stay side by side at ' + width + 'px', async function ({ page })
+	{
+		await page.setViewportSize({ width, height: 844 });
+		await installReviewApi(page, { open: true });
+		await page.goto('/fixtures/capture-review.html?trip=7');
+		await page.locator('#grocyai-capture-review-trips button').first().click();
+		await expect(page.getByRole('link', { name: 'Continue scanning' })).toBeVisible();
+		await expect(page.getByRole('button', { name: 'Finish scanning' })).toBeVisible();
+		const [continueBox, finishBox] = await page.evaluate(() => [document.querySelector('.grocy-ai-capture-review-open-actions a').getBoundingClientRect().toJSON(), document.querySelector('.grocy-ai-capture-review-open-actions button').getBoundingClientRect().toJSON()]);
+		expect(Math.abs(continueBox.y - finishBox.y)).toBeLessThan(2);
+		expect(finishBox.x - (continueBox.x + continueBox.width)).toBeGreaterThanOrEqual(8);
+		expect(continueBox.height).toBeGreaterThanOrEqual(44);
+		expect(finishBox.height).toBeGreaterThanOrEqual(44);
+		expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+	});
+
 	test('@cap @mob open trip offers Continue scanning back to the same trip', async function ({ page })
 	{
 		await installReviewApi(page, { open: true });

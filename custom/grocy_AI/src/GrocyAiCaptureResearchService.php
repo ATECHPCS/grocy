@@ -252,7 +252,7 @@ class GrocyAiCaptureResearchService
 		{
 			if ($receiptLineId !== null)
 			{
-				$claimed = $this->Db->prepare('SELECT 1 FROM grocy_ai_capture_research_drafts WHERE trip_id = ? AND receipt_line_id = ? AND id != ? LIMIT 1');
+				$claimed = $this->Db->prepare('SELECT 1 FROM grocy_ai_capture_research_drafts WHERE trip_id = ? AND receipt_line_id = ? AND line_id IS NOT NULL AND id != ? LIMIT 1');
 				$claimed->execute([$tripId, $receiptLineId, $draft['id']]);
 				if ($claimed->fetchColumn() !== false) throw new \InvalidArgumentException('Receipt line already paired');
 				$allocated = $this->Db->prepare('SELECT 1 FROM grocy_ai_receipt_allocations WHERE trip_id = ? AND receipt_line_id = ? AND active = 1 AND capture_line_id IS NOT NULL AND capture_line_id != ? LIMIT 1');

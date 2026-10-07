@@ -245,7 +245,7 @@ $tests['receipt-attached capture deletion is explicit and preserves audit'] = fu
 	[$pdo, $capture, $receipts, $trip] = commitFixture();
 	commitReceipt($pdo, $receipts, $trip);
 	try { $capture->UpdateLine($trip, 1, ['delete' => true], 'test'); throw new LogicException('Receipt capture deleted'); }
-	catch (\DomainException $expected) { commitCheck(str_contains($expected->getMessage(), 'deselect'), 'conflict tells user how to proceed'); }
+	catch (\DomainException $expected) { commitCheck(str_contains($expected->getMessage(), 'exclude'), 'conflict tells user how to proceed'); }
 	commitCheck($pdo->query('SELECT COUNT(*) FROM grocy_ai_capture_lines')->fetchColumn() == 1, 'referenced capture retained');
 };
 $tests['legacy partial capture never replays stock'] = function (): void
