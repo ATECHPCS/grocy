@@ -136,3 +136,7 @@ Below Bootstrap md, the isolated browser assets render one stable scan, receipt-
 ### Receipt item disregard shortcut (October 7, 2026)
 
 Receipt item cards expose a confirmed **Disregard receipt item** shortcut to the existing audited Ignore decision. It preserves receipt amounts and history, clears receipt evidence from unapproved research through the existing service, and allows restoration through Decision and Save line. Active allocations must be removed first. The review asset token is `2.6.14` and customization marker is `ATECHPCS-grocy_AI-37`.
+
+### Manual receipt pairing fix (October 7, 2026)
+
+The scanned UPC pairing selector is now an action choice instead of a receipt line edit. Pair can persist that choice while preserving unrelated receipt drafts. Corrections to the same receipt line still require Save line or Discard line edits, with feedback beside Pair. This fixes the unsaved-edit guard blocking manually selected UPCs. Review assets advance to `2.6.15`, customization marker `ATECHPCS-grocy_AI-38`.
