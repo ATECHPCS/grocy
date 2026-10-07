@@ -1045,6 +1045,7 @@ test('@mobilequeue unselected scans retain accessible research edits and can sav
 test('@mobilequeue only confirmed deletion clears removed scan research edits', async ({ page }) =>
 {
 	const state = await unitReview(page);
+	page.on('dialog', dialog => dialog.accept());
 	let reject = true;
 	await page.route('**/trips/7/lines/1', route =>
 	{
@@ -1053,12 +1054,12 @@ test('@mobilequeue only confirmed deletion clears removed scan research edits', 
 		return json(route, { trip: makeTrip({ status: 'reviewing' }), lines: [] });
 	});
 	await page.getByLabel('Proposed name').fill('Delete after confirmation');
-	await page.getByRole('button', { name: 'Delete', exact: true }).click();
+	await page.getByRole('button', { name: 'Delete scan', exact: true }).click();
 	await expect(page.locator('#grocyai-capture-review-error')).toContainText('could not be saved');
 	await expect(page.getByLabel('Proposed name')).toHaveValue('Delete after confirmation');
 	await expect(page.locator('#grocyai-capture-review-commit')).toBeDisabled();
 	reject = false;
-	await page.getByRole('button', { name: 'Delete', exact: true }).click();
+	await page.getByRole('button', { name: 'Delete scan', exact: true }).click();
 	await expect(page.locator('.grocy-ai-review-card')).toHaveCount(0);
 	await expect(page.locator('#grocyai-capture-review-commit')).toBeEnabled();
 });
