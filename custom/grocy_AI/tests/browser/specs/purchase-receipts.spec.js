@@ -827,3 +827,38 @@ test('@mobilequeue compact multiple receipt summaries reveal photo and edits exp
 	await page.setViewportSize({ width: 1280, height: 800 });
 	await expect(page.locator('.grocy-ai-receipt-details:visible')).toHaveCount(2);
 });
+
+test('disregard receipt item requires confirmation, preserves amounts, and allows restoration', async ({ page }) =>
+{
+	const state = await setup(page);
+	await page.getByLabel('Add receipt photos').setInputFiles(photo);
+	await expect(page.locator('.grocy-ai-receipt')).toHaveCount(1);
+	state.receipts[0].lines = [{ id: 1, description: 'Unwanted item', quantity: 2, line_total: 5, decision: 'needs_review', allocations: [] }];
+	await page.locator('#grocyai-capture-review-trips button').click();
+	const line = page.locator('.grocy-ai-receipt-line');
+	page.once('dialog', dialog => dialog.dismiss());
+	await line.getByRole('button', { name: 'Disregard receipt item', exact: true }).click();
+	expect(state.writes.filter(write => write.path.endsWith('/lines/1'))).toHaveLength(0);
+	page.once('dialog', dialog => dialog.accept());
+	await line.getByRole('button', { name: 'Disregard receipt item', exact: true }).click();
+	await expect(line).toContainText('Ignored');
+	expect(state.writes.filter(write => write.path.endsWith('/lines/1')).map(write => write.body)).toEqual([{ decision: 'ignore' }]);
+	await expect(line.getByLabel('Receipt quantity')).toHaveValue('2');
+	await expect(line.getByLabel('Line total')).toHaveValue('5');
+	await expect(line.getByRole('button', { name: 'Disregard receipt item', exact: true })).toHaveCount(0);
+	await line.getByLabel('Decision').selectOption('needs_review');
+	await line.getByRole('button', { name: 'Save line', exact: true }).click();
+	await expect(line.getByRole('button', { name: 'Disregard receipt item', exact: true })).toBeVisible();
+});
+
+test('disregard matched receipt item explains allocation removal without saving', async ({ page }) =>
+{
+	const state = await setup(page);
+	await page.getByLabel('Add receipt photos').setInputFiles(photo);
+	await expect(page.locator('.grocy-ai-receipt')).toHaveCount(1);
+	state.receipts[0].lines = [{ id: 1, description: 'Matched item', quantity: 1, line_total: 2, decision: 'include', allocations: [{ id: 1, active: 1, product_id: 101, quantity: 1, unit_price: 2 }] }];
+	await page.locator('#grocyai-capture-review-trips button').click();
+	await page.locator('.grocy-ai-receipt-line').getByRole('button', { name: 'Disregard receipt item', exact: true }).click();
+	await expect(page.locator('.grocy-ai-receipts')).toContainText('Remove this receipt item’s allocations before disregarding it.');
+	expect(state.writes.filter(write => write.path.endsWith('/lines/1'))).toHaveLength(0);
+});
