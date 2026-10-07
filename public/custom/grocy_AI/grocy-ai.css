@@ -917,6 +917,9 @@ details.grocy-ai-diagnostics:not([open]) > .grocy-ai-diagnostic-body {
 .grocy-ai-review-navigation button { min-height: 44px; min-width: 44px; }
 .grocy-ai-review-card { min-width: 0; overflow-wrap: anywhere; }
 .grocy-ai-review-heading:focus { outline: 2px solid #007bff; outline-offset: 3px; }
+.grocy-ai-readiness-details { max-height: 45vh; overflow-y: auto; margin: .75rem 0 0; padding-left: 1.5rem; }
+.grocy-ai-readiness-details[hidden] { display: none; }
+#grocyai-receipt-readiness button { min-height: 44px; white-space: normal; }
 @media (max-width: 767.98px) {
 	.grocy-ai-review-card:not(.is-active) { display: none; }
 	.grocy-ai-review-card { touch-action: pan-y pinch-zoom; }

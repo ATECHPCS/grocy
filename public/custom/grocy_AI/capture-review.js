@@ -608,7 +608,32 @@
 			var readiness = element('div', 'alert alert-info');
 			readiness.id = 'grocyai-receipt-readiness';
 			readiness.setAttribute('role', 'status');
-			readiness.textContent = !receiptReadiness ? 'Could not check receipt readiness. Reload to try again.' : receiptReadiness.ready ? 'Receipts reviewed — ready to commit purchase.' : (receiptReadiness.reasons || []).map(window.GrocyAIReceiptReason).join('. ');
+			if (!receiptReadiness) readiness.textContent = 'Could not check receipt readiness. Reload to try again.';
+			else if (receiptReadiness.ready) readiness.textContent = 'Receipts reviewed — ready to commit purchase.';
+			else
+			{
+				var reasons = receiptReadiness.reasons || [];
+				readiness.appendChild(element('p', 'mb-2', reasons.length ? reasons.length + ' review checks remain. Work through the item cards and receipt lines before committing.' : 'Purchase review is not ready. Reload to check again.'));
+				if (reasons.length)
+				{
+					var detailsButton = element('button', 'btn btn-outline-secondary', 'View ' + reasons.length + ' review checks');
+					detailsButton.type = 'button';
+					detailsButton.setAttribute('aria-expanded', 'false');
+					detailsButton.setAttribute('aria-controls', 'grocyai-receipt-readiness-details');
+					var details = element('ul', 'grocy-ai-readiness-details');
+					details.id = 'grocyai-receipt-readiness-details';
+					details.hidden = true;
+					reasons.forEach(function (reason) { details.appendChild(element('li', null, window.GrocyAIReceiptReason(reason))); });
+					detailsButton.addEventListener('click', function ()
+					{
+						details.hidden = !details.hidden;
+						detailsButton.setAttribute('aria-expanded', String(!details.hidden));
+						detailsButton.textContent = details.hidden ? 'View ' + reasons.length + ' review checks' : 'Hide review checks';
+					});
+					readiness.appendChild(detailsButton);
+					readiness.appendChild(details);
+				}
+			}
 			detailEl.appendChild(readiness);
 
 			// Commit (CAP-05): the single stock-write trigger. Hidden once the trip is archived committed.
