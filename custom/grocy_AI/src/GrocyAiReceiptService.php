@@ -10,10 +10,10 @@ class GrocyAiReceiptService
 {
 	private PDO $Db;
 
-	public function __construct(?PDO $pdo = null)
+	public function __construct(?PDO $pdo = null, bool $bootstrap = true)
 	{
 		$this->Db = $pdo ?? \Grocy\Services\DatabaseService::GetInstance()->GetDbConnectionRaw();
-		GrocyAiReceiptMigration::Bootstrap($this->Db);
+		if ($bootstrap) GrocyAiReceiptMigration::Bootstrap($this->Db);
 	}
 
 	public function ListForTrip(int $tripId): array

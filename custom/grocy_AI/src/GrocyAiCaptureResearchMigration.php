@@ -10,12 +10,14 @@ class GrocyAiCaptureResearchMigration
 
 	public static function Bootstrap(PDO $pdo): void
 	{
-		GrocyAiReceiptMigration::Bootstrap($pdo);
 		if ((int)$pdo->query('PRAGMA foreign_keys')->fetchColumn() !== 1)
 		{
 			if ($pdo->inTransaction()) throw new \LogicException('Research migration requires SQLite foreign keys before a transaction');
 			$pdo->exec('PRAGMA foreign_keys = ON');
 		}
+		if (self::IsCurrent($pdo)) return;
+
+		GrocyAiReceiptMigration::Bootstrap($pdo);
 		$started = !$pdo->inTransaction();
 		if ($started) $pdo->beginTransaction();
 		try
@@ -65,5 +67,21 @@ class GrocyAiCaptureResearchMigration
 			if ($started && $pdo->inTransaction()) $pdo->rollBack();
 			throw $ex;
 		}
+	}
+
+	private static function IsCurrent(PDO $pdo): bool
+	{
+		if ((int)$pdo->query('PRAGMA foreign_keys')->fetchColumn() !== 1) return false;
+		$required = ['grocy_ai_capture_migrations', 'grocy_ai_receipt_migrations', 'grocy_ai_capture_research_migrations', 'grocy_ai_capture_research_jobs', 'grocy_ai_capture_research_drafts', 'grocy_ai_capture_classification_jobs'];
+		$found = $pdo->query("SELECT name FROM sqlite_master WHERE type = 'table'")->fetchAll(PDO::FETCH_COLUMN);
+		if (array_diff($required, $found) !== []) return false;
+		foreach (['grocy_ai_capture_migrations' => GrocyAiCaptureMigration::VERSION, 'grocy_ai_receipt_migrations' => GrocyAiReceiptMigration::VERSION, 'grocy_ai_capture_research_migrations' => self::VERSION] as $table => $version)
+		{
+			$applied = $pdo->prepare('SELECT 1 FROM ' . $table . ' WHERE version = ? LIMIT 1');
+			$applied->execute([$version]);
+			if ($applied->fetchColumn() === false) return false;
+		}
+		$jobColumns = $pdo->query('PRAGMA table_info(grocy_ai_capture_research_jobs)')->fetchAll(PDO::FETCH_COLUMN, 1);
+		return in_array('retry_generation', $jobColumns, true);
 	}
 }

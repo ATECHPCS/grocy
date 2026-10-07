@@ -134,7 +134,7 @@ class GrocyAiCaptureResearchService
 		$receiptDescription = null;
 		if ($draft['receipt_line_id'] !== null)
 		{
-			try { $receiptDescription = (new GrocyAiReceiptService($this->Db))->ResearchEvidence((int)$draft['trip_id'], (int)$draft['receipt_line_id'])['description']; }
+			try { $receiptDescription = (new GrocyAiReceiptService($this->Db, false))->ResearchEvidence((int)$draft['trip_id'], (int)$draft['receipt_line_id'])['description']; }
 			catch (\InvalidArgumentException) { /* Removed receipt evidence is optional. */ }
 		}
 		$candidates = ['product_group_id' => $this->GroupCandidates($suggested), 'taxonomy_leaf_slug' => $this->TaxonomyCandidates($suggested), 'parent_product_id' => $this->ParentCandidates($draft, $selected, $suggested)];
@@ -259,7 +259,7 @@ class GrocyAiCaptureResearchService
 				$allocated->execute([$tripId, $receiptLineId, $lineId]);
 				if ($allocated->fetchColumn() !== false) throw new \InvalidArgumentException('Receipt allocation conflicts with research evidence');
 			}
-			$evidence = $receiptLineId === null ? null : (new GrocyAiReceiptService($this->Db))->ResearchEvidence($tripId, $receiptLineId);
+			$evidence = $receiptLineId === null ? null : (new GrocyAiReceiptService($this->Db, false))->ResearchEvidence($tripId, $receiptLineId);
 			$selected = json_decode($draft['selected_json'], true, 512, JSON_THROW_ON_ERROR);
 			$edits = json_decode($draft['user_edits_json'], true, 512, JSON_THROW_ON_ERROR);
 			$suggested = json_decode($draft['suggested_json'], true, 512, JSON_THROW_ON_ERROR);
@@ -362,7 +362,7 @@ class GrocyAiCaptureResearchService
 		$evidence = null;
 		if ($draft['receipt_line_id'] !== null)
 		{
-			try { $evidence = (new GrocyAiReceiptService($this->Db))->ResearchEvidence($tripId, (int)$draft['receipt_line_id']); }
+			try { $evidence = (new GrocyAiReceiptService($this->Db, false))->ResearchEvidence($tripId, (int)$draft['receipt_line_id']); }
 			catch (\InvalidArgumentException) { $evidence = null; }
 		}
 		if ($evidence !== null) $names[] = ['value' => $evidence['description'], 'sources' => ['receipt_ocr'], 'provenance' => 'attributed'];
@@ -666,7 +666,7 @@ class GrocyAiCaptureResearchService
 					if ($normalized['outcome'] === 'found') $selected['name'] = $normalized['name_candidates'][0];
 					elseif ($draft['receipt_line_id'] !== null)
 					{
-						try { $selected['name'] = (new GrocyAiReceiptService($this->Db))->ResearchEvidence((int)$draft['trip_id'], (int)$draft['receipt_line_id'])['description']; }
+						try { $selected['name'] = (new GrocyAiReceiptService($this->Db, false))->ResearchEvidence((int)$draft['trip_id'], (int)$draft['receipt_line_id'])['description']; }
 						catch (\InvalidArgumentException) { unset($selected['name']); }
 					}
 					else unset($selected['name']);

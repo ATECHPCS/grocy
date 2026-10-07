@@ -25,6 +25,8 @@ class GrocyAiTaxonomyMigration
 
 	public static function Bootstrap(PDO $pdo): void
 	{
+		if (self::IsCurrent($pdo)) return;
+
 		$startedTransaction = !$pdo->inTransaction();
 		if ($startedTransaction)
 		{
@@ -70,6 +72,27 @@ class GrocyAiTaxonomyMigration
 		}
 	}
 
+	private static function IsCurrent(PDO $pdo): bool
+	{
+		if (!self::TableExists($pdo, 'grocy_ai_taxonomy_migrations') || !self::TableExists($pdo, 'grocy_ai_taxonomy_mapping_rules')) return false;
+		$version = $pdo->prepare('SELECT 1 FROM grocy_ai_taxonomy_migrations WHERE version = ? LIMIT 1');
+		$version->execute([self::VERSION]);
+		if ($version->fetchColumn() === false) return false;
+
+		$required = array_column(self::MappingRules(), 0);
+		foreach (self::EXCLUDED_PRODUCT_GROUPS as $groupName) $required[] = self::NormalizeCategoryKey($groupName);
+		$existing = $pdo->query('SELECT provider_category FROM grocy_ai_taxonomy_mapping_rules')->fetchAll(PDO::FETCH_COLUMN);
+		if (array_diff($required, $existing) !== []) return false;
+
+		if (self::TableExists($pdo, 'userfields'))
+		{
+			$userfield = $pdo->prepare('SELECT 1 FROM userfields WHERE entity = ? AND name = ? LIMIT 1');
+			$userfield->execute(['products', self::SCOPE_OVERRIDE_USERFIELD]);
+			if ($userfield->fetchColumn() === false) return false;
+		}
+		return true;
+	}
+
 	private static function CreateSchema(PDO $pdo): void
 	{
 		$pdo->exec('CREATE TABLE IF NOT EXISTS grocy_ai_taxonomy_nodes (id TEXT NOT NULL PRIMARY KEY, version TEXT NOT NULL, parent_id TEXT NULL, slug TEXT NOT NULL UNIQUE, label TEXT NOT NULL, depth INTEGER NOT NULL CHECK (depth IN (1, 2)), FOREIGN KEY (parent_id) REFERENCES grocy_ai_taxonomy_nodes(id))');
@@ -107,7 +130,16 @@ class GrocyAiTaxonomyMigration
 
 	private static function SeedMappings(PDO $pdo): void
 	{
-		$rules = [
+		$ruleStatement = $pdo->prepare('INSERT OR IGNORE INTO grocy_ai_taxonomy_mapping_rules (provider_category, version, target_slug, disposition) VALUES (?, ?, ?, ?)');
+		foreach (self::MappingRules() as [$category, $targetSlug, $disposition])
+		{
+			$ruleStatement->execute([$category, self::VERSION, $targetSlug, $disposition]);
+		}
+	}
+
+	private static function MappingRules(): array
+	{
+		return [
 			['dairy', 'dairy-eggs', 'mapped'],
 			['eggs', 'dairy-eggs', 'mapped'],
 			['produce', 'produce', 'mapped'],
@@ -120,11 +152,6 @@ class GrocyAiTaxonomyMigration
 			['baby_food', null, 'excluded'],
 			['pet_food', null, 'excluded']
 		];
-		$ruleStatement = $pdo->prepare('INSERT OR IGNORE INTO grocy_ai_taxonomy_mapping_rules (provider_category, version, target_slug, disposition) VALUES (?, ?, ?, ?)');
-		foreach ($rules as [$category, $targetSlug, $disposition])
-		{
-			$ruleStatement->execute([$category, self::VERSION, $targetSlug, $disposition]);
-		}
 	}
 
 	/**
