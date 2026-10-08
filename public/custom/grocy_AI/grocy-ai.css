@@ -993,6 +993,7 @@ details.grocy-ai-diagnostics:not([open]) > .grocy-ai-diagnostic-body {
 .grocy-ai-purchase-flow input { min-height: 44px; }
 .grocy-ai-purchase-flow summary { cursor: pointer; padding: 12px 0; }
 .grocy-ai-purchase-flow :is(button,a,input,summary):focus { outline: 3px solid var(--grocy-ai-flow-primary); outline-offset: 3px; }
+.grocy-ai-purchase-flow #grocyai-capture-trip-actions > summary:focus:not(:focus-visible) { outline: none; }
 .grocy-ai-purchase-flow .grocy-ai-flow-upc { font-family: monospace; overflow-wrap: anywhere; }
 .grocy-ai-purchase-flow .grocy-ai-flow-badge { display: inline-block; padding: 4px 8px; border: 1px solid var(--grocy-ai-flow-border); border-radius: 8px; }
 .grocy-ai-purchase-flow .text-muted { color: var(--grocy-ai-flow-muted) !important; }
