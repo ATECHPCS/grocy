@@ -163,11 +163,16 @@
 		var receiptReadiness = null;
 		var receiptBusy = false;
 		var commitMessage = '';
+		var commitInFlight = false;
+		var commitStates = {};
+		var reviewStage = 'review';
 		var receiptNotice = '';
 		var receiptStates = {};
+		var receiptPendingByTrip = {};
 		var researchComponent = null;
 		var receiptComponent = null;
 		var researchStates = {};
+		var researchBusyByTrip = {};
 		var researchNotices = {};
 		var disclosuresByTrip = {};
 		var selectRenderedCard = null;
@@ -177,7 +182,10 @@
 		var renderRevision = 0;
 		var loadRevision = 0;
 		var loadingTrip = false;
+		var requestedTripId = currentTripId;
 		var productNames = {};
+		var productMetadata = {};
+		var quantityUnits = [];
 		var locations = [];
 		var shoppingLocations = [];
 
@@ -244,6 +252,7 @@
 				window.Grocy.Api.Get('objects/products/' + encodeURIComponent(key), function (product)
 				{
 					productNames[key] = product && typeof product.name === 'string' ? product.name : null;
+					productMetadata[key] = product && !Array.isArray(product) ? product : null;
 					if (!receiptBusy && !loadingTrip) renderDetail();
 				}, function () { productNames[key] = null; });
 			}
@@ -255,6 +264,7 @@
 			{
 				return;
 			}
+			window.Grocy.Api.Get('objects/quantity_units', function (rows) { quantityUnits = Array.isArray(rows) ? rows : []; if (!receiptBusy && !loadingTrip) renderDetail(); }, function () {});
 			window.Grocy.Api.Get('objects/locations', function (rows) { locations = Array.isArray(rows) ? rows : []; if (!receiptBusy && !loadingTrip) renderDetail(); }, function () {});
 			window.Grocy.Api.Get('objects/shopping_locations', function (rows) { shoppingLocations = Array.isArray(rows) ? rows : []; if (!receiptBusy && !loadingTrip) renderDetail(); }, function () {});
 		}
@@ -277,6 +287,8 @@
 
 		function loadTrip(tripId)
 		{
+			var previousReadiness = receiptReadiness;
+			requestedTripId = String(tripId);
 			var revision = ++loadRevision;
 			loadingTrip = true;
 			detailEl.inert = true;
@@ -294,9 +306,7 @@
 				detailEl.inert = false;
 				if (!isLoadedTripPayload(payload))
 				{
-					loadingTrip = false;
-					detailEl.textContent = copy.loadError;
-					return;
+					throw new Error('invalid_trip_payload');
 				}
 				if (currentTripId !== String(tripId))
 				{
@@ -304,9 +314,12 @@
 					activeReviewIndex = 0;
 					receiptNotice = '';
 					commitMessage = '';
+					reviewStage = 'review';
 				}
 				currentTripId = String(tripId);
 				currentTrip = payload.trip;
+				if (currentTrip.status === 'committed') reviewStage = 'summary';
+				commitMessage = (commitStates[currentTripId] || {}).message || '';
 				currentLines = payload.lines;
 				currentChecksum = typeof payload.checksum === 'string' ? payload.checksum : null;
 				currentLines.forEach(function (line)
@@ -316,12 +329,30 @@
 						resolveProductName(line.resolved_product_id);
 					}
 				});
+				(receiptReadiness ? receiptReadiness.receipts : []).forEach(function (view) { (view.lines || []).forEach(function (line) { (line.allocations || []).forEach(function (allocation) { if (Number(allocation.active) !== 0) resolveProductName(allocation.product_id); }); }); });
 				loadingTrip = false;
 				renderTripListActive();
 				renderDetail();
+				return payload;
 			}).catch(function ()
 			{
-				if (revision === loadRevision) { detailEl.inert = false; loadingTrip = false; detailEl.textContent = copy.loadError; }
+				if (revision !== loadRevision) return null;
+				detailEl.inert = false; loadingTrip = false;
+				if (currentTrip && currentTripId === String(tripId) && reviewStage === 'summary')
+				{
+					var state = commitStates[currentTripId] = commitStates[currentTripId] || {};
+					state.needsRecheck = true;
+					if (state.outcome === 'committed')
+					{
+						// The confirmed commit result is authoritative even if its follow-up read fails.
+						currentTrip.status = 'committed'; currentTrip.transaction_id = state.transactionId || currentTrip.transaction_id;
+					}
+					else state.message = 'Could not reload purchase. Reload and recheck purchase before trying again.';
+					receiptReadiness = previousReadiness; commitMessage = state.message || '';
+					renderDetail();
+				}
+				else detailEl.textContent = copy.loadError;
+				return null;
 			});
 		}
 
@@ -396,6 +427,8 @@
 				if (isLoadedTripPayload(payload))
 				{
 					currentTrip = payload.trip;
+				if (currentTrip.status === 'committed') reviewStage = 'summary';
+				commitMessage = (commitStates[currentTripId] || {}).message || '';
 					currentLines = payload.lines;
 					currentLines.forEach(function (line) { if (line.status === 'known') { resolveProductName(line.resolved_product_id); } });
 					return loadTrip(currentTripId);
@@ -487,6 +520,102 @@
 			if (toggle && toggle.getAttribute('aria-expanded') !== 'true') toggle.click();
 			if (focus) { details.focus(); details.scrollIntoView({ block: 'nearest' }); }
 			return true;
+		}
+
+
+		function setReviewStage(stage, target)
+		{
+			if (loadingTrip) return;
+			reviewStage = stage === 'summary' ? 'summary' : 'review';
+			var review = document.getElementById('grocyai-review-stage');
+			var summary = document.getElementById('grocyai-purchase-summary');
+			if (!review || !summary) return;
+			review.hidden = reviewStage !== 'review';
+			summary.hidden = reviewStage !== 'summary';
+			if (reviewStage === 'summary')
+			{
+				var heading = summary.querySelector('h3'); heading.focus(); heading.scrollIntoView({ block: 'nearest' });
+			}
+			else if (!selectReviewTarget(target || { cardKey: activeReviewKey }, true))
+			{
+				var fallback = document.getElementById('grocyai-review-summary-button'); fallback.focus(); fallback.scrollIntoView({ block: 'nearest' });
+			}
+			updateReviewState();
+		}
+
+		function formatAmount(value)
+		{
+			return value !== null && value !== undefined && Number.isFinite(Number(value)) ? String(Number(Number(value).toFixed(8))) : 'Unavailable';
+		}
+
+		function appendPurchaseSummary(summary, views)
+		{
+			var products = {};
+			var allocatedScans = {};
+			views.forEach(function (view)
+			{
+				(view.lines || []).forEach(function (line)
+				{
+					if (line.kind !== 'item' || line.decision !== 'include') return;
+					(line.allocations || []).forEach(function (allocation)
+					{
+						if (Number(allocation.active) === 0) return;
+						var key = String(allocation.product_id);
+						(products[key] = products[key] || []).push(allocation);
+						if (allocation.capture_line_id !== null && allocation.capture_line_id !== undefined) allocatedScans[allocation.capture_line_id] = true;
+					});
+				});
+			});
+			var purchases = element('section', 'grocy-ai-flow-card grocy-ai-summary-purchases');
+			purchases.appendChild(element('h4', null, Object.keys(products).length + ' included products'));
+			purchases.appendChild(element('p', 'text-muted', 'Reviewed purchase-unit quantities. Package notes do not calculate stock conversions.'));
+			Object.keys(products).forEach(function (id)
+			{
+				var metadata = productMetadata[id];
+				var unit = metadata && quantityUnits.find(function (row) { return String(row.id) === String(metadata.qu_id_purchase); });
+				var unitLabel = unit && typeof unit.name === 'string' ? unit.name : 'Purchase unit unavailable';
+				var row = element('div', 'grocy-ai-summary-product'); row.setAttribute('data-summary-product', id);
+				row.appendChild(element('h5', null, productNames[id] || 'Product #' + id + ' · Name unavailable'));
+				// One product uses its catalog purchase unit; separate allocations keep every reviewed price.
+				var total = products[id].reduce(function (sum, allocation) { return sum + Number(allocation.quantity); }, 0);
+				row.appendChild(element('p', null, formatAmount(total) + ' ' + unitLabel));
+				var prices = element('ul');
+				products[id].forEach(function (allocation) { prices.appendChild(element('li', null, formatAmount(allocation.quantity) + ' ' + unitLabel + ' · reviewed unit price: ' + formatAmount(allocation.unit_price))); });
+				row.appendChild(prices); purchases.appendChild(row);
+			});
+			currentLines.filter(function (line) { return Number(line.selected) === 1 && !line.applied_at && !allocatedScans[line.id]; }).forEach(function (line)
+			{
+				purchases.appendChild(element('p', 'text-muted', 'Scan #' + line.seq + ' · Needs review: selected scan awaiting receipt allocation.'));
+			});
+			summary.appendChild(purchases);
+			var catalog = element('section', 'grocy-ai-flow-card');
+			catalog.appendChild(element('h4', null, 'Catalog actions'));
+			catalog.appendChild(element('p', null, 'Product created means a catalog entry was created. Commit purchase adds the reviewed items to stock.'));
+			currentLines.forEach(function (line) { var notice = researchNotices[currentTripId + ':' + line.seq]; if (notice) catalog.appendChild(element('p', null, notice)); });
+			summary.appendChild(catalog);
+			views.forEach(function (view)
+			{
+				var receipt = view.receipt, totals = view.totals || {};
+				var audit = element('section', 'grocy-ai-flow-card');
+				audit.appendChild(element('h4', null, 'Receipt #' + receipt.id + ' · ' + (receipt.merchant || 'Merchant unavailable')));
+				audit.appendChild(element('p', null, 'Full receipt audit · Printed total: ' + formatAmount(totals.printed_total) + ' · Reviewed total: ' + formatAmount(totals.entered_total) + ' · Difference: ' + formatAmount(totals.difference)));
+				var accepted = receipt.difference_accepted_amount !== null && receipt.difference_accepted_amount !== undefined && Number(receipt.difference_accepted_amount) === Number(totals.difference);
+				audit.appendChild(element('p', null, totals.difference !== null && totals.difference !== undefined && Number(totals.difference) === 0 ? 'Difference reconciled' : accepted ? 'Difference explicitly accepted: ' + formatAmount(receipt.difference_accepted_amount) : 'Difference needs review'));
+				audit.appendChild(element('p', 'text-muted', 'Ignored amounts and receipt adjustments remain in the full receipt audit; included purchases may differ from the printed total.'));
+				var auditLines = element('ul');
+				(view.lines || []).filter(function (line) { return line.decision === 'ignore' || line.kind !== 'item'; }).forEach(function (line) { auditLines.appendChild(element('li', null, line.description + ' · ' + (line.decision === 'ignore' ? 'Ignored amount' : 'Receipt adjustment (' + line.kind + ')') + ': ' + formatAmount(line.line_total))); });
+				audit.appendChild(auditLines); summary.appendChild(audit);
+			});
+		}
+
+		function reasonTarget(reason)
+		{
+			var scan = /^capture_line_(\d+)_/.exec(reason);
+			if (scan) return { cardKey: 'scan:' + scan[1] };
+			var receiptLine = /^receipt_(\d+)_line_(\d+)_/.exec(reason);
+			if (receiptLine) return { cardKey: reviewQueue.receiptOwnerByKey['receipt:' + receiptLine[1] + ':' + receiptLine[2]] };
+			var receipt = /^receipt_(\d+)_/.exec(reason);
+			return receipt ? { receiptId: Number(receipt[1]) } : {};
 		}
 
 		function renderDetail()
@@ -637,7 +766,7 @@
 					item.appendChild(element('section', 'grocy-ai-flow-research'));
 				}
 				item.appendChild(element('section', 'grocy-ai-flow-receipt'));
-				if (scan) item.appendChild(element('section', 'grocy-ai-flow-product-actions'));
+				if (scan) { var actions = element('section', 'grocy-ai-flow-product-actions'); var legacyCreate = item.querySelector('.grocy-ai-legacy-create-product'); if (legacyCreate) actions.appendChild(legacyCreate); item.appendChild(actions); }
 				item.setAttribute('data-review-key', card.key);
 				item.setAttribute('data-review-status', unresolved(card) ? 'Needs review' : scan ? (Number(scan.selected) === 0 ? 'Not included' : scan.status === 'known' ? 'Known product' : 'Needs product') : receiptByKey[card.key].decision === 'ignore' ? 'Ignored' : 'Included');
 				var heading = element('h3', 'grocy-ai-review-heading', scan ? 'Scan #' + scan.seq : (card.kind === 'adjustment' ? 'Receipt adjustment' : 'Receipt item') + ' · #' + card.receiptId);
@@ -708,7 +837,8 @@
 			selectCard(activeReviewKey, false);
 			var researchError = element('div', 'invalid-feedback d-block');
 			detailEl.appendChild(researchError);
-			if (window.GrocyAIProductResearch) researchComponent = window.GrocyAIProductResearch(linesList, { notices: researchNotices, disclosures: disclosures, sectionHostFor: function (lineId, section) { var owner = hosts['scan:' + lineId]; return owner ? owner.querySelector(section === 'actions' ? '.grocy-ai-flow-product-actions' : '.grocy-ai-flow-research') : null; }, editState: researchStates[currentTripId], onEdit: updateReviewState, errorHost: researchError, tripId: currentTripId, lines: currentLines, receipts: receiptViews, locationId: currentTrip.default_location_id, readOnly: currentTrip.status === 'committed', reload: function (notice, seq)
+			var researchScopeBusy = false;
+			if (window.GrocyAIProductResearch) researchComponent = window.GrocyAIProductResearch(linesList, { notices: researchNotices, disclosures: disclosures, sectionHostFor: function (lineId, section) { var owner = hosts['scan:' + lineId]; return owner ? owner.querySelector(section === 'actions' ? '.grocy-ai-flow-product-actions' : '.grocy-ai-flow-research') : null; }, editState: researchStates[currentTripId], onEdit: updateReviewState, onBusy: function (value) { if (researchScopeBusy === value) return; researchScopeBusy = value; researchBusyByTrip[renderedTripId] = Math.max(0, (researchBusyByTrip[renderedTripId] || 0) + (value ? 1 : -1)); if (renderedTripId === currentTripId) updateReviewState(); }, errorHost: researchError, tripId: currentTripId, lines: currentLines, receipts: receiptViews, locationId: currentTrip.default_location_id, readOnly: currentTrip.status === 'committed', reload: function (notice, seq)
 			{
 				if (generation !== renderRevision || renderedLoadRevision !== loadRevision || renderedTripId !== currentTripId) return Promise.resolve();
 				researchNotices[renderedTripId + ':' + seq] = notice;
@@ -721,15 +851,19 @@
 			} });
 			if (window.GrocyAIReceipts && receiptReadiness)
 			{
+				var receiptScopePending = false;
 				receiptStates[currentTripId] = receiptStates[currentTripId] || { drafts: {}, uploads: [] };
-				receiptComponent = window.GrocyAIReceipts(receiptsHost, { compact: true, disclosures: disclosures, state: receiptStates[currentTripId], inputRoot: detailEl, lineHostFor: function (receipt, line) { var owner = hosts[reviewQueue.receiptOwnerByKey['receipt:' + receipt.id + ':' + line.id]]; return owner ? owner.querySelector('.grocy-ai-flow-receipt') : null; }, url: tripUrl(currentTripId), receipts: receiptViews, lines: currentLines, names: productNames, stores: shoppingLocations, productNew: productNewBase, readOnly: currentTrip.status === 'committed', notice: receiptNotice, reload: reloadCurrent, onBusy: function (value) { if (generation !== renderRevision) return; receiptBusy = value; updateReviewState(); } });
+				receiptComponent = window.GrocyAIReceipts(receiptsHost, { compact: true, disclosures: disclosures, state: receiptStates[currentTripId], inputRoot: detailEl, lineHostFor: function (receipt, line) { var owner = hosts[reviewQueue.receiptOwnerByKey['receipt:' + receipt.id + ':' + line.id]]; return owner ? owner.querySelector('.grocy-ai-flow-receipt') : null; }, url: tripUrl(currentTripId), receipts: receiptViews, lines: currentLines, names: productNames, stores: shoppingLocations, productNew: productNewBase, readOnly: currentTrip.status === 'committed', notice: receiptNotice, reload: reloadCurrent, onPending: function (value) { if (receiptScopePending === value) return; receiptScopePending = value; receiptPendingByTrip[renderedTripId] = Math.max(0, (receiptPendingByTrip[renderedTripId] || 0) + (value ? 1 : -1)); if (renderedTripId === currentTripId) updateReviewState(); }, onBusy: function (value) { if (generation !== renderRevision) return; receiptBusy = value; updateReviewState(); } });
 			}
 
+			var state = commitStates[currentTripId] || {};
+			var committed = currentTrip.status === 'committed' || state.outcome === 'committed';
 			var readiness = element('div', 'alert alert-info');
 			readiness.id = 'grocyai-receipt-readiness';
 			readiness.setAttribute('role', 'status');
 			readiness.tabIndex = -1;
-			if (!receiptReadiness) readiness.textContent = 'Could not check receipt readiness. Reload to try again.';
+			if (committed) readiness.textContent = 'Purchase committed.';
+			else if (!receiptReadiness) readiness.textContent = 'Could not check receipt readiness. Reload to try again.';
 			else if (receiptReadiness.ready) readiness.textContent = 'Receipts reviewed — ready to commit purchase.';
 			else
 			{
@@ -737,17 +871,19 @@
 				readiness.appendChild(element('p', 'mb-2', reasons.length ? reasons.length + ' review checks remain. Work through the item cards and receipt lines before committing.' : 'Purchase review is not ready. Reload to check again.'));
 				if (reasons.length)
 				{
-					var detailsButton = element('button', 'btn btn-outline-secondary', 'View ' + reasons.length + ' review checks');
+					var detailsButton = element('button', 'btn btn-outline-secondary', disclosures.readiness ? 'Hide review checks' : 'View ' + reasons.length + ' review checks');
 					detailsButton.type = 'button';
-					detailsButton.setAttribute('aria-expanded', 'false');
+					detailsButton.setAttribute('aria-expanded', String(!!disclosures.readiness));
 					detailsButton.setAttribute('aria-controls', 'grocyai-receipt-readiness-details');
 					var details = element('ul', 'grocy-ai-readiness-details');
 					details.id = 'grocyai-receipt-readiness-details';
-					details.hidden = true;
+					details.hidden = !disclosures.readiness;
 					reasons.forEach(function (reason) { details.appendChild(element('li', null, window.GrocyAIReceiptReason(reason))); });
 					detailsButton.addEventListener('click', function ()
 					{
 						details.hidden = !details.hidden;
+						disclosures.readiness = !details.hidden;
+						var groups = document.getElementById('grocyai-summary-check-groups'); if (groups) groups.hidden = details.hidden;
 						detailsButton.setAttribute('aria-expanded', String(!details.hidden));
 						detailsButton.textContent = details.hidden ? 'View ' + reasons.length + ' review checks' : 'Hide review checks';
 					});
@@ -759,16 +895,44 @@
 			footer.appendChild(element('p', 'text-muted', checks + ' unresolved review checks'));
 			var summaryButton = element('button', 'btn btn-primary', 'Continue to purchase summary');
 			summaryButton.type = 'button'; summaryButton.id = 'grocyai-review-summary-button';
-			summaryButton.addEventListener('click', function () { readiness.focus(); readiness.scrollIntoView({ block: 'nearest' }); });
+			summaryButton.addEventListener('click', function () { setReviewStage('summary'); });
 			footer.appendChild(summaryButton);
 			detailEl.appendChild(footer);
-			detailEl.appendChild(readiness);
+			var reviewContainer = element('div'); reviewContainer.id = 'grocyai-review-stage';
+			while (detailEl.firstChild) reviewContainer.appendChild(detailEl.firstChild);
+			detailEl.appendChild(reviewContainer);
+			var summary = element('section', 'grocy-ai-purchase-summary'); summary.id = 'grocyai-purchase-summary';
+			var summaryHeading = element('h3', null, 'Confirm purchase'); summaryHeading.tabIndex = -1; summary.appendChild(summaryHeading);
+			var summaryStatus = element('p', 'grocy-ai-flow-badge'); summaryStatus.id = 'grocyai-summary-status'; summary.appendChild(summaryStatus);
+			appendPurchaseSummary(summary, receiptViews);
+			if (receiptReadiness && receiptReadiness.reasons.length)
+			{
+				var groups = {};
+				receiptReadiness.reasons.forEach(function (reason) { var target = reasonTarget(reason); var key = target.cardKey || (target.receiptId ? 'receipt:' + target.receiptId : 'global'); (groups[key] = groups[key] || { target: target, reasons: [] }).reasons.push(reason); });
+				var checksSection = element('section', 'grocy-ai-flow-card'); checksSection.id = 'grocyai-summary-check-groups'; checksSection.hidden = !disclosures.readiness; checksSection.appendChild(element('h4', null, 'Outstanding checks'));
+				Object.keys(groups).forEach(function (key)
+				{
+					var group = groups[key]; var row = element('div', 'grocy-ai-flow-actions');
+					row.appendChild(element('span', null, (key === 'global' ? 'Purchase' : key.replace(':', ' #')) + ' · ' + group.reasons.length + ' checks'));
+					var reviewButton = element('button', 'btn btn-outline-secondary', 'Review ' + (key === 'global' ? 'purchase checks' : key.replace(':', ' #')));
+					reviewButton.type = 'button'; reviewButton.setAttribute('data-review-target', key);
+					reviewButton.addEventListener('click', function () { setReviewStage('review', group.target); }); row.appendChild(reviewButton); checksSection.appendChild(row);
+				}); summary.appendChild(checksSection);
+			}
+			summary.appendChild(readiness);
+			detailEl.appendChild(summary);
+			reviewContainer.hidden = reviewStage !== 'review'; summary.hidden = reviewStage !== 'summary';
 
 			// Commit (CAP-05): the single stock-write trigger. Hidden once the trip is archived committed.
-			var commitSection = element('div', 'grocy-ai-capture-review-commit mt-3');
-			if (currentTrip.status === 'committed')
+			var commitSection = element('div', 'grocy-ai-capture-review-commit grocy-ai-flow-footer');
+			var back = element('button', 'btn btn-outline-secondary', 'Back to review'); back.type = 'button'; back.id = 'grocyai-purchase-summary-back'; back.addEventListener('click', function () { setReviewStage('review'); }); commitSection.appendChild(back);
+			if (committed)
 			{
-				commitSection.appendChild(element('div', 'alert alert-success mb-0', copy.committed.replace('%s', String(currentTrip.transaction_id))));
+				commitSection.appendChild(element('h4', 'alert alert-success mb-0', 'Purchase committed'));
+				var transaction = state.transactionId || currentTrip.transaction_id;
+				if (transaction) commitSection.appendChild(element('p', null, copy.committed.replace('%s', String(transaction))));
+				var inventory = element('a', 'btn btn-primary', 'View inventory'); inventory.href = root.getAttribute('data-inventory-url') || '/stockoverview'; commitSection.appendChild(inventory);
+				var start = element('a', 'btn btn-outline-primary', 'Start new trip'); start.href = captureUrl; commitSection.appendChild(start);
 			}
 			else
 			{
@@ -783,12 +947,14 @@
 			var commitResult = element('div', 'grocy-ai-capture-review-commit-result mt-2');
 			commitResult.id = 'grocyai-capture-review-commit-result';
 			commitResult.textContent = commitMessage;
+			commitResult.tabIndex = -1;
 			commitResult.setAttribute('role', 'status');
 			commitResult.setAttribute('aria-live', 'polite');
 			commitSection.appendChild(commitResult);
-			detailEl.appendChild(commitSection);
+			summary.appendChild(commitSection);
+			if (state.needsRecheck) { var recheck = element('button', 'btn btn-outline-primary', 'Reload and recheck purchase'); recheck.type = 'button'; recheck.addEventListener('click', function () { loadTrip(currentTripId).then(function (payload) { if (payload && currentTripId === renderedTripId && requestedTripId === renderedTripId && !loadingTrip && receiptReadiness) { state.needsRecheck = false; updateReviewState(); } }); }); commitSection.appendChild(recheck); }
 
-			detailEl.appendChild(error);
+			reviewContainer.appendChild(error);
 			updateReviewState();
 			if (currentTrip.status === 'committed') Array.prototype.forEach.call(detailEl.querySelectorAll('.grocy-ai-capture-review-line-controls input, .grocy-ai-capture-review-line-controls button, .grocy-ai-capture-review-defaults select'), function (control) { control.disabled = true; });
 		}
@@ -802,71 +968,65 @@
 		{
 			var unsaved = hasResearchEdits() || receiptComponent && receiptComponent.hasUnsavedEdits();
 			var button = document.getElementById('grocyai-capture-review-commit');
-			if (button) button.disabled = receiptBusy || unsaved || !receiptReadiness || receiptReadiness.ready !== true;
+			if (button) button.disabled = !canCommit();
+			var result = document.getElementById('grocyai-capture-review-commit-result');
+			if (result && reviewStage === 'summary' && unsaved && !commitMessage) result.textContent = 'Unsaved changes — save before committing.';
+			var summaryStatus = document.getElementById('grocyai-summary-status');
+			var state = commitStates[currentTripId] || {};
+			if (summaryStatus) summaryStatus.textContent = 'Trip #' + currentTripId + ' · ' + (currentTrip.status === 'committed' || state.outcome === 'committed' ? 'Committed' : state.outcome === 'pending' ? 'Committing purchase…' : canCommit() ? 'Ready' : 'Needs review');
 			var announcement = document.getElementById('grocyai-review-announcement');
 			var activeCard = detailEl.querySelector('.grocy-ai-review-card.is-active');
 			if (announcement) announcement.textContent = (reviewQueue.cards.length ? (activeReviewIndex + 1) + ' of ' + reviewQueue.cards.length + ' · ' : '') + (unsaved ? 'Unsaved changes — save before committing.' : activeCard ? activeCard.getAttribute('data-review-status') : 'No review items');
 		}
 
+		function canCommit()
+		{
+			var state = commitStates[currentTripId] || {};
+			return !loadingTrip && !(receiptPendingByTrip[currentTripId] > 0) && !(researchBusyByTrip[currentTripId] > 0) && !commitInFlight && !state.needsRecheck && state.outcome !== 'committed' && currentTrip && currentTrip.status !== 'committed' && !hasResearchEdits() && !(receiptComponent && receiptComponent.hasUnsavedEdits()) && !receiptBusy && receiptReadiness && receiptReadiness.ready === true && currentTripId !== null && typeof currentChecksum === 'string' && currentChecksum.length > 0;
+		}
+
+		function focusCommitResult()
+		{
+			var result = document.getElementById('grocyai-capture-review-commit-result');
+			if (result && reviewStage === 'summary') { result.focus(); result.scrollIntoView({ block: 'nearest' }); }
+		}
+
 		function commitTrip()
 		{
-			if (hasResearchEdits() || receiptComponent && receiptComponent.hasUnsavedEdits() || receiptBusy || !receiptReadiness || receiptReadiness.ready !== true || currentTripId === null || typeof currentChecksum !== 'string')
-			{
-				return Promise.resolve(null);
-			}
-			if (typeof window !== 'undefined' && typeof window.confirm === 'function' && !window.confirm(copy.commitConfirm))
-			{
-				return Promise.resolve(null);
-			}
-			receiptBusy = true;
-			document.getElementById('grocyai-capture-review-commit').disabled = true;
-			return fetch(tripUrl(currentTripId) + '/commit', {
-				method: 'POST',
-				credentials: 'same-origin',
-				cache: 'no-store',
+			if (!canCommit()) return Promise.resolve(null);
+			if (typeof window !== 'undefined' && typeof window.confirm === 'function' && !window.confirm(copy.commitConfirm)) return Promise.resolve(null);
+			var tripId = currentTripId;
+			var state = commitStates[tripId] = { message: 'Committing purchase…', outcome: 'pending' };
+			commitInFlight = true; commitMessage = state.message;
+			var target = document.getElementById('grocyai-capture-review-commit-result'); if (target) target.textContent = state.message;
+			updateReviewState();
+			return fetch(tripUrl(tripId) + '/commit', {
+				method: 'POST', credentials: 'same-origin', cache: 'no-store',
 				headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
 				body: JSON.stringify({ confirmed_checksum: currentChecksum })
 			}).then(function (response)
 			{
-				if (!response.ok && response.status !== 409)
-				{
-					throw new Error('http_status');
-				}
+				if (!response.ok && response.status !== 409) throw new Error('http_status');
 				return response.json();
 			}).then(function (result)
 			{
-				receiptBusy = false;
-				renderCommitResult(result);
-				loadTrip(currentTripId);
-			}).catch(function () { receiptBusy = false; flashError(); var button = document.getElementById('grocyai-capture-review-commit'); if (button) button.disabled = false; });
-		}
-
-		function renderCommitResult(result)
-		{
-			var target = document.getElementById('grocyai-capture-review-commit-result');
-			if (!target || !result || typeof result !== 'object')
+				if (!result || typeof result.outcome !== 'string') throw new Error('invalid_commit_result');
+				state.outcome = result.outcome; state.transactionId = result.transaction_id;
+				if (result.outcome === 'committed') state.message = 'Purchase committed' + (result.transaction_id ? ' · ' + copy.committed.replace('%s', String(result.transaction_id)) : '');
+				else if (result.outcome === 'partial') state.message = copy.commitPartial.replace('%s', String(result.applied));
+				else { state.needsRecheck = true; state.message = result.outcome === 'checksum_mismatch' ? copy.commitMismatch : result.outcome === 'receipt_review_required' ? 'Receipt review is required before purchase commit. Reload and recheck purchase.' : 'Purchase could not be committed. Reload and recheck purchase.'; }
+				commitInFlight = false;
+				if (tripId !== currentTripId || tripId !== requestedTripId) { updateReviewState(); return; }
+				commitMessage = state.message;
+				if (state.outcome === 'committed' || state.outcome === 'partial') return loadTrip(tripId).then(function () { if (currentTripId === tripId && requestedTripId === tripId) focusCommitResult(); });
+				renderDetail(); focusCommitResult();
+			}).catch(function ()
 			{
-				return;
-			}
-			var message;
-			if (result.outcome === 'committed')
-			{
-				message = copy.committed.replace('%s', String(result.transaction_id));
-			}
-			else if (result.outcome === 'partial')
-			{
-				message = copy.commitPartial.replace('%s', String(result.applied));
-			}
-			else if (result.outcome === 'checksum_mismatch')
-			{
-				message = copy.commitMismatch;
-			}
-			else
-			{
-				message = result.outcome === 'receipt_review_required' ? 'Receipt review is required before purchase commit.' : copy.saveError;
-			}
-			commitMessage = message;
-			target.textContent = message;
+				commitInFlight = false;
+				state.outcome = 'error'; state.needsRecheck = true; state.message = 'Purchase result could not be confirmed. Reload and recheck purchase before trying again.';
+				if (tripId !== currentTripId || tripId !== requestedTripId) { updateReviewState(); return; }
+				commitMessage = state.message; renderDetail(); focusCommitResult();
+			});
 		}
 
 		function renderLine(line)
@@ -888,7 +1048,7 @@
 			header.appendChild(description);
 			if (line.status !== 'known')
 			{
-				var createLink = element('a', 'btn btn-sm btn-outline-primary permission-MASTER_DATA_EDIT', copy.createProduct);
+				var createLink = element('a', 'btn btn-sm btn-outline-primary permission-MASTER_DATA_EDIT grocy-ai-legacy-create-product', copy.createProduct);
 				createLink.href = productNewUrl(productNewBase, line.scanned_barcode);
 				header.appendChild(createLink);
 			}

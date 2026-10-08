@@ -51,7 +51,7 @@ test('product research card shows status, provenance, evidence, and keeps commit
 	await expect(page.getByText('Oat Drink — Open Food Facts')).toBeVisible();
 	await expect(page.getByText('Oat Milk — Barcode Lookup Federation')).toBeVisible();
 	await expect(page.getByText(/Receipt evidence: OAT MILK 1L/)).toBeVisible();
-	await expect(page.getByRole('button', { name: 'Commit purchase' })).toBeDisabled();
+	await expect(page.locator('#grocyai-capture-review-commit')).toBeDisabled();
 });
 
 test('product research edits, links, and requires two confirmations', async ({ page }) =>
@@ -75,14 +75,14 @@ test('product research failure offers retry and approval stays permission gated'
 	await expect(page.getByText('Provider unavailable')).toBeVisible();
 	await page.getByRole('button', { name: 'Retry research' }).click();
 	await expect.poll(() => data.writes.some(w => w.path.endsWith('/retry'))).toBe(true);
-	await expect(page.locator('.grocy-ai-flow-product-actions .permission-MASTER_DATA_EDIT')).toHaveCount(2);
+	await expect(page.locator('.grocy-ai-flow-product-actions button.permission-MASTER_DATA_EDIT')).toHaveCount(2);
 });
 
 test('product research processing and miss remain provisional', async ({ page }) =>
 {
 	const data = await setup(page, 'queued');
 	await expect(page.getByText('Researching')).toBeVisible();
-	await expect(page.getByRole('button', { name: 'Commit purchase' })).toBeDisabled();
+	await expect(page.locator('#grocyai-capture-review-commit')).toBeDisabled();
 	data.draft.job_state = 'needs_input';
 	await page.locator('#grocyai-capture-review-trips button').click();
 	await expect(page.getByText('Needs details')).toBeVisible();
@@ -116,7 +116,7 @@ test('product research receipt evidence selection is explicit and does not commi
 	await page.getByLabel('Receipt line evidence').selectOption('');
 	await expect.poll(() => data.writes.some(w => w.path.endsWith('/receipt-evidence'))).toBe(true);
 	expect(data.writes.find(w => w.path.endsWith('/receipt-evidence')).body).toEqual({ receipt_line_id: null });
-	await expect(page.getByRole('button', { name: 'Commit purchase' })).toBeDisabled();
+	await expect(page.locator('#grocyai-capture-review-commit')).toBeDisabled();
 });
 
 test('product research forbidden approval keeps the draft and shows permission recovery', async ({ page }) =>
@@ -129,7 +129,7 @@ test('product research forbidden approval keeps the draft and shows permission r
 	await page.getByRole('button', { name: 'Approve new product' }).click();
 	await expect(page.getByText('You need product edit permission.')).toBeVisible();
 	expect(data.draft.final_product_id).toBeNull();
-	await expect(page.getByRole('button', { name: 'Commit purchase' })).toBeDisabled();
+	await expect(page.locator('#grocyai-capture-review-commit')).toBeDisabled();
 });
 
 
@@ -221,7 +221,7 @@ test('product research approval resolves the scan while receipt readiness stays 
 	await page.getByRole('button', { name: 'Approve new product' }).click();
 	await expect(page.locator('.grocy-ai-capture-review-line.status-known')).toHaveCount(1);
 	await expect(page.locator('.grocy-ai-product-research')).toHaveCount(0);
-	await expect(page.getByRole('button', { name: 'Commit purchase' })).toBeDisabled();
+	await expect(page.locator('#grocyai-capture-review-commit')).toBeDisabled();
 	await expect(page.locator('#grocyai-receipt-readiness')).toContainText('Add at least one receipt');
 	expect(data.approved).toBe(true);
 });
@@ -255,7 +255,7 @@ test('known scan with an unfinished draft can only link to its current owner', a
 	expect(data.writes.find(w => w.path.endsWith('/link')).body).toEqual({ revision: 2, product_id: 82 });
 	expect(prompts).toHaveLength(2);
 	await expect(page.locator('.grocy-ai-product-research')).toHaveCount(0);
-	await expect(page.getByRole('button', { name: 'Commit purchase' })).toBeDisabled();
+	await expect(page.locator('#grocyai-capture-review-commit')).toBeDisabled();
 });
 
 test('known-owner link keeps recovery visible after a permission failure', async ({ page }) =>
@@ -269,7 +269,7 @@ test('known-owner link keeps recovery visible after a permission failure', async
 	await page.getByRole('button', { name: 'Link to current product' }).click();
 	await expect(page.getByText('You need product edit permission.')).toBeVisible();
 	await expect(page.getByRole('button', { name: 'Link to current product' })).toBeVisible();
-	await expect(page.getByRole('button', { name: 'Commit purchase' })).toBeDisabled();
+	await expect(page.locator('#grocyai-capture-review-commit')).toBeDisabled();
 });
 
 test('provider miss allows local group, taxonomy leaf, and compatible generic parent', async ({ page }) =>
@@ -326,7 +326,7 @@ test('OpenAI web suggestion shows safe citations on narrow screens without persi
 	await expect(page.getByLabel('Proposed name')).toHaveValue('Reviewer name');
 	await expect(page.getByLabel('Product group')).toHaveValue('');
 	await expect(page.getByLabel('Food classification')).toHaveValue('');
-	await expect(page.getByRole('button', { name: 'Commit purchase' })).toBeDisabled();
+	await expect(page.locator('#grocyai-capture-review-commit')).toBeDisabled();
 	expect(data.writes).toEqual([]);
 	expect(await link.evaluate(el => el.getBoundingClientRect().right <= window.innerWidth)).toBe(true);
 	await expect(page.locator('.grocy-ai-product-research-names img')).toHaveCount(0);
@@ -444,7 +444,7 @@ test('approval reports created catalog product after reload while stock stays bl
 	await expect(feedback).toContainText('Product #82 created');
 	await expect(feedback).toContainText('Commit purchase');
 	await expect(feedback).toBeInViewport();
-	await expect(page.getByRole('button', { name: 'Commit purchase' })).toBeDisabled();
+	await expect(page.locator('#grocyai-capture-review-commit')).toBeDisabled();
 });
 
 

@@ -1072,3 +1072,14 @@ details.grocy-ai-diagnostics:not([open]) > .grocy-ai-diagnostic-body {
  background-repeat: no-repeat;
 }
 .night-mode #grocyai-capture-review { color-scheme: dark; }
+
+/* Confirmation is a presentation stage; the mounted review editors retain their ownership. */
+.grocy-ai-purchase-flow .grocy-ai-purchase-summary { display: grid; gap: 16px; min-width: 0; }
+.grocy-ai-purchase-flow .grocy-ai-purchase-summary :is(h3,h4,h5,p,li) { overflow-wrap: anywhere; }
+.grocy-ai-purchase-flow .grocy-ai-summary-product + .grocy-ai-summary-product { border-top: 1px solid var(--grocy-ai-flow-border); padding-top: 12px; margin-top: 12px; }
+.grocy-ai-purchase-flow .grocy-ai-purchase-summary .grocy-ai-flow-actions + .grocy-ai-flow-actions { margin-top: 12px; }
+.grocy-ai-purchase-flow .grocy-ai-purchase-summary .grocy-ai-flow-footer { display: flex; flex-wrap: wrap; gap: 8px; }
+.grocy-ai-purchase-flow .grocy-ai-purchase-summary .grocy-ai-flow-footer :is(p,h4,[role=status]) { flex-basis: 100%; }
+.grocy-ai-purchase-flow .grocy-ai-purchase-summary h3:focus { outline: 3px solid var(--grocy-ai-flow-primary); outline-offset: 3px; }
+
+.grocy-ai-purchase-flow .btn:disabled { opacity: .65; cursor: not-allowed; }

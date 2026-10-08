@@ -29,6 +29,7 @@
 	root.GrocyAIReceipts = function (host, options)
 	{
 		var busy = false;
+		var pendingMutations = 0;
 		var disposed = false;
 		var inputRoot = options.inputRoot || host;
 		var lineEditors = [];
@@ -164,6 +165,8 @@
 			var savedDraft = scope ? state.drafts[scope] : null;
 			// Keep the single live feedback node beside the action that initiated this request.
 			actionHost.appendChild(status);
+			pendingMutations++;
+			if (pendingMutations === 1 && options.onPending) options.onPending(true);
 			lock(true);
 			status.textContent = 'Saving…';
 			Promise.resolve().then(action).then(function (result)
@@ -180,6 +183,9 @@
 			}).finally(function ()
 			{
 				lock(false);
+				pendingMutations--;
+				// Pending writes retain their owner even if the editor was disposed.
+				if (pendingMutations === 0 && options.onPending) options.onPending(false);
 			});
 		}
 

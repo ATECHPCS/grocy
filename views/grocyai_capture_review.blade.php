@@ -1,7 +1,7 @@
 @extends('layout.default')
 
 @php
-$grocyAiAssetVersion = '2.6.17';
+$grocyAiAssetVersion = '2.6.18';
 @endphp
 @push('pageStyles')
 <link rel="stylesheet"
@@ -38,6 +38,7 @@ $grocyAiAssetVersion = '2.6.17';
 	id="grocyai-capture-review"
 	data-trips-endpoint="{{ $U('/api/grocy-ai/capture/trips', true) }}"
 	data-product-new-url="{{ $U('/product/new', true) }}"
+	data-inventory-url="{{ $U('/stockoverview', true) }}"
 	data-capture-url="{{ $U('/grocyai/capture', true) }}"
 	data-trip-id="{{ $tripId !== null ? $tripId : '' }}"
 	data-label-known="{{ $__t('Known') }}"

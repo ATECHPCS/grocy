@@ -121,6 +121,9 @@
 		}
 		var d = root.dataset;
 		return {
+			statusOpen: d.labelStatusOpen || 'Open',
+			statusReviewing: d.labelStatusReviewing || 'Reviewing',
+			statusCommitted: d.labelStatusCommitted || 'Committed',
 			known: d.labelKnown || DEFAULT_COPY.known,
 			unknown: d.labelUnknown || DEFAULT_COPY.unknown,
 			productFallback: d.labelProductFallback || DEFAULT_COPY.productFallback,
@@ -234,7 +237,7 @@
 			{
 				return;
 			}
-			if (summaryEl) summaryEl.textContent = (currentTripId === null ? '' : copy.trip + ' #' + currentTripId + ' · ' + currentStatus + ' · ') + lines.length + ' ' + copy.distinctItems + ' · ' + copy.totalQuantity + ': ' + lines.reduce(function (sum, line) { return sum + Number(line.quantity); }, 0);
+			if (summaryEl) summaryEl.textContent = (currentTripId === null ? '' : copy.trip + ' #' + currentTripId + ' · ' + (currentStatus === 'open' ? copy.statusOpen : currentStatus === 'reviewing' ? copy.statusReviewing : copy.statusCommitted) + ' · ') + lines.length + ' ' + copy.distinctItems + ' · ' + copy.totalQuantity + ': ' + Number(lines.reduce(function (sum, line) { return sum + Number(line.quantity); }, 0).toPrecision(12));
 			if (showAllButton) { showAllButton.hidden = lines.length <= 3; showAllButton.textContent = showAll ? copy.showRecent : copy.showAll; showAllButton.setAttribute('aria-expanded', String(showAll)); }
 			if (finishButton) finishButton.hidden = currentStatus !== 'open';
 			if (deleteButton) deleteButton.disabled = currentTripId === null || currentStatus === 'committed' || lines.some(function (line) { return line.applied_at !== null; }) || pendingScans > 0 || finishing || cameraLocked || cameraSubmitting;

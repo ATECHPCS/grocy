@@ -1,7 +1,7 @@
 @extends('layout.default')
 
 @php
-$grocyAiAssetVersion = '2.6.8';
+$grocyAiAssetVersion = '2.6.18';
 @endphp
 @push('pageStyles')
 <link rel="stylesheet"
@@ -62,6 +62,9 @@ $grocyAiAssetVersion = '2.6.8';
 	data-label-needs-details="{{ $__t('Needs details') }}"
 	data-label-show-all="{{ $__t('Show all items') }}"
 	data-label-show-recent="{{ $__t('Show recent items') }}"
+	data-label-status-open="{{ $__t('Open') }}"
+	data-label-status-reviewing="{{ $__t('Reviewing') }}"
+	data-label-status-committed="{{ $__t('Committed') }}"
 	data-label-trip="{{ $__t('Trip') }}"
 	data-label-delete-first="{{ $__t('Delete this trip from the active list? Receipt and scan history will be kept for audit.') }}"
 	data-label-delete-second="{{ $__t('Final confirmation: delete this trip? This cannot be undone from this screen.') }}"

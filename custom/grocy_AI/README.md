@@ -639,3 +639,11 @@ Product approval reports missing required fields, cancellation, saving, and fail
 ### Required product fields (October 8, 2026)
 
 Product research labels mark Proposed name, Location, Purchase unit, and Stock unit with red asterisks and accessible required state. The legend clarifies these fields are required for product creation; partial research draft saving remains available. Package research notes and classification fields remain optional. Review assets use `2.6.17`, customization marker `ATECHPCS-grocy_AI-40`.
+
+### Mobile purchase flow (`2.6.18`)
+
+Capture shows distinct items and total scanned quantity, with the latest accepted UPC and compact recent list. Review presents one phone queue card with participation, research, the authoritative receipt editor, and separate catalog actions. Continue to purchase summary opens confirmation even when review is blocked; Back to review and grouped Review actions retain the mounted editors and drafts.
+
+Confirmation quantities are active included item allocations in each product's catalog purchase unit. Receipt-only allocations count; paired scans do not count twice. Reviewed prices stay separate, and missing metadata is explicitly unavailable. Full receipt audit totals include ignored amounts and adjustments, so they can differ from included purchases. Package text never produces stock conversion estimates. Product created refers to catalog creation; Commit purchase adds reviewed items to stock.
+
+Stage navigation performs no writes. Readiness, checksum, confirmations and unsaved-edit guards still control the single purchase commit. Pending submission remains locked across rerenders; failures or ambiguous results require explicit reload/recheck with no automatic retry. Partial results preserve remaining review; committed trips offer inventory and a new trip without recommit. Physical-phone acceptance remains pending separately from simulated viewports; see `docs/superpowers/plans/2026-10-08-mobile-purchase-flow-verification.md`.

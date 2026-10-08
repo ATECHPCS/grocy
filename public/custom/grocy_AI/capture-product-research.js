@@ -58,6 +58,7 @@
 	{
 		var base = '/api/grocy-ai/capture/trips/' + encodeURIComponent(String(options.tripId));
 		var active = true;
+		var mutationCount = 0;
 		var productList = null;
 		var productListPromise = null;
 		var referenceRequests = {};
@@ -107,6 +108,8 @@
 			}
 			function mutate(url, method, body, reloadTrip, onFailure, onSuccess)
 			{
+				mutationCount++;
+				if (mutationCount === 1 && options.onBusy) options.onBusy(true);
 				showFeedback('Saving…');
 				return request(url, method, body).then(function (result)
 				{
@@ -124,6 +127,11 @@
 					if (!active) return;
 					if (onFailure) onFailure();
 					showFeedback(error.message);
+				}).finally(function ()
+				{
+					mutationCount--;
+					// Always settle the owner scope, including after disposal/trip changes.
+					if (mutationCount === 0 && options.onBusy) options.onBusy(false);
 				});
 			}
 			function finishCard()
