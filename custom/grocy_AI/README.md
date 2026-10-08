@@ -631,3 +631,7 @@ The research read-lock fix uses customization marker `ATECHPCS-grocy_AI-36`. The
 Receipt review item cards include **Disregard receipt item**. Confirming saves Ignore without changing the receipt quantity or amount. Ignored items stay visible for audit and can be restored with Decision and Save line. Remove active allocations first; ignoring a receipt item does not deselect its scanned item. Receipt evidence from an ignored line is cleared from unapproved product research. Unsaved edits to that receipt line are discarded after a successful disregard save.
 
 Manually choosing a UPC in **Scanned item for this receipt line** does not require Save line. Press **Pair scanned item** to persist the pairing. Unrelated receipt edits remain unsaved and preserved; corrections to this receipt line must be saved or discarded first so research uses the receipt description you reviewed.
+
+### Product approval feedback (October 8, 2026)
+
+Product approval reports missing required fields, cancellation, saving, and failures beside its action buttons and brings feedback into view on mobile. Successful creation or linking leaves a status on the scan card after its reload. Approval creates a catalog product immediately after two confirmations; receipt reconciliation and Commit purchase still gate stock changes. Review assets use `2.6.16`, customization marker `ATECHPCS-grocy_AI-39`.

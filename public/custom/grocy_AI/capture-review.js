@@ -168,6 +168,7 @@
 		var researchComponent = null;
 		var receiptComponent = null;
 		var researchStates = {};
+		var researchNotices = {};
 		var activeReviewKey = null;
 		var activeReviewIndex = 0;
 		var reviewQueue = { cards: [], receiptOwnerByKey: {} };
@@ -651,7 +652,17 @@
 			selectCard(activeReviewKey, false);
 			var researchError = element('div', 'invalid-feedback d-block');
 			detailEl.appendChild(researchError);
-			if (window.GrocyAIProductResearch) researchComponent = window.GrocyAIProductResearch(linesList, { editState: researchStates[currentTripId], onEdit: updateReviewState, errorHost: researchError, tripId: currentTripId, lines: currentLines, receipts: receiptViews, locationId: currentTrip.default_location_id, readOnly: currentTrip.status === 'committed', reload: reloadCurrent });
+			if (window.GrocyAIProductResearch) researchComponent = window.GrocyAIProductResearch(linesList, { editState: researchStates[currentTripId], onEdit: updateReviewState, errorHost: researchError, tripId: currentTripId, lines: currentLines, receipts: receiptViews, locationId: currentTrip.default_location_id, readOnly: currentTrip.status === 'committed', reload: function (notice, seq)
+			{
+				if (generation !== renderRevision || renderedLoadRevision !== loadRevision || renderedTripId !== currentTripId) return Promise.resolve();
+				researchNotices[renderedTripId + ':' + seq] = notice;
+				return reloadCurrent().then(function ()
+				{
+					if (renderedTripId !== currentTripId) return;
+					var feedback = detailEl.querySelector('.grocy-ai-capture-review-line[data-line-seq="' + seq + '"] .grocy-ai-product-review-notice');
+					if (feedback) { feedback.focus(); feedback.scrollIntoView({ block: 'nearest' }); }
+				});
+			} });
 			if (window.GrocyAIReceipts && receiptReadiness)
 			{
 				receiptStates[currentTripId] = receiptStates[currentTripId] || { drafts: {}, uploads: [] };
@@ -799,6 +810,12 @@
 			var label = lineLabel(line, productNames[String(line.resolved_product_id)], copy);
 			var item = element('li', 'list-group-item grocy-ai-capture-review-line status-' + label.status);
 			item.setAttribute('data-line-seq', String(line.seq));
+			if (researchNotices[currentTripId + ':' + line.seq])
+			{
+				var notice = element('p', 'alert alert-success grocy-ai-product-review-notice', researchNotices[currentTripId + ':' + line.seq]);
+				notice.setAttribute('role', 'status'); notice.setAttribute('aria-live', 'polite'); notice.tabIndex = -1;
+				item.appendChild(notice);
+			}
 
 			var header = element('div', 'd-flex justify-content-between align-items-center');
 			var description = element('div', 'grocy-ai-capture-review-line-description');
