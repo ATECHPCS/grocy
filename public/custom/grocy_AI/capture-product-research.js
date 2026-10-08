@@ -83,33 +83,43 @@
 			card.appendChild(node('h4', null, 'Scan #' + line.seq + ' · Product research · ' + draft.scanned_barcode));
 			var status = draft.job_state === 'ready' ? 'Ready to review' : draft.job_state === 'queued' || draft.job_state === 'leased' ? 'Researching' : draft.job_state === 'retryable_failure' ? 'Provider unavailable' : 'Needs details';
 			card.appendChild(node('p', 'grocy-ai-product-research-status', status));
-			card.appendChild(node('p', 'text-muted', line.status === 'known' ? 'The scan now resolves to a product. This research draft still needs an explicit link.' : 'Provisional research only. No product or stock has been saved.'));
+			card.appendChild(node('p', 'text-muted', line.status === 'known' ? 'The scan now resolves to a product. This research draft still needs an explicit link.' : 'No product or stock has been saved. Approval creates the product immediately after two confirmations. Receipt reconciliation and Commit purchase add stock later.'));
 			if (draft.safe_error_code) card.appendChild(node('p', 'text-muted', 'Research service could not finish. You can retry or enter details.'));
 			var path = base + '/lines/' + encodeURIComponent(String(line.seq));
 			var message = node('p', 'grocy-ai-product-research-message');
 			message.setAttribute('role', 'status');
+			message.setAttribute('aria-live', 'polite');
+			message.tabIndex = -1;
+			function showFeedback(text)
+			{
+				message.textContent = text;
+				message.focus();
+				message.scrollIntoView({ block: 'nearest' });
+			}
 			function mutate(url, method, body, reloadTrip, onFailure, onSuccess)
 			{
-				message.textContent = 'Saving…';
-				return request(url, method, body).then(function ()
+				showFeedback('Saving…');
+				return request(url, method, body).then(function (result)
 				{
 					// A successful write still settles its matching draft fields after disposal.
 					if (onSuccess) onSuccess();
 					if (reloadTrip) delete pendingEdits[line.id];
 					if (options.onEdit) options.onEdit();
 					if (!active) return;
-					message.textContent = 'Saved.';
-					return reloadTrip ? options.reload() : load();
+					showFeedback('Saved.');
+					var notice = result && result.outcome === 'approved' ? 'Product #' + result.product_id + ' created. Complete receipt reconciliation, then Commit purchase to add it to stock.' : result && result.outcome === 'linked' ? 'Product #' + result.product_id + ' linked to this scan. Complete receipt reconciliation, then Commit purchase to add stock.' : 'Product review saved.';
+					return reloadTrip ? options.reload(notice, line.seq) : load();
 				}).catch(function (error)
 				{
 					if (!active) return;
 					if (onFailure) onFailure();
-					message.textContent = error.message;
+					showFeedback(error.message);
 				});
 			}
 			function finishCard()
 			{
-				card.appendChild(message);
+				var actions = card.querySelector('.grocy-ai-product-research-actions');
+				card.insertBefore(message, actions ? actions.nextSibling : card.firstChild);
 				if (Number(line.selected) === 0)
 				{
 					card.appendChild(node('p', 'text-muted', 'Include this scan in the purchase before approving or linking a product. Research draft edits can still be saved.'));
@@ -226,7 +236,7 @@
 			button(controls, 'Save research draft', function ()
 			{
 				var values = { name: name.value.trim(), brand: brand.value.trim() || null, package: packageField.value.trim() || null, product_group_id: group.value ? Number(group.value) : null, taxonomy_leaf_slug: taxonomy.value || null, parent_product_id: parent.value ? Number(parent.value) : null };
-				if (!values.name) { message.textContent = 'Enter a product name.'; return; }
+				if (!values.name) { showFeedback('Enter a product name.'); return; }
 				if (unitsReady)
 				{
 					values.qu_id_purchase = purchaseUnit.value ? Number(purchaseUnit.value) : null;
@@ -234,7 +244,7 @@
 				}
 				var changes = {};
 				Object.keys(values).forEach(function (key) { if (values[key] !== initialFields[key] || touchedFields[key] || Object.prototype.hasOwnProperty.call(fieldEdits, key)) changes[key] = values[key]; });
-				if (!Object.keys(changes).length) { message.textContent = 'No research draft changes to save.'; return; }
+				if (!Object.keys(changes).length) { showFeedback('No research draft changes to save.'); return; }
 				var submittedEdits = Object.assign({}, fieldEdits);
 				mutate(path + '/research', 'PUT', { revision: draft.revision, changes: changes }, false, null, function ()
 				{
@@ -334,15 +344,20 @@
 			purchaseUnit.addEventListener('change', checkParentUnits);
 			function confirmWrite(kind, summary, body)
 			{
-				if (!window.confirm('Review ' + kind + ': ' + summary + '. Continue?')) return;
-				if (!window.confirm('Final confirmation: ' + summary + '. This changes the product catalog and barcode ownership. Confirm?')) return;
+				if (!window.confirm('Review ' + kind + ': ' + summary + '. Continue?')) { showFeedback('Product approval cancelled. No product was created or linked.'); return; }
+				if (!window.confirm('Final confirmation: ' + summary + '. This changes the product catalog and barcode ownership. Confirm?')) { showFeedback('Product approval cancelled. No product was created or linked.'); return; }
 				mutate(path + '/research/' + kind, 'POST', body, true);
 			}
 			button(controls, 'Approve new product', function ()
 			{
 				var fields = { name: name.value.trim(), location_id: Number(location.value), qu_id_purchase: Number(purchaseUnit.value), qu_id_stock: Number(stockUnit.value) };
-				if (!fields.name || !fields.location_id || !fields.qu_id_purchase || !fields.qu_id_stock) { message.textContent = 'Enter a name, location, purchase unit, and stock unit first.'; return; }
-				if (!parentCompatible) { message.textContent = 'Review generic parent stock unit compatibility first.'; return; }
+				var missing = [];
+				if (!fields.name) missing.push('product name');
+				if (!fields.location_id) missing.push('location');
+				if (!fields.qu_id_purchase) missing.push('purchase unit');
+				if (!fields.qu_id_stock) missing.push('stock unit');
+				if (missing.length) { showFeedback('Product not created yet. Choose ' + missing.join(' and ') + ', then approve again.'); return; }
+				if (!parentCompatible) { showFeedback('Review generic parent stock unit compatibility first.'); return; }
 				if (group.value) fields.product_group_id = Number(group.value);
 				if (taxonomy.value) fields.taxonomy_leaf_slug = taxonomy.value;
 				if (parent.value) fields.parent_product_id = Number(parent.value);
@@ -364,12 +379,12 @@
 			search.addEventListener('input', function ()
 			{
 				if (search.value.trim().length < 2) { showMatches(); return; }
-				if (!productListPromise) productListPromise = request('/api/objects/products', 'GET').then(function (rows) { productList = Array.isArray(rows) ? rows : []; return productList; }).catch(function () { message.textContent = 'Could not search existing products.'; return []; });
+				if (!productListPromise) productListPromise = request('/api/objects/products', 'GET').then(function (rows) { productList = Array.isArray(rows) ? rows : []; return productList; }).catch(function () { showFeedback('Could not search existing products.'); return []; });
 				productListPromise.then(showMatches);
 			});
 			button(controls, 'Link existing product', function ()
 			{
-				if (!products.value) { message.textContent = 'Choose an existing product first.'; return; }
+				if (!products.value) { showFeedback('Choose an existing product first.'); return; }
 				confirmWrite('link', products.selectedOptions[0].textContent + ' · barcode ' + draft.scanned_barcode, { revision: draft.revision, product_id: Number(products.value) });
 			}, true);
 			finishCard();

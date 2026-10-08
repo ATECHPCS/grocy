@@ -417,3 +417,29 @@ test('explicitly cleared brand and package stay blank after draft reload', async
 	await expect(page.getByText('Provider brand — Open Food Facts')).toBeVisible();
 	expect(data.writes).toHaveLength(0);
 });
+
+
+test('approval missing units brings actionable feedback into view', async ({ page }) =>
+{
+	const data = await setup(page);
+	await page.getByRole('button', { name: 'Approve new product' }).click();
+	const feedback = page.locator('.grocy-ai-product-research-message');
+	await expect(feedback).toContainText('purchase unit');
+	await expect(feedback).toBeInViewport();
+	await expect(feedback).toBeFocused();
+	expect(data.writes.some(w => w.path.endsWith('/approve'))).toBe(false);
+});
+
+test('approval reports created catalog product after reload while stock stays blocked', async ({ page }) =>
+{
+	await setup(page);
+	await page.getByLabel('Purchase unit').selectOption('2');
+	await page.getByLabel('Stock unit').selectOption('2');
+	page.on('dialog', dialog => dialog.accept());
+	await page.getByRole('button', { name: 'Approve new product' }).click();
+	const feedback = page.locator('.grocy-ai-product-review-notice');
+	await expect(feedback).toContainText('Product #82 created');
+	await expect(feedback).toContainText('Commit purchase');
+	await expect(feedback).toBeInViewport();
+	await expect(page.getByRole('button', { name: 'Commit purchase' })).toBeDisabled();
+});

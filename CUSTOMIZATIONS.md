@@ -140,3 +140,7 @@ Receipt item cards expose a confirmed **Disregard receipt item** shortcut to the
 ### Manual receipt pairing fix (October 7, 2026)
 
 The scanned UPC pairing selector is now an action choice instead of a receipt line edit. Pair can persist that choice while preserving unrelated receipt drafts. Corrections to the same receipt line still require Save line or Discard line edits, with feedback beside Pair. This fixes the unsaved-edit guard blocking manually selected UPCs. Review assets advance to `2.6.15`, customization marker `ATECHPCS-grocy_AI-38`.
+
+### Product approval feedback (October 8, 2026)
+
+Product approval reports missing required fields, cancellation, saving, and failures beside its action buttons and brings feedback into view on mobile. Successful creation or linking leaves a status on the scan card after its reload. Approval creates a catalog product immediately after two confirmations; receipt reconciliation and Commit purchase still gate stock changes. Review assets use `2.6.16`, customization marker `ATECHPCS-grocy_AI-39`.
