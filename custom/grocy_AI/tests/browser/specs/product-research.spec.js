@@ -443,3 +443,20 @@ test('approval reports created catalog product after reload while stock stays bl
 	await expect(feedback).toBeInViewport();
 	await expect(page.getByRole('button', { name: 'Commit purchase' })).toBeDisabled();
 });
+
+
+test('product creation required fields have visible red markers and accessible required state', async ({ page }) =>
+{
+	await setup(page);
+	for (const label of ['Proposed name', 'Location', 'Purchase unit', 'Stock unit'])
+	{
+		const control = page.getByLabel(label, { exact: true });
+		await expect(control).toHaveAttribute('aria-required', 'true');
+		const marker = control.locator('..').locator('.grocy-ai-required-marker');
+		await expect(marker).toHaveText('*');
+		await expect(marker).toHaveClass(/text-danger/);
+	}
+	for (const label of ['Brand research note', 'Package research note', 'Product group', 'Food classification', 'Generic parent'])
+		await expect(page.getByLabel(label, { exact: true })).not.toHaveAttribute('aria-required', 'true');
+	await expect(page.getByText('Required for product creation')).toBeVisible();
+});

@@ -31,6 +31,13 @@
 		host.appendChild(wrap);
 		return control;
 	}
+	function markRequired(control)
+	{
+		var marker = node('span', 'text-danger grocy-ai-required-marker', ' *');
+		marker.setAttribute('aria-hidden', 'true');
+		control.parentNode.insertBefore(marker, control);
+		control.setAttribute('aria-required', 'true');
+	}
 	function button(host, label, action, restricted)
 	{
 		var control = node('button', 'btn btn-outline-primary' + (restricted ? ' permission-MASTER_DATA_EDIT' : ''), label);
@@ -185,7 +192,12 @@
 			if (draft.receipt_evidence) card.appendChild(node('p', null, 'Receipt evidence: ' + draft.receipt_evidence.description + ' (Receipt OCR; supporting evidence)'));
 			if (draft.suggested && draft.suggested.categories && draft.suggested.categories.length) card.appendChild(node('p', 'text-muted', 'Open Food Facts categories: ' + draft.suggested.categories.join(', ')));
 			if (draft.classification) card.appendChild(node('p', 'grocy-ai-product-research-classification', draft.classification.state === 'suggested' ? 'Classification suggestions ready' : ['pending', 'queued'].indexOf(draft.classification.state) !== -1 ? 'Classification queued; manual choices are available.' : draft.classification.state === 'leased' ? 'Classification in progress; manual choices are available.' : draft.classification.state === 'not_needed' ? 'Open Food Facts classification suggestions ready' : 'Classification unavailable; choose manually.'));
+			var requiredNote = node('p', 'text-muted');
+			requiredNote.appendChild(node('span', 'text-danger', '* '));
+			requiredNote.appendChild(document.createTextNode('Required for product creation'));
+			card.appendChild(requiredNote);
 			var name = field(card, 'Proposed name', draft.selected.name);
+			markRequired(name);
 			card.appendChild(node('p', 'grocy-ai-product-research-notes text-muted', 'Brand and package are research notes only; they are not saved to the Grocy product by this approval. Save research draft stores your corrections for review.'));
 			if (draft.suggested && draft.suggested.brand) card.appendChild(node('p', 'grocy-ai-product-research-brand-source', draft.suggested.brand + ' — Open Food Facts'));
 			if (draft.suggested && draft.suggested.package) card.appendChild(node('p', 'grocy-ai-product-research-package-source', draft.suggested.package + ' — Open Food Facts'));
@@ -269,6 +281,7 @@
 				return control;
 			}
 			var location = reference('Location', 'locations', options.locationId);
+			markRequired(location);
 			var unitsReady = false;
 			var unitMessage = node('p', 'grocy-ai-product-research-unit-message text-muted');
 			unitMessage.setAttribute('role', 'status');
@@ -312,6 +325,8 @@
 			}
 			var purchaseUnit = unitControl('Purchase unit', 'qu_id_purchase', draft.purchase_unit_candidates);
 			var stockUnit = unitControl('Stock unit', 'qu_id_stock', draft.stock_unit_candidates);
+			markRequired(purchaseUnit);
+			markRequired(stockUnit);
 			card.appendChild(unitMessage);
 			var parentCompatible = true;
 			var compatibilityGeneration = 0;
