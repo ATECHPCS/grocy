@@ -1536,3 +1536,32 @@ test('@flowsummary confirmed success survives a failed follow-up reload', async 
  await expect(page.getByRole('link', { name: 'View inventory' })).toBeVisible();
  expect(state.commits).toBe(1);
 });
+
+
+test('@flowsummary confirmed success returns to read-only summary after Back to review and failed follow-up reload', async ({ page }) => {
+ const state = await installReviewApi(page);
+ let release;
+ await page.route('**/trips/7/commit', async route => {
+  state.commits++;
+  await new Promise(resolve => release = resolve);
+  state.committed = true;
+  await json(route, { outcome: 'committed', transaction_id: 'txn-1001', applied: 1 });
+ });
+ await page.route('**/trips/7', route => state.committed ? route.abort('failed') : json(route, { trip: makeTrip({ status: 'reviewing' }), lines: state.lines, checksum: CHECKSUM }));
+ page.on('dialog', dialog => dialog.accept());
+ await openSummary(page);
+ await page.locator('#grocyai-capture-review-commit').click();
+ await expect(page.locator('#grocyai-capture-review-commit-result')).toContainText('Committing');
+ await page.locator('#grocyai-purchase-summary-back').click();
+ await expect(page.locator('#grocyai-review-stage')).toBeVisible();
+ release();
+ await expect(page.locator('#grocyai-purchase-summary')).toBeVisible();
+ await expect(page.locator('#grocyai-purchase-summary')).toContainText('Purchase committed');
+ await expect(page.locator('#grocyai-purchase-summary')).toContainText('txn-1001');
+ await expect(page.locator('#grocyai-capture-review-commit')).toHaveCount(0);
+ await expect(page.getByRole('link', { name: 'View inventory' })).toBeVisible();
+ await page.locator('#grocyai-purchase-summary-back').click();
+ await expect(page.locator('#grocyai-capture-review-selected-1')).toBeDisabled();
+ await expect(page.locator('.grocy-ai-capture-review-line-controls input[type="number"]')).toBeDisabled();
+ expect(state.commits).toBe(1);
+});

@@ -1349,6 +1349,7 @@ if (function_exists('runTaxonomyClassificationReview'))
 // Keep the deployed view and browser fixture on the same queue release boundary.
 $reviewBlade = file_get_contents(__DIR__ . '/../../../views/grocyai_capture_review.blade.php');
 $reviewFixture = file_get_contents(__DIR__ . '/browser/fixtures/capture-review.html');
+$captureFixture = file_get_contents(__DIR__ . '/browser/fixtures/capture.html');
 $reviewVersion = json_decode(file_get_contents(__DIR__ . '/../version.json'), true);
 check(str_contains($reviewBlade, "$" . "grocyAiAssetVersion = '2.6.18';"), 'Capture review Blade uses release asset token 2.6.18');
 check(($reviewVersion['Customization'] ?? '') === 'ATECHPCS-grocy_AI-41', 'Mobile purchase flow release advances the customization marker to 41');
@@ -1361,6 +1362,11 @@ foreach (['Blade' => $reviewBlade, 'browser fixture' => $reviewFixture] as $surf
 foreach (['capture-receipts.js', 'capture-product-research.js', 'capture-review-queue.js', 'capture-review.js', 'grocy-ai.css'] as $asset)
 {
 	check(str_contains($reviewFixture, $asset . '?v=2.6.18'), 'Browser fixture versions ' . $asset . ' at 2.6.18');
+}
+
+foreach (['capture.js', 'grocy-ai.css'] as $asset)
+{
+	check(str_contains($captureFixture, $asset . '?v=2.6.18'), 'Capture browser fixture versions ' . $asset . ' at 2.6.18');
 }
 
 if ($failures > 0)

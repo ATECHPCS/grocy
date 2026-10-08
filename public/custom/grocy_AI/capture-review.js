@@ -338,13 +338,14 @@
 			{
 				if (revision !== loadRevision) return null;
 				detailEl.inert = false; loadingTrip = false;
-				if (currentTrip && currentTripId === String(tripId) && reviewStage === 'summary')
+				if (currentTrip && currentTripId === String(tripId) && (reviewStage === 'summary' || (commitStates[currentTripId] || {}).outcome === 'committed'))
 				{
 					var state = commitStates[currentTripId] = commitStates[currentTripId] || {};
 					state.needsRecheck = true;
 					if (state.outcome === 'committed')
 					{
 						// The confirmed commit result is authoritative even if its follow-up read fails.
+						reviewStage = 'summary';
 						currentTrip.status = 'committed'; currentTrip.transaction_id = state.transactionId || currentTrip.transaction_id;
 					}
 					else state.message = 'Could not reload purchase. Reload and recheck purchase before trying again.';
