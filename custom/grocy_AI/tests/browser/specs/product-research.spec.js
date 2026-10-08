@@ -29,7 +29,10 @@ async function setup(page, state = 'ready', settings = {})
 	});
 	await page.goto('/fixtures/capture-review.html');
 	await page.locator('#grocyai-capture-review-trips button').click();
-	if (!settings.catalogFailure) await expect(page.locator('.grocy-ai-product-research')).toBeVisible();
+	if (!settings.catalogFailure) {
+		await expect(page.locator('.grocy-ai-product-research')).toBeVisible();
+		await page.getByRole('button', { name: /Optional details and source evidence/ }).click();
+	}
 	return data;
 }
 
@@ -72,7 +75,7 @@ test('product research failure offers retry and approval stays permission gated'
 	await expect(page.getByText('Provider unavailable')).toBeVisible();
 	await page.getByRole('button', { name: 'Retry research' }).click();
 	await expect.poll(() => data.writes.some(w => w.path.endsWith('/retry'))).toBe(true);
-	await expect(page.locator('.grocy-ai-product-research .permission-MASTER_DATA_EDIT')).toHaveCount(2);
+	await expect(page.locator('.grocy-ai-flow-product-actions .permission-MASTER_DATA_EDIT')).toHaveCount(2);
 });
 
 test('product research processing and miss remain provisional', async ({ page }) =>
@@ -135,7 +138,7 @@ test('product research save preserves unsaved receipt editor text', async ({ pag
 	const data = await setup(page);
 	data.receipts.push({ receipt: { id: 9, status: 'needs_review', merchant: '', purchase_date: null, printed_total: null, shopping_location_id: null, difference_accepted_amount: null }, lines: [], totals: { entered_total: 0, printed_total: null, difference: null }, issues: ['no_lines'] });
 	await page.locator('#grocyai-capture-review-trips button').click();
-	if (page.viewportSize().width < 768) await page.getByRole('button', { name: 'Show receipt details' }).click();
+	if (page.viewportSize().width < 768) await page.getByRole('button', { name: 'View receipt' }).click();
 	await page.getByLabel('Merchant').fill('Corner Market');
 	await page.getByLabel('Proposed name').fill('Corrected Oat Milk');
 	await page.getByRole('button', { name: 'Save research draft' }).click();
@@ -178,7 +181,7 @@ test('product research cards stay beside their scan rows for fifteen unknowns', 
 	data.drafts = data.lines.map((item, index) => ({ ...draft(), id: 5 + index, line_id: item.id, seq: item.seq, scanned_barcode: item.scanned_barcode }));
 	await page.locator('#grocyai-capture-review-trips button').click();
 	await expect(page.locator('.grocy-ai-product-research')).toHaveCount(15);
-	for (let seq = 1; seq <= 15; seq++) await expect(page.locator('.grocy-ai-capture-review-line[data-line-seq="' + seq + '"] > .grocy-ai-product-research')).toHaveCount(1);
+	for (let seq = 1; seq <= 15; seq++) await expect(page.locator('.grocy-ai-capture-review-line[data-line-seq="' + seq + '"] > .grocy-ai-flow-research > .grocy-ai-product-research')).toHaveCount(1);
 	await expect.poll(() => data.referenceGets.filter(path => path.endsWith('/quantity_units')).length).toBeLessThanOrEqual(3);
 	expect(data.catalogGets).toBeLessThanOrEqual(2);
 });

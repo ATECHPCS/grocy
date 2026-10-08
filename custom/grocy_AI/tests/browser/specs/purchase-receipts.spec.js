@@ -199,7 +199,7 @@ async function setup(page)
 async function openReceiptDetails(page)
 {
 	await expect(page.locator('.grocy-ai-receipt')).not.toHaveCount(0);
-	while (await page.getByRole('button', { name: 'Show receipt details' }).count()) await page.getByRole('button', { name: 'Show receipt details' }).first().click();
+	while (await page.getByRole('button', { name: 'View receipt' }).count()) await page.getByRole('button', { name: 'View receipt' }).first().click();
 }
 const photo = {
 	name: 'receipt.png',
@@ -222,7 +222,7 @@ test('multiple photos and blocked commit', async (
 	await expect(page.locator('.grocy-ai-receipt')).toHaveCount(2);
 	await expect(page.locator('#grocyai-receipt-readiness')).toContainText('Finish receipt');
 });
-test('unknown scanned UPC can be paired with a receipt line before product approval without allocating stock', async ({ page }) =>
+test('@flowreview unknown scanned UPC can be paired with a receipt line before product approval without allocating stock', async ({ page }) =>
 {
 	const state = await setup(page);
 	await page.getByLabel('Add receipt photos').setInputFiles(photo);
@@ -367,7 +367,7 @@ test('receipt controls fit phone widths and saved receipt edits must be saved be
 	await expect(page.locator('#grocyai-capture-review-commit')).toBeDisabled();
 	await expect(page.getByText('Unsaved changes — save this section before committing.')).toBeVisible();
 });
-test('save rejection retains typed correction and reports an error', async (
+test('@flowreview save rejection retains typed correction and reports an error', async (
 {
 	page
 }) =>
@@ -389,6 +389,7 @@ test('save rejection retains typed correction and reports an error', async (
 		name: 'Save receipt details'
 	}).click();
 	await expect(page.getByText('Invalid receipt total')).toBeVisible();
+	await expect(page.locator('#grocyai-receipt-details-1 .grocy-ai-receipt-status')).toBeFocused();
 	await expect(page.getByLabel('Printed total')).toHaveValue('5');
 });
 test('explicit Include and product match confirm quantity and price, then permit correction', async (
@@ -750,7 +751,7 @@ test('receipt card mounting falls back to an editable summary when a card host i
 	await expect(first.getByLabel('Description', { exact: true })).toHaveValue('Fallback milk');
 });
 
-test('@mobilequeue combined scan and receipt-only cards retain edits and totals across receipts', async ({ page }) =>
+test('@flowreview @mobilequeue combined scan and receipt-only cards retain edits and totals across receipts', async ({ page }) =>
 {
 	const state = await setup(page);
 	await page.getByLabel('Add receipt photos').setInputFiles([photo, { ...photo, name: 'other.png' }]);
@@ -782,7 +783,7 @@ test('@mobilequeue combined scan and receipt-only cards retain edits and totals 
 	for (const control of await active.locator('input:not([type=checkbox]), select, button').all()) expect((await control.boundingBox()).height).toBeGreaterThanOrEqual(44);
 });
 
-test('@mobilequeue shared receipt allocations have one editor reachable from either scan', async ({ page }) =>
+test('@flowreview @mobilequeue shared receipt allocations have one editor reachable from either scan', async ({ page }) =>
 {
 	const state = await setup(page);
 	await page.getByLabel('Add receipt photos').setInputFiles(photo);
@@ -802,7 +803,7 @@ test('@mobilequeue shared receipt allocations have one editor reachable from eit
 	await expect(page.locator('.grocy-ai-receipt-line')).toHaveCount(1);
 });
 
-test('@mobilequeue compact multiple receipt summaries reveal photo and edits explicitly at 320px', async ({ page }) =>
+test('@flowreview @mobilequeue compact multiple receipt summaries reveal photo and edits explicitly at 320px', async ({ page }) =>
 {
 	await page.setViewportSize({ width: 320, height: 844 });
 	await setup(page);
@@ -813,14 +814,14 @@ test('@mobilequeue compact multiple receipt summaries reveal photo and edits exp
 	const receipt = page.locator('.grocy-ai-receipt').first();
 	await expect(receipt).toContainText('needs review');
 	await expect(receipt.locator('.grocy-ai-receipt-compact-summary')).toContainText('Entered total: 0');
-	const toggle = receipt.getByRole('button', { name: 'Show receipt details' });
+	const toggle = receipt.getByRole('button', { name: 'View receipt' });
 	expect((await toggle.boundingBox()).height).toBeGreaterThanOrEqual(44);
 	await toggle.click();
 	await expect(receipt.getByRole('img')).toBeVisible();
 	await receipt.getByLabel('Merchant', { exact: true }).fill('Unsaved market');
 	await receipt.getByRole('button', { name: 'Hide receipt details' }).click();
 	await expect(page.locator('#grocyai-capture-review-commit')).toBeDisabled();
-	await receipt.getByRole('button', { name: 'Show receipt details' }).click();
+	await receipt.getByRole('button', { name: 'View receipt' }).click();
 	await expect(receipt.getByLabel('Merchant', { exact: true })).toHaveValue('Unsaved market');
 	await expect(receipt.getByRole('button', { name: 'Finish receipt', exact: true })).toBeVisible();
 	expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
@@ -828,7 +829,7 @@ test('@mobilequeue compact multiple receipt summaries reveal photo and edits exp
 	await expect(page.locator('.grocy-ai-receipt-details:visible')).toHaveCount(2);
 });
 
-test('disregard receipt item requires confirmation, preserves amounts, and allows restoration', async ({ page }) =>
+test('@flowreview disregard receipt item requires confirmation, preserves amounts, and allows restoration', async ({ page }) =>
 {
 	const state = await setup(page);
 	await page.getByLabel('Add receipt photos').setInputFiles(photo);
@@ -851,7 +852,7 @@ test('disregard receipt item requires confirmation, preserves amounts, and allow
 	await expect(line.getByRole('button', { name: 'Disregard receipt item', exact: true })).toBeVisible();
 });
 
-test('disregard matched receipt item explains allocation removal without saving', async ({ page }) =>
+test('@flowreview disregard matched receipt item explains allocation removal without saving', async ({ page }) =>
 {
 	const state = await setup(page);
 	await page.getByLabel('Add receipt photos').setInputFiles(photo);
@@ -859,7 +860,9 @@ test('disregard matched receipt item explains allocation removal without saving'
 	state.receipts[0].lines = [{ id: 1, description: 'Matched item', quantity: 1, line_total: 2, decision: 'include', allocations: [{ id: 1, active: 1, product_id: 101, quantity: 1, unit_price: 2 }] }];
 	await page.locator('#grocyai-capture-review-trips button').click();
 	await page.locator('.grocy-ai-receipt-line').getByRole('button', { name: 'Disregard receipt item', exact: true }).click();
-	await expect(page.locator('.grocy-ai-receipts')).toContainText('Remove this receipt item’s allocations before disregarding it.');
+	const feedback = page.locator('.grocy-ai-receipt-line .grocy-ai-receipt-status');
+	await expect(feedback).toContainText('Remove this receipt item’s allocations before disregarding it.');
+	await expect(feedback).toBeVisible();
 	expect(state.writes.filter(write => write.path.endsWith('/lines/1'))).toHaveLength(0);
 });
 
@@ -891,4 +894,21 @@ test('manually choosing a scanned UPC can pair without saving unrelated receipt 
 	await expect(page.getByLabel('Merchant')).toHaveValue('Unsaved merchant correction');
 	expect(state.writes.filter(write => write.path.endsWith('/allocation'))).toHaveLength(0);
 	await expect(page.getByRole('button', { name: 'Commit purchase', exact: true })).toBeDisabled();
+});
+
+test('@flowreview header blockers open receipt details without writes', async ({ page }) =>
+{
+ const state = await setup(page);
+ state.receipts = [{ receipt: { id: 1, status: 'needs_review', merchant: 'Market' }, lines: [], totals: { entered_total: 2, printed_total: 3, difference: 1 }, issues: ['total_difference'] }];
+ await page.locator('#grocyai-capture-review-trips button').click();
+ await expect(page.locator('#grocyai-review-overview')).toContainText('1 receipt');
+ const receipt = page.locator('.grocy-ai-receipt-compact-summary');
+ await expect(receipt).toContainText('Market'); await expect(receipt).toContainText('Difference: 1'); await expect(receipt).toContainText('Needs review');
+ await expect(page.locator('#grocyai-receipt-details-1')).toBeHidden();
+ await page.locator('#grocyai-review-next-unresolved').click();
+ await expect(page.locator('#grocyai-receipt-details-1')).toBeVisible();
+ await expect(page.locator('#grocyai-receipt-details-1')).toBeFocused();
+ await page.locator('#grocyai-capture-review-trips button').click();
+ await expect(page.locator('#grocyai-receipt-details-1')).toBeVisible();
+ expect(state.writes).toEqual([]);
 });

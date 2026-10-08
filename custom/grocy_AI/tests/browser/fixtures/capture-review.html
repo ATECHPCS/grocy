@@ -7,6 +7,7 @@
 	<style>
 		* { box-sizing: border-box; }
 		body { margin: 0; padding: 16px; font-family: Roboto, sans-serif; color: #212529; }
+		.night-mode { background: #15191d; color: #f1f3f5; }
 		.row { display: flex; flex-wrap: wrap; margin: 0 -8px; }
 		.col-12 { width: 100%; padding: 0 8px; }
 		.form-control { display: block; width: 100%; min-width: 0; padding: 8px; border: 1px solid #ced4da; }
@@ -51,7 +52,7 @@
 <body>
 	<main>
 		<!-- Mirrors views/grocyai_capture_review.blade.php: the STOCK_PURCHASE-gated review + commit surface. -->
-		<div class="row permission-STOCK_PURCHASE"
+		<div class="row permission-STOCK_PURCHASE grocy-ai-purchase-flow"
 			id="grocyai-capture-review"
 			data-trips-endpoint="/api/grocy-ai/capture/trips"
 			data-product-new-url="/product/new"

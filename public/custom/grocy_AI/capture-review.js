@@ -169,6 +169,8 @@
 		var receiptComponent = null;
 		var researchStates = {};
 		var researchNotices = {};
+		var disclosuresByTrip = {};
+		var selectRenderedCard = null;
 		var activeReviewKey = null;
 		var activeReviewIndex = 0;
 		var reviewQueue = { cards: [], receiptOwnerByKey: {} };
@@ -469,6 +471,24 @@
 			return select;
 		}
 
+		// Shared by review navigation and the following purchase-summary stage.
+		function selectReviewTarget(target, focus)
+		{
+			if (!target || loadingTrip) return false;
+			if (target.cardKey)
+			{
+				if (!reviewQueue.cards.some(function (card) { return card.key === target.cardKey; }) || !selectRenderedCard || !Array.prototype.some.call(detailEl.querySelectorAll('[data-review-key]'), function (card) { return card.getAttribute('data-review-key') === target.cardKey; })) return false;
+				selectRenderedCard(target.cardKey, focus);
+				return true;
+			}
+			var details = document.getElementById('grocyai-receipt-details-' + target.receiptId);
+			if (!details || !detailEl.contains(details)) return false;
+			var toggle = detailEl.querySelector('[data-receipt-toggle][aria-controls="' + details.id + '"]');
+			if (toggle && toggle.getAttribute('aria-expanded') !== 'true') toggle.click();
+			if (focus) { details.focus(); details.scrollIntoView({ block: 'nearest' }); }
+			return true;
+		}
+
 		function renderDetail()
 		{
 			if (!detailEl)
@@ -489,6 +509,7 @@
 				if (notice) receiptNotice = notice;
 				return loadTrip(renderedTripId);
 			}
+			selectRenderedCard = null;
 			detailEl.textContent = '';
 			if (currentTrip === null)
 			{
@@ -496,6 +517,8 @@
 				return;
 			}
 
+			disclosuresByTrip[currentTripId] = disclosuresByTrip[currentTripId] || {};
+			var disclosures = disclosuresByTrip[currentTripId];
 			var error = element('div', 'invalid-feedback d-block', '');
 			error.id = 'grocyai-capture-review-error';
 			error.setAttribute('role', 'alert');
@@ -544,8 +567,14 @@
 			detailEl.appendChild(defaults);
 			detailEl.appendChild(element('p', 'text-muted', 'Correct purchase prices and stores in the receipts below.'));
 
+			var overview = element('section', 'grocy-ai-flow-card');
+			overview.id = 'grocyai-review-overview';
+			var receiptCount = receiptReadiness ? receiptReadiness.receipts.length : 0;
+			var checks = receiptReadiness ? (receiptReadiness.reasons || []).length : 0;
+			overview.appendChild(element('p', 'grocy-ai-flow-badge', currentLines.length + ' item' + (currentLines.length === 1 ? '' : 's') + ' · ' + checks + ' unresolved checks · ' + receiptCount + ' receipt' + (receiptCount === 1 ? '' : 's')));
+			detailEl.appendChild(overview);
 			var receiptsHost = element('div', 'grocy-ai-receipts');
-			detailEl.appendChild(receiptsHost);
+			overview.appendChild(receiptsHost);
 			var receiptViews = receiptReadiness ? receiptReadiness.receipts : [];
 			reviewQueue = window.GrocyAICaptureReviewQueue.build(currentLines, receiptViews);
 			var receiptByKey = {};
@@ -586,6 +615,9 @@
 			next.id = 'grocyai-review-next'; next.type = 'button';
 			nav.appendChild(previous); nav.appendChild(progress); nav.appendChild(next);
 			detailEl.appendChild(nav);
+			var jump = element('button', 'btn btn-outline-secondary', 'Jump to next unresolved');
+			jump.id = 'grocyai-review-next-unresolved'; jump.type = 'button';
+			detailEl.appendChild(jump);
 			var announcement = element('p', 'grocy-ai-review-announcement');
 			announcement.id = 'grocyai-review-announcement';
 			announcement.setAttribute('role', 'status'); announcement.setAttribute('aria-live', 'polite');
@@ -596,11 +628,24 @@
 			{
 				var scan = currentLines.find(function (line) { return line.id === card.scanLineId; });
 				var item = scan ? renderLine(scan) : element('li', 'list-group-item');
-				item.classList.add('grocy-ai-review-card');
+				item.classList.add('grocy-ai-review-card', 'grocy-ai-flow-card');
+				if (scan)
+				{
+					var participation = element('section', 'grocy-ai-flow-participation');
+					participation.appendChild(item.querySelector('.grocy-ai-capture-review-line-controls'));
+					item.appendChild(participation);
+					item.appendChild(element('section', 'grocy-ai-flow-research'));
+				}
+				item.appendChild(element('section', 'grocy-ai-flow-receipt'));
+				if (scan) item.appendChild(element('section', 'grocy-ai-flow-product-actions'));
 				item.setAttribute('data-review-key', card.key);
 				item.setAttribute('data-review-status', unresolved(card) ? 'Needs review' : scan ? (Number(scan.selected) === 0 ? 'Not included' : scan.status === 'known' ? 'Known product' : 'Needs product') : receiptByKey[card.key].decision === 'ignore' ? 'Ignored' : 'Included');
 				var heading = element('h3', 'grocy-ai-review-heading', scan ? 'Scan #' + scan.seq : (card.kind === 'adjustment' ? 'Receipt adjustment' : 'Receipt item') + ' · #' + card.receiptId);
 				heading.tabIndex = -1; item.insertBefore(heading, item.firstChild);
+				var createdNotice = scan && /^Product #(\d+) created\./.exec(researchNotices[currentTripId + ':' + scan.seq] || '');
+				if (createdNotice) item.setAttribute('data-review-status', 'Product created (#' + createdNotice[1] + ')');
+				var badge = element('span', 'grocy-ai-flow-badge', item.getAttribute('data-review-status'));
+				item.insertBefore(badge, heading.nextSibling);
 				hosts[card.key] = item; linesList.appendChild(item);
 				card.receiptKeys.forEach(function (key)
 				{
@@ -608,8 +653,8 @@
 					item.appendChild(element('p', 'text-muted', receiptByKey[key].description + ' · quantity ' + receiptByKey[key].quantity + ' · line total ' + receiptByKey[key].line_total));
 					var shared = element('button', 'btn btn-outline-secondary', 'Review shared receipt line: ' + receiptByKey[key].description);
 					shared.type = 'button';
-					shared.addEventListener('click', function () { selectCard(reviewQueue.receiptOwnerByKey[key], true); });
-					item.appendChild(shared);
+					shared.addEventListener('click', function () { selectReviewTarget({ cardKey: reviewQueue.receiptOwnerByKey[key] }, true); });
+					item.querySelector('.grocy-ai-flow-receipt').appendChild(shared);
 				});
 				var touch = null;
 				item.addEventListener('touchstart', function (event)
@@ -646,13 +691,24 @@
 				var card = reviewQueue.cards[activeReviewIndex + delta];
 				if (card) selectCard(card.key, focus);
 			}
+			selectRenderedCard = selectCard;
+			jump.addEventListener('click', function ()
+			{
+				for (var offset = 1; offset <= reviewQueue.cards.length; offset++)
+				{
+					var card = reviewQueue.cards[(activeReviewIndex + offset) % reviewQueue.cards.length];
+					if (unresolved(card) && selectReviewTarget({ cardKey: card.key }, true)) return;
+				}
+				var header = (receiptReadiness ? receiptReadiness.reasons : []).find(function (issue) { return /^receipt_\d+_(?!line_)/.test(issue); });
+				if (header) selectReviewTarget({ receiptId: Number(/^receipt_(\d+)_/.exec(header)[1]) }, true);
+			});
 			previous.addEventListener('click', function () { moveCard(-1, true); });
 			next.addEventListener('click', function () { moveCard(1, true); });
 			researchStates[currentTripId] = researchStates[currentTripId] || {};
 			selectCard(activeReviewKey, false);
 			var researchError = element('div', 'invalid-feedback d-block');
 			detailEl.appendChild(researchError);
-			if (window.GrocyAIProductResearch) researchComponent = window.GrocyAIProductResearch(linesList, { editState: researchStates[currentTripId], onEdit: updateReviewState, errorHost: researchError, tripId: currentTripId, lines: currentLines, receipts: receiptViews, locationId: currentTrip.default_location_id, readOnly: currentTrip.status === 'committed', reload: function (notice, seq)
+			if (window.GrocyAIProductResearch) researchComponent = window.GrocyAIProductResearch(linesList, { notices: researchNotices, disclosures: disclosures, sectionHostFor: function (lineId, section) { var owner = hosts['scan:' + lineId]; return owner ? owner.querySelector(section === 'actions' ? '.grocy-ai-flow-product-actions' : '.grocy-ai-flow-research') : null; }, editState: researchStates[currentTripId], onEdit: updateReviewState, errorHost: researchError, tripId: currentTripId, lines: currentLines, receipts: receiptViews, locationId: currentTrip.default_location_id, readOnly: currentTrip.status === 'committed', reload: function (notice, seq)
 			{
 				if (generation !== renderRevision || renderedLoadRevision !== loadRevision || renderedTripId !== currentTripId) return Promise.resolve();
 				researchNotices[renderedTripId + ':' + seq] = notice;
@@ -666,12 +722,13 @@
 			if (window.GrocyAIReceipts && receiptReadiness)
 			{
 				receiptStates[currentTripId] = receiptStates[currentTripId] || { drafts: {}, uploads: [] };
-				receiptComponent = window.GrocyAIReceipts(receiptsHost, { compact: true, state: receiptStates[currentTripId], inputRoot: detailEl, lineHostFor: function (receipt, line) { return hosts[reviewQueue.receiptOwnerByKey['receipt:' + receipt.id + ':' + line.id]]; }, url: tripUrl(currentTripId), receipts: receiptViews, lines: currentLines, names: productNames, stores: shoppingLocations, productNew: productNewBase, readOnly: currentTrip.status === 'committed', notice: receiptNotice, reload: reloadCurrent, onBusy: function (value) { if (generation !== renderRevision) return; receiptBusy = value; updateReviewState(); } });
+				receiptComponent = window.GrocyAIReceipts(receiptsHost, { compact: true, disclosures: disclosures, state: receiptStates[currentTripId], inputRoot: detailEl, lineHostFor: function (receipt, line) { var owner = hosts[reviewQueue.receiptOwnerByKey['receipt:' + receipt.id + ':' + line.id]]; return owner ? owner.querySelector('.grocy-ai-flow-receipt') : null; }, url: tripUrl(currentTripId), receipts: receiptViews, lines: currentLines, names: productNames, stores: shoppingLocations, productNew: productNewBase, readOnly: currentTrip.status === 'committed', notice: receiptNotice, reload: reloadCurrent, onBusy: function (value) { if (generation !== renderRevision) return; receiptBusy = value; updateReviewState(); } });
 			}
 
 			var readiness = element('div', 'alert alert-info');
 			readiness.id = 'grocyai-receipt-readiness';
 			readiness.setAttribute('role', 'status');
+			readiness.tabIndex = -1;
 			if (!receiptReadiness) readiness.textContent = 'Could not check receipt readiness. Reload to try again.';
 			else if (receiptReadiness.ready) readiness.textContent = 'Receipts reviewed — ready to commit purchase.';
 			else
@@ -698,6 +755,13 @@
 					readiness.appendChild(details);
 				}
 			}
+			var footer = element('div', 'grocy-ai-flow-footer');
+			footer.appendChild(element('p', 'text-muted', checks + ' unresolved review checks'));
+			var summaryButton = element('button', 'btn btn-primary', 'Continue to purchase summary');
+			summaryButton.type = 'button'; summaryButton.id = 'grocyai-review-summary-button';
+			summaryButton.addEventListener('click', function () { readiness.focus(); readiness.scrollIntoView({ block: 'nearest' }); });
+			footer.appendChild(summaryButton);
+			detailEl.appendChild(footer);
 			detailEl.appendChild(readiness);
 
 			// Commit (CAP-05): the single stock-write trigger. Hidden once the trip is archived committed.

@@ -34,7 +34,7 @@ $grocyAiAssetVersion = '2.6.17';
      trip defaults through the PUT endpoints. Best-before is never edited here (auto). Unknown lines link
      out to the MASTER_DATA_EDIT-gated /product/new enrichment flow. This template declares no write form
      of its own and never writes stock. --}}
-<div class="row permission-STOCK_PURCHASE"
+<div class="row permission-STOCK_PURCHASE grocy-ai-purchase-flow"
 	id="grocyai-capture-review"
 	data-trips-endpoint="{{ $U('/api/grocy-ai/capture/trips', true) }}"
 	data-product-new-url="{{ $U('/product/new', true) }}"

@@ -1033,3 +1033,42 @@ details.grocy-ai-diagnostics:not([open]) > .grocy-ai-diagnostic-body {
 }
 .grocy-ai-purchase-flow .form-control::placeholder { color: var(--grocy-ai-flow-muted); opacity: 1; }
 .grocy-ai-purchase-flow a.btn { text-decoration: none; }
+
+/* Review uses the same purchase-flow tokens as capture. */
+#grocyai-capture-review .grocy-ai-flow-participation,
+#grocyai-capture-review .grocy-ai-flow-research,
+#grocyai-capture-review .grocy-ai-flow-receipt,
+#grocyai-capture-review .grocy-ai-flow-product-actions { margin-top: 16px; min-width: 0; }
+#grocyai-capture-review .grocy-ai-flow-product-actions { border-top: 1px solid var(--grocy-ai-flow-border); padding-top: 16px; }
+#grocyai-capture-review .grocy-ai-product-research { margin: 0; padding: 0; background: transparent; color: var(--grocy-ai-flow-text); border: 0; }
+#grocyai-capture-review .grocy-ai-product-research-actions { display: flex; flex-direction: column; gap: 8px; }
+#grocyai-capture-review .grocy-ai-flow-product-actions label { margin: 12px 0 0; }
+#grocyai-capture-review :is(button, .btn, input:not([type=checkbox]), select) { min-height: 44px; max-width: 100%; white-space: normal; }
+#grocyai-capture-review .grocy-ai-receipt { color: var(--grocy-ai-flow-text); background: var(--grocy-ai-flow-surface); border-color: var(--grocy-ai-flow-border); }
+#grocyai-capture-review .grocy-ai-receipt-compact-summary { display: block; }
+#grocyai-capture-review .grocy-ai-capture-review-status { gap: 8px; }
+#grocyai-capture-review .grocy-ai-capture-review-line-barcode { font-family: monospace; }
+#grocyai-capture-review .grocy-ai-flow-optional-content { padding-top: 12px; }
+#grocyai-capture-review #grocyai-review-next-unresolved { margin-bottom: 12px; }
+#grocyai-capture-review .grocy-ai-capture-review-line-controls { gap: 8px; }
+#grocyai-capture-review .grocy-ai-receipt-line { background: var(--grocy-ai-flow-surface); color: var(--grocy-ai-flow-text); }
+#grocyai-capture-review :is(select, textarea):focus { outline: 3px solid var(--grocy-ai-flow-primary); outline-offset: 3px; }
+#grocyai-capture-review .grocy-ai-required-marker { color: #c82333; }
+.night-mode #grocyai-capture-review .grocy-ai-required-marker { color: #ff9ba5; }
+@media (max-width: 767.98px) {
+ #grocyai-capture-review .grocy-ai-flow-optional-content:not(.is-expanded) { display: none; }
+ #grocyai-capture-review .grocy-ai-flow-footer .btn { width: 100%; }
+ #grocyai-capture-review .grocy-ai-capture-review-line-description { width: 100%; }
+}
+
+/* Native WebKit select painting otherwise hides dark-theme text on a white surface. */
+#grocyai-capture-review select.form-control {
+ -webkit-appearance: none;
+ appearance: none;
+ padding-right: 32px;
+ background-image: linear-gradient(45deg, transparent 50%, var(--grocy-ai-flow-text) 50%), linear-gradient(135deg, var(--grocy-ai-flow-text) 50%, transparent 50%);
+ background-position: calc(100% - 18px) 50%, calc(100% - 13px) 50%;
+ background-size: 5px 5px;
+ background-repeat: no-repeat;
+}
+.night-mode #grocyai-capture-review { color-scheme: dark; }
