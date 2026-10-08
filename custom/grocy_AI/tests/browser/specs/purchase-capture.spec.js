@@ -624,6 +624,10 @@ test.describe('purchase capture — review and commit', function ()
 		await expect(page.locator('.grocy-ai-review-card')).toHaveCount(1);
 		await expect(page.locator('#grocyai-review-progress')).toHaveText('1 of 1');
 		expect(state.lines.map(line => line.seq)).toEqual([2]);
+		await expect(page).toHaveURL(/capture-review\.html\?trip=7$/);
+		const nextHeading = page.locator('.grocy-ai-review-card.is-active .grocy-ai-review-heading');
+		await expect(nextHeading).toBeFocused();
+		await expect(nextHeading).toBeInViewport();
 		await expectNoForbiddenWrites(page);
 	});
 
