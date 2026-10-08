@@ -915,7 +915,7 @@ test('@flowreview header blockers open receipt details without writes', async ({
 });
 
 // Allocation quantity (not paired scan quantity) and individual prices are the purchase authority.
-test('@flowsummary allocation totals distinguish receipt audit and purchase units without counting scans twice', async ({ page }) => {
+test('@flowsummary allocation boundaries distinguish receipt audit and purchase units without counting scans twice', async ({ page }) => {
  const state = await setup(page);
  state.lines = [{ id: 31, trip_id: 7, seq: 1, scanned_barcode: '012345678905', canonical_gtin: null, resolved_product_id: 101, status: 'known', quantity: 99, price: null, best_before_override: null, selected: 1, applied_at: null, outcome: null, created_at: '', updated_at: '' }];
  state.receipts = [1, 2].map(id => ({ receipt: { id, status: 'finished', merchant: 'Market ' + id, difference_accepted_amount: id === 2 ? 1 : null }, totals: { printed_total: id === 2 ? 8 : 10, entered_total: id === 2 ? 7 : 10, difference: id === 2 ? 1 : 0 }, issues: [], lines: [
@@ -934,9 +934,9 @@ test('@flowsummary allocation totals distinguish receipt audit and purchase unit
  await page.locator('#grocyai-capture-review-trips button').first().click();
  await page.locator('#grocyai-review-summary-button').click();
  const summary = page.locator('#grocyai-purchase-summary');
- await expect(summary.locator('[data-summary-product="101"]')).toContainText('5 bottle');
- await expect(summary.locator('[data-summary-product="101"] li')).toContainText(['2 bottle · reviewed unit price: 2', '3 bottle · reviewed unit price: 2.5']);
- await expect(summary.locator('[data-summary-product="102"]')).toContainText('2 can');
+ await expect(summary.locator('[data-summary-product="101"]')).not.toContainText('5 bottle');
+ await expect(summary.locator('[data-summary-product="101"] li')).toContainText(['purchased quantity: 2 · Effective purchase unit unverified · reviewed unit price: 2', 'purchased quantity: 3 · Effective purchase unit unverified · reviewed unit price: 2.5']);
+ await expect(summary.locator('[data-summary-product="102"] li')).toContainText(['Receipt-only allocation · 1 can', 'Receipt-only allocation · 1 can']);
  await expect(summary.locator('[data-summary-product="999"]')).toContainText('Purchase unit unavailable');
  for (const text of ['Ignored candy', 'Tax', 'Savings', 'Difference reconciled', 'Difference explicitly accepted: 1', 'Full receipt audit', '3 included products']) await expect(summary).toContainText(text);
  await expect(summary).not.toContainText('99 bottle');

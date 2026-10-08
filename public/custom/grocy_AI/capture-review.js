@@ -169,6 +169,10 @@
 		var receiptNotice = '';
 		var receiptStates = {};
 		var receiptPendingByTrip = {};
+		var directPendingByTrip = {};
+		var directRefreshRequiredByTrip = {};
+		var directMutationVersions = {};
+		var directErrorsByTrip = {};
 		var researchComponent = null;
 		var receiptComponent = null;
 		var researchStates = {};
@@ -288,6 +292,8 @@
 		function loadTrip(tripId)
 		{
 			var previousReadiness = receiptReadiness;
+			var directVersion = directMutationVersions[String(tripId)] || 0;
+			var readAfterDirectSettlement = !(directPendingByTrip[String(tripId)] > 0);
 			requestedTripId = String(tripId);
 			var revision = ++loadRevision;
 			loadingTrip = true;
@@ -295,6 +301,7 @@
 			if (researchComponent) researchComponent.dispose();
 			if (receiptComponent) receiptComponent.dispose();
 			receiptReadiness = null;
+			updateReviewState();
 			return Promise.all([fetchJson(tripUrl(tripId), { method: 'GET' }), fetchJson(tripUrl(tripId) + '/receipt-readiness').catch(function () { return null; })]).then(function (results)
 			{
 				if (revision !== loadRevision) return;
@@ -318,6 +325,7 @@
 				}
 				currentTripId = String(tripId);
 				currentTrip = payload.trip;
+				if ((commitStates[currentTripId] || {}).outcome === 'committed') { currentTrip.status = 'committed'; currentTrip.transaction_id = commitStates[currentTripId].transactionId || currentTrip.transaction_id; }
 				if (currentTrip.status === 'committed') reviewStage = 'summary';
 				commitMessage = (commitStates[currentTripId] || {}).message || '';
 				currentLines = payload.lines;
@@ -330,6 +338,7 @@
 					}
 				});
 				(receiptReadiness ? receiptReadiness.receipts : []).forEach(function (view) { (view.lines || []).forEach(function (line) { (line.allocations || []).forEach(function (allocation) { if (Number(allocation.active) !== 0) resolveProductName(allocation.product_id); }); }); });
+				if (readAfterDirectSettlement && directVersion === (directMutationVersions[currentTripId] || 0) && !(directPendingByTrip[currentTripId] > 0) && receiptReadiness) delete directRefreshRequiredByTrip[currentTripId];
 				loadingTrip = false;
 				renderTripListActive();
 				renderDetail();
@@ -338,17 +347,19 @@
 			{
 				if (revision !== loadRevision) return null;
 				detailEl.inert = false; loadingTrip = false;
-				if (currentTrip && currentTripId === String(tripId) && (reviewStage === 'summary' || (commitStates[currentTripId] || {}).outcome === 'committed'))
+				if (currentTrip && currentTripId === String(tripId) && (reviewStage === 'summary' || ((commitStates[currentTripId] || {}).outcome && commitStates[currentTripId].outcome !== 'pending')))
 				{
 					var state = commitStates[currentTripId] = commitStates[currentTripId] || {};
 					state.needsRecheck = true;
+					if (state.outcome && state.outcome !== 'pending') reviewStage = 'summary';
 					if (state.outcome === 'committed')
 					{
 						// The confirmed commit result is authoritative even if its follow-up read fails.
 						reviewStage = 'summary';
 						currentTrip.status = 'committed'; currentTrip.transaction_id = state.transactionId || currentTrip.transaction_id;
 					}
-					else state.message = 'Could not reload purchase. Reload and recheck purchase before trying again.';
+					else if (state.outcome === 'partial') state.message = copy.commitPartial.replace('%s', String(state.applied)) + ' Could not reload purchase. Reload and recheck purchase before trying again.';
+					else if (!state.message) state.message = 'Could not reload purchase. Reload and recheck purchase before trying again.';
 					receiptReadiness = previousReadiness; commitMessage = state.message || '';
 					renderDetail();
 				}
@@ -402,41 +413,59 @@
 			});
 		}
 
+		function directMutation(tripId, action)
+		{
+			directPendingByTrip[tripId] = (directPendingByTrip[tripId] || 0) + 1;
+			directMutationVersions[tripId] = (directMutationVersions[tripId] || 0) + 1;
+			directRefreshRequiredByTrip[tripId] = true;
+			delete directErrorsByTrip[tripId];
+			updateReviewState();
+			return Promise.resolve().then(action).finally(function ()
+			{
+				directPendingByTrip[tripId]--;
+				// Only a read begun after every direct write settles can release this trip's guard.
+				if (tripId === currentTripId && tripId === requestedTripId && directPendingByTrip[tripId] === 0) return loadTrip(tripId);
+				updateReviewState();
+			});
+		}
+
 		function putTrip(body)
 		{
 			var tripId = currentTripId, revision = loadRevision;
-			return fetchJson(tripUrl(tripId), { method: 'PUT', body: JSON.stringify(body) }).then(function (trip)
+			return directMutation(tripId, function ()
 			{
-				if (revision !== loadRevision || tripId !== currentTripId) return;
-				if (isTripPayload(trip))
+				return fetchJson(tripUrl(tripId), { method: 'PUT', body: JSON.stringify(body) }).then(function (trip)
 				{
-					currentTrip = trip;
-				}
-				loadTrip(currentTripId);
-			}).catch(function () { flashError(); });
+					if (revision !== loadRevision || tripId !== currentTripId) return;
+					if (isTripPayload(trip)) currentTrip = trip;
+				}).catch(function () { directErrorsByTrip[tripId] = copy.saveError; if (tripId === currentTripId && tripId === requestedTripId) flashError(directErrorsByTrip[tripId]); });
+			});
 		}
 
 		function putLine(seq, body)
 		{
 			var tripId = currentTripId, revision = loadRevision;
 			var editedLine = currentLines.find(function (line) { return line.seq === seq; });
-			return fetchJson(lineUrl(tripId, seq), { method: 'PUT', body: JSON.stringify(body) }).then(function (payload)
+			return directMutation(tripId, function ()
 			{
-				// Explicit deletion settles only the removed scan, including after a trip switch.
-				if (body.delete === true && editedLine && isLoadedTripPayload(payload) && String(payload.trip.id) === tripId && !payload.lines.some(function (line) { return line.id === editedLine.id; }) && researchStates[tripId]) delete researchStates[tripId][editedLine.id];
-				if (revision !== loadRevision || tripId !== currentTripId) return;
-				if (isLoadedTripPayload(payload))
+				return fetchJson(lineUrl(tripId, seq), { method: 'PUT', body: JSON.stringify(body) }).then(function (payload)
 				{
-					currentTrip = payload.trip;
-				if (currentTrip.status === 'committed') reviewStage = 'summary';
-				commitMessage = (commitStates[currentTripId] || {}).message || '';
-					currentLines = payload.lines;
-					currentLines.forEach(function (line) { if (line.status === 'known') { resolveProductName(line.resolved_product_id); } });
-					return loadTrip(currentTripId);
-				}
-			}).catch(function (error)
-			{
-				flashError(body.delete === true && error.status === 409 && typeof error.serverMessage === 'string' && error.serverMessage.indexOf('This scan has receipt allocation history;') === 0 ? error.serverMessage : null);
+					// Explicit deletion settles only the removed scan, including after a trip switch.
+					if (body.delete === true && editedLine && isLoadedTripPayload(payload) && String(payload.trip.id) === tripId && !payload.lines.some(function (line) { return line.id === editedLine.id; }) && researchStates[tripId]) delete researchStates[tripId][editedLine.id];
+					if (revision !== loadRevision || tripId !== currentTripId) return;
+					if (isLoadedTripPayload(payload))
+					{
+						currentTrip = payload.trip;
+						if (currentTrip.status === 'committed') reviewStage = 'summary';
+						commitMessage = (commitStates[currentTripId] || {}).message || '';
+						currentLines = payload.lines;
+						currentLines.forEach(function (line) { if (line.status === 'known') resolveProductName(line.resolved_product_id); });
+					}
+				}).catch(function (error)
+				{
+					directErrorsByTrip[tripId] = body.delete === true && error.status === 409 && typeof error.serverMessage === 'string' && error.serverMessage.indexOf('This scan has receipt allocation history;') === 0 ? error.serverMessage : copy.saveError;
+					if (tripId === currentTripId && tripId === requestedTripId) flashError(directErrorsByTrip[tripId]);
+				});
 			});
 		}
 
@@ -569,7 +598,7 @@
 			});
 			var purchases = element('section', 'grocy-ai-flow-card grocy-ai-summary-purchases');
 			purchases.appendChild(element('h4', null, Object.keys(products).length + ' included products'));
-			purchases.appendChild(element('p', 'text-muted', 'Reviewed purchase-unit quantities. Package notes do not calculate stock conversions.'));
+			purchases.appendChild(element('p', 'text-muted', 'Reviewed purchased quantities by allocation. Scan purchase units are unverified; package notes do not calculate stock conversions.'));
 			Object.keys(products).forEach(function (id)
 			{
 				var metadata = productMetadata[id];
@@ -577,11 +606,17 @@
 				var unitLabel = unit && typeof unit.name === 'string' ? unit.name : 'Purchase unit unavailable';
 				var row = element('div', 'grocy-ai-summary-product'); row.setAttribute('data-summary-product', id);
 				row.appendChild(element('h5', null, productNames[id] || 'Product #' + id + ' · Name unavailable'));
-				// One product uses its catalog purchase unit; separate allocations keep every reviewed price.
-				var total = products[id].reduce(function (sum, allocation) { return sum + Number(allocation.quantity); }, 0);
-				row.appendChild(element('p', null, formatAmount(total) + ' ' + unitLabel));
 				var prices = element('ul');
-				products[id].forEach(function (allocation) { prices.appendChild(element('li', null, formatAmount(allocation.quantity) + ' ' + unitLabel + ' · reviewed unit price: ' + formatAmount(allocation.unit_price))); });
+				products[id].forEach(function (allocation)
+				{
+					var hasScan = allocation.capture_line_id !== null && allocation.capture_line_id !== undefined;
+					var scan = hasScan && currentLines.find(function (line) { return String(line.id) === String(allocation.capture_line_id); });
+					var description = hasScan
+						? 'Scan #' + (scan ? scan.seq : allocation.capture_line_id) + ' · UPC ' + (scan && scan.scanned_barcode ? scan.scanned_barcode : 'unavailable') + ' · purchased quantity: ' + formatAmount(allocation.quantity) + ' · Effective purchase unit unverified'
+						: 'Receipt-only allocation · ' + formatAmount(allocation.quantity) + ' ' + unitLabel;
+					// Keep every allocation and reviewed price separate; scanned UPCs can override stock multipliers.
+					prices.appendChild(element('li', null, description + ' · reviewed unit price: ' + formatAmount(allocation.unit_price)));
+				});
 				row.appendChild(prices); purchases.appendChild(row);
 			});
 			currentLines.filter(function (line) { return Number(line.selected) === 1 && !line.applied_at && !allocatedScans[line.id]; }).forEach(function (line)
@@ -649,7 +684,7 @@
 
 			disclosuresByTrip[currentTripId] = disclosuresByTrip[currentTripId] || {};
 			var disclosures = disclosuresByTrip[currentTripId];
-			var error = element('div', 'invalid-feedback d-block', '');
+			var error = element('div', 'invalid-feedback d-block', directErrorsByTrip[currentTripId] || '');
 			error.id = 'grocyai-capture-review-error';
 			error.setAttribute('role', 'alert');
 
@@ -983,7 +1018,7 @@
 		function canCommit()
 		{
 			var state = commitStates[currentTripId] || {};
-			return !loadingTrip && !(receiptPendingByTrip[currentTripId] > 0) && !(researchBusyByTrip[currentTripId] > 0) && !commitInFlight && !state.needsRecheck && state.outcome !== 'committed' && currentTrip && currentTrip.status !== 'committed' && !hasResearchEdits() && !(receiptComponent && receiptComponent.hasUnsavedEdits()) && !receiptBusy && receiptReadiness && receiptReadiness.ready === true && currentTripId !== null && typeof currentChecksum === 'string' && currentChecksum.length > 0;
+			return !loadingTrip && !(directPendingByTrip[currentTripId] > 0) && !directRefreshRequiredByTrip[currentTripId] && !(receiptPendingByTrip[currentTripId] > 0) && !(researchBusyByTrip[currentTripId] > 0) && !commitInFlight && !state.needsRecheck && state.outcome !== 'committed' && currentTrip && currentTrip.status !== 'committed' && !hasResearchEdits() && !(receiptComponent && receiptComponent.hasUnsavedEdits()) && !receiptBusy && receiptReadiness && receiptReadiness.ready === true && currentTripId !== null && typeof currentChecksum === 'string' && currentChecksum.length > 0;
 		}
 
 		function focusCommitResult()
@@ -1012,12 +1047,14 @@
 			}).then(function (result)
 			{
 				if (!result || typeof result.outcome !== 'string') throw new Error('invalid_commit_result');
-				state.outcome = result.outcome; state.transactionId = result.transaction_id;
-				if (result.outcome === 'committed') state.message = 'Purchase committed' + (result.transaction_id ? ' · ' + copy.committed.replace('%s', String(result.transaction_id)) : '');
-				else if (result.outcome === 'partial') state.message = copy.commitPartial.replace('%s', String(result.applied));
-				else { state.needsRecheck = true; state.message = result.outcome === 'checksum_mismatch' ? copy.commitMismatch : result.outcome === 'receipt_review_required' ? 'Receipt review is required before purchase commit. Reload and recheck purchase.' : 'Purchase could not be committed. Reload and recheck purchase.'; }
+				var outcome = result.outcome === 'already_committed' ? 'committed' : result.outcome;
+				state.outcome = outcome; state.transactionId = result.transaction_id; state.applied = result.applied;
+				if (outcome === 'committed') state.message = 'Purchase committed' + (result.transaction_id ? ' · ' + copy.committed.replace('%s', String(result.transaction_id)) : '');
+				else if (outcome === 'partial') { state.needsRecheck = true; state.message = copy.commitPartial.replace('%s', String(result.applied)); }
+				else { state.needsRecheck = true; state.message = outcome === 'checksum_mismatch' ? copy.commitMismatch : outcome === 'receipt_review_required' ? 'Receipt review is required before purchase commit. Reload and recheck purchase.' : 'Purchase could not be committed. Reload and recheck purchase.'; }
 				commitInFlight = false;
 				if (tripId !== currentTripId || tripId !== requestedTripId) { updateReviewState(); return; }
+				reviewStage = 'summary';
 				commitMessage = state.message;
 				if (state.outcome === 'committed' || state.outcome === 'partial') return loadTrip(tripId).then(function () { if (currentTripId === tripId && requestedTripId === tripId) focusCommitResult(); });
 				renderDetail(); focusCommitResult();
@@ -1026,7 +1063,7 @@
 				commitInFlight = false;
 				state.outcome = 'error'; state.needsRecheck = true; state.message = 'Purchase result could not be confirmed. Reload and recheck purchase before trying again.';
 				if (tripId !== currentTripId || tripId !== requestedTripId) { updateReviewState(); return; }
-				commitMessage = state.message; renderDetail(); focusCommitResult();
+				reviewStage = 'summary'; commitMessage = state.message; renderDetail(); focusCommitResult();
 			});
 		}
 

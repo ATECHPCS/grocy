@@ -1565,3 +1565,125 @@ test('@flowsummary confirmed success returns to read-only summary after Back to 
  await expect(page.locator('.grocy-ai-capture-review-line-controls input[type="number"]')).toBeDisabled();
  expect(state.commits).toBe(1);
 });
+
+
+for (const edit of ['include', 'location']) for (const scope of ['same', 'other', 'failure']) test('@flowsummary @fixwave direct ' + edit + ' PUT waits for settlement and authoritative refresh: ' + scope, async ({ page }) => {
+ const state = await installReviewApi(page);
+ let releaseWrite, releaseRefresh, settled = false, refreshed = false, location = null;
+ await page.route('**/api/objects/locations', route => json(route, [{ id: 9, name: 'Pantry' }]));
+ await page.route('**/trips', route => json(route, { trips: [makeTrip({ id: 7 }), makeTrip({ id: 8 })] }));
+ await page.route('**/trips/8', route => json(route, { trip: makeTrip({ id: 8, status: 'reviewing' }), lines: [], checksum: CHECKSUM }));
+ await page.route('**/trips/8/receipt-readiness', route => json(route, { ready: true, reasons: [], receipts: [] }));
+ const write = async route => {
+  expect(route.request().postDataJSON()).toEqual(edit === 'include' ? { selected: false } : { default_location_id: 9 });
+  await new Promise(resolve => releaseWrite = resolve);
+  settled = true;
+  if (scope === 'failure') return json(route, {}, 500);
+  if (edit === 'include') state.lines[0].selected = 0; else location = 9;
+  return json(route, edit === 'include' ? { trip: makeTrip({ status: 'reviewing' }), lines: state.lines, checksum: CHECKSUM } : makeTrip({ status: 'reviewing', default_location_id: location }));
+ };
+ await page.route('**/trips/7', route => route.request().method() === 'PUT' ? write(route) : json(route, { trip: makeTrip({ status: 'reviewing', default_location_id: location }), lines: state.lines, checksum: CHECKSUM }));
+ if (edit === 'include') await page.route('**/trips/7/lines/1', write);
+ await page.route('**/trips/7/receipt-readiness', async route => {
+  if (settled && !refreshed) await new Promise(resolve => releaseRefresh = () => { refreshed = true; resolve(); });
+  return json(route, { ready: true, reasons: [], receipts: [] });
+ });
+ page.on('dialog', dialog => dialog.accept());
+ await page.goto('/fixtures/capture-review.html');
+ await page.locator('#grocyai-capture-review-trips button').first().click();
+ if (edit === 'include') await page.locator('#grocyai-capture-review-selected-1').uncheck();
+ else await page.locator('#grocyai-capture-review-location').selectOption('9');
+ await expect.poll(() => typeof releaseWrite).toBe('function');
+ await page.locator('#grocyai-review-summary-button').click();
+ const commit = page.locator('#grocyai-capture-review-commit');
+ await expect(commit).toBeDisabled();
+ await commit.evaluate(el => { el.disabled = false; el.click(); });
+ expect(state.commits).toBe(0);
+ if (scope === 'same') {
+  await page.locator('#grocyai-capture-review-trips button').first().click();
+  await expect(commit).toBeDisabled();
+ }
+ if (scope === 'other') {
+  await page.locator('#grocyai-capture-review-trips button').nth(1).click();
+  await page.locator('#grocyai-review-summary-button').click();
+  await expect(commit).toBeEnabled();
+ }
+ releaseWrite();
+ if (scope === 'other') {
+  await expect.poll(() => settled).toBe(true);
+  await page.locator('#grocyai-capture-review-trips button').first().click();
+ }
+ await expect.poll(() => typeof releaseRefresh).toBe('function');
+ await expect(commit).toBeDisabled();
+ releaseRefresh();
+ if (scope === 'other') await page.locator('#grocyai-review-summary-button').click();
+ await expect(commit).toBeEnabled();
+ await page.locator('#grocyai-purchase-summary-back').click();
+ if (scope === 'failure') await expect(page.locator('#grocyai-capture-review-error')).toContainText('That change could not be saved');
+ if (edit === 'include') { if (scope === 'failure') await expect(page.locator('#grocyai-capture-review-selected-1')).toBeChecked(); else await expect(page.locator('#grocyai-capture-review-selected-1')).not.toBeChecked(); }
+ else await expect(page.locator('#grocyai-capture-review-location')).toHaveValue(scope === 'failure' ? '' : '9');
+ expect(state.commits).toBe(0);
+});
+
+for (const outcome of ['partial', 'http']) test('@flowsummary @fixwave Back from pending commit restores ' + outcome + ' recovery after failure', async ({ page }) => {
+ const state = await installReviewApi(page);
+ let release, completed = false;
+ await page.route('**/trips/7/commit', async route => {
+  state.commits++;
+  await new Promise(resolve => release = resolve);
+  completed = true;
+  return outcome === 'http' ? json(route, {}, 500) : json(route, { outcome: 'partial', applied: 1, transaction_id: 'txn-partial' });
+ });
+ await page.route('**/trips/7', route => completed ? route.abort('failed') : json(route, { trip: makeTrip({ status: 'reviewing' }), lines: state.lines, checksum: CHECKSUM }));
+ page.on('dialog', dialog => dialog.accept());
+ await openSummary(page);
+ await page.locator('#grocyai-capture-review-commit').click();
+ await expect(page.locator('#grocyai-capture-review-commit-result')).toContainText('Committing');
+ await page.locator('#grocyai-purchase-summary-back').click();
+ release();
+ await expect(page.locator('#grocyai-purchase-summary')).toBeVisible();
+ const result = page.locator('#grocyai-capture-review-commit-result');
+ await expect(result).toContainText(outcome === 'partial' ? 'Committed 1' : 'could not be confirmed');
+ await expect(result).toContainText('Reload');
+ await expect(result).toBeFocused();
+ await expect(page.getByRole('button', { name: 'Reload and recheck purchase' })).toBeVisible();
+ await expect(page.locator('#grocyai-capture-review-commit')).toBeDisabled();
+ await page.locator('#grocyai-capture-review-commit').evaluate(el => { el.disabled = false; el.click(); });
+ expect(state.commits).toBe(1);
+});
+
+test('@flowsummary @fixwave different UPC purchase quantities keep allocation boundaries and unverified units', async ({ page }) => {
+ const state = await installReviewApi(page, { lines: [
+  makeLine({ id: 101, seq: 1, scanned_barcode: KNOWN_GTIN, resolved_product_id: 101, status: 'known', selected: 1 }),
+  makeLine({ id: 102, seq: 2, scanned_barcode: UNKNOWN_GTIN, resolved_product_id: 101, status: 'known', selected: 1 })
+ ] });
+ await page.route('**/api/objects/products/101', route => json(route, { id: 101, name: 'Milk', qu_id_purchase: 1 }));
+ await page.route('**/api/objects/quantity_units', route => json(route, [{ id: 1, name: 'bottle' }]));
+ await page.route('**/receipt-readiness', route => json(route, { ready: true, reasons: [], receipts: [{ receipt: { id: 1, status: 'finished' }, totals: {}, lines: [{ id: 1, kind: 'item', decision: 'include', allocations: [
+  { id: 1, active: 1, product_id: 101, capture_line_id: 101, quantity: 1, unit_price: 2 },
+  { id: 2, active: 1, product_id: 101, capture_line_id: 102, quantity: 1, unit_price: 12 }
+ ] }] }] }));
+ await openSummary(page);
+ const product = page.locator('[data-summary-product="101"]');
+ await expect(product.locator('li')).toHaveCount(2);
+ await expect(product.locator('li')).toContainText(['Scan #1 · UPC ' + KNOWN_GTIN + ' · purchased quantity: 1', 'Scan #2 · UPC ' + UNKNOWN_GTIN + ' · purchased quantity: 1']);
+ await expect(product.locator('li')).toContainText(['Effective purchase unit unverified', 'Effective purchase unit unverified']);
+ await expect(product).not.toContainText('2 bottle');
+ await expect(product).not.toContainText('1 bottle');
+ expect(state.commits).toBe(0);
+});
+
+test('@flowsummary @fixwave already_committed response restores confirmed success without recommit', async ({ page }) => {
+ const state = await installReviewApi(page);
+ let completed = false;
+ await page.route('**/trips/7/commit', route => { state.commits++; completed = true; return json(route, { outcome: 'already_committed', transaction_id: 'txn-existing', applied: 0 }, 409); });
+ await page.route('**/trips/7', route => completed ? route.abort('failed') : json(route, { trip: makeTrip({ status: 'reviewing' }), lines: state.lines, checksum: CHECKSUM }));
+ page.on('dialog', dialog => dialog.accept());
+ await openSummary(page);
+ await page.locator('#grocyai-capture-review-commit').click();
+ await expect(page.locator('#grocyai-purchase-summary')).toContainText('Purchase committed');
+ await expect(page.locator('#grocyai-purchase-summary')).toContainText('txn-existing');
+ await expect(page.locator('#grocyai-capture-review-commit')).toHaveCount(0);
+ await expect(page.getByRole('link', { name: 'View inventory' })).toBeVisible();
+ expect(state.commits).toBe(1);
+});
