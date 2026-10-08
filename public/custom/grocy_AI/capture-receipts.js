@@ -29,6 +29,7 @@
 	root.GrocyAIReceipts = function (host, options)
 	{
 		var busy = false;
+		var pendingMutations = 0;
 		var disposed = false;
 		var inputRoot = options.inputRoot || host;
 		var lineEditors = [];
@@ -37,6 +38,7 @@
 		var dirty = Object.keys(state.drafts).length > 0;
 		var readOnly = options.readOnly;
 		var status;
+		var actionHost = host;
 		var notice = options.notice || '';
 
 		function el(tag, text, className)
@@ -102,7 +104,12 @@
 		{
 			var node = el('button', text, 'btn btn-outline-primary');
 			node.type = 'button';
-			node.addEventListener('click', action);
+			node.addEventListener('click', function ()
+			{
+				actionHost = parent;
+				if (status && !node.hasAttribute('data-receipt-toggle')) parent.appendChild(status);
+				action();
+			});
 			parent.appendChild(node);
 			return node;
 		}
@@ -156,6 +163,10 @@
 				return;
 			}
 			var savedDraft = scope ? state.drafts[scope] : null;
+			// Keep the single live feedback node beside the action that initiated this request.
+			actionHost.appendChild(status);
+			pendingMutations++;
+			if (pendingMutations === 1 && options.onPending) options.onPending(true);
 			lock(true);
 			status.textContent = 'Saving…';
 			Promise.resolve().then(action).then(function (result)
@@ -165,10 +176,16 @@
 				return options.reload(result && result.message ? result.message : 'Saved.');
 			}).catch(function (error)
 			{
+				if (disposed) return;
 				status.textContent = error.message;
+				status.focus();
+				status.scrollIntoView({ block: 'nearest' });
 			}).finally(function ()
 			{
 				lock(false);
+				pendingMutations--;
+				// Pending writes retain their owner even if the editor was disposed.
+				if (pendingMutations === 0 && options.onPending) options.onPending(false);
 			});
 		}
 
@@ -406,26 +423,30 @@
 			if (options.compact)
 			{
 				state.expanded = state.expanded || {};
+				var disclosureState = options.disclosures || state.expanded;
+				var disclosureKey = options.disclosures ? 'receipt:' + receipt.id : receipt.id;
 				var summary = el('div', '', 'grocy-ai-receipt-compact-summary');
 				summary.appendChild(el('p', receipt.merchant || 'Merchant not entered'));
+				summary.appendChild(el('span', receipt.status === 'finished' ? 'Finished' : 'Needs review', 'grocy-ai-flow-badge'));
 				summary.appendChild(el('p', 'Printed total: ' + (view.totals.printed_total == null ? 'not entered' : view.totals.printed_total) + ' · Entered total: ' + view.totals.entered_total + ' · Difference: ' + (view.totals.difference == null ? 'not checked' : view.totals.difference)));
 				if (receipt.difference_accepted_amount != null) summary.appendChild(el('p', 'Difference accepted: ' + receipt.difference_accepted_amount));
 				var details = el('div', '', 'grocy-ai-receipt-details');
 				details.id = 'grocyai-receipt-details-' + receipt.id;
+				details.tabIndex = -1;
 				details.setAttribute('data-draft-scope', path);
 				var toggle = button(summary, '', function ()
 				{
-					state.expanded[receipt.id] = !state.expanded[receipt.id];
+					disclosureState[disclosureKey] = !disclosureState[disclosureKey];
 					expand();
 				});
 				toggle.setAttribute('data-receipt-toggle', '');
 				toggle.setAttribute('aria-controls', details.id);
 				function expand()
 				{
-					var expanded = !!state.expanded[receipt.id];
+					var expanded = !!disclosureState[disclosureKey];
 					details.classList.toggle('is-expanded', expanded);
 					toggle.setAttribute('aria-expanded', String(expanded));
-					toggle.textContent = expanded ? 'Hide receipt details' : 'Show receipt details';
+					toggle.textContent = expanded ? 'Hide receipt details' : 'View receipt';
 				}
 				expand();
 				card.appendChild(summary);
@@ -511,7 +532,10 @@
 		host.appendChild(el('h3', 'Receipts'));
 		status = el('p', notice, 'grocy-ai-receipt-status');
 		status.setAttribute('role', 'status');
+		status.setAttribute('aria-live', 'polite');
+		status.tabIndex = -1;
 		host.appendChild(status);
+		host.appendChild(el('h4', 'Upload receipt'));
 		var upload = field(host, 'Add receipt photos', '', 'file');
 		upload.accept = 'image/jpeg,image/png,image/webp';
 		upload.multiple = true;
@@ -567,6 +591,7 @@
 
 		function uploadFiles(input)
 		{
+			actionHost = host;
 			if (dirty)
 			{
 				status.textContent = 'Save all edited sections before this action.';

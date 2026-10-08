@@ -90,7 +90,7 @@ async function installReferenceApi(page)
 async function installScanApi(page, options)
 {
 	const settings = options || {};
-	const state = { seq: 0, byBarcode: {}, scans: 0, tripReads: 0, failScans: settings.failScans || 0, savedResponseFailures: settings.savedResponseFailures || 0, tripId: 6, tripCreations: 0, finishUpdates: 0 };
+	const state = { seq: 0, byBarcode: {}, scans: 0, tripReads: 0, failScans: settings.failScans || 0, savedResponseFailures: settings.savedResponseFailures || 0, tripId: 6, tripCreations: 0, finishUpdates: 0, cancellations: 0 };
 	await page.route('**/api/grocy-ai/capture/**', function (route)
 	{
 		const request = route.request();
@@ -171,6 +171,8 @@ async function installScanApi(page, options)
 				selected: known ? 1 : 0
 			}));
 		}
+
+		if (method === 'POST' && /\/capture\/trips\/\d+\/cancel$/.test(pathname)) { state.cancellations++; return json(route, { canceled: true, trip_id: state.tripId }); }
 
 		if (method === 'PUT' && /\/capture\/trips\/\d+$/.test(pathname))
 		{
@@ -314,12 +316,13 @@ test.describe('purchase capture — scan loop', function ()
 		await page.goto('/fixtures/capture.html?trip=12');
 		await expect(page.locator('#grocyai-capture-status')).toContainText('cannot be resumed');
 		expect(state.tripCreations).toBe(0);
+		await page.locator('#grocyai-capture-trip-actions').evaluate(el => { el.open = true; });
 		await page.locator('#grocyai-capture-new-trip-button').click();
 		await expect(page.locator('#grocyai-capture-review-link')).toHaveAttribute('href', '/grocyai/capture/review?trip=7');
 		expect(state.tripCreations).toBe(1);
 	});
 
-	test('@cap @mob Finish scanning requires two confirmations, writes no stock, then opens review', async function ({ page })
+	test('@flowcapture @cap @mob Finish scanning requires two confirmations, writes no stock, then opens review', async function ({ page })
 	{
 		const state = await installScanApi(page);
 		await page.route('**/grocyai/capture/review?trip=*', function (route)
@@ -363,6 +366,7 @@ test.describe('purchase capture — scan loop', function ()
 		await page.goto('/fixtures/capture.html');
 		const review = page.locator('#grocyai-capture-review-link');
 		await expect(review).toHaveAttribute('href', '/grocyai/capture/review?trip=7');
+		await page.locator('#grocyai-capture-trip-actions').evaluate(el => { el.open = true; });
 		await page.locator('#grocyai-capture-new-trip-button').click();
 		await expect(review).toHaveAttribute('href', '/grocyai/capture/review?trip=8');
 		await expectNoForbiddenWrites(page);
@@ -400,7 +404,7 @@ test.describe('purchase capture — scan loop', function ()
 		expect(await page.evaluate(function () { return window.__captureFixture.captureWrites; })).toBeGreaterThan(0);
 	});
 
-	test('@cap @mob camera reads require confirmation and may be edited before saving', async function ({ page })
+	test('@flowcapture @cap @mob camera reads require confirmation and may be edited before saving', async function ({ page })
 	{
 		const state = await installScanApi(page);
 		await page.goto('/fixtures/capture.html');
@@ -439,13 +443,14 @@ test.describe('purchase capture — scan loop', function ()
 		await expect(page.locator('#grocyai-capture-status')).toContainText('Trip started');
 		await page.evaluate(function (gtin) { window.Grocy.BarcodeScanned(gtin, 'grocyai-capture-barcode'); }, KNOWN_GTIN);
 		await expect(page.locator('#grocyai-capture-camera-confirmation')).toBeVisible();
+		await page.locator('#grocyai-capture-trip-actions').evaluate(el => { el.open = true; });
 		await page.locator('#grocyai-capture-new-trip-button').click();
 		await expect(page.locator('#grocyai-capture-camera-confirmation')).toBeHidden();
 		expect(state.scans).toBe(0);
 		await expectNoForbiddenWrites(page);
 	});
 
-	test('@cap a pending camera read blocks Finish scanning before confirmation dialogs', async function ({ page })
+	test('@flowcapture @cap a pending camera read blocks Finish scanning before confirmation dialogs', async function ({ page })
 	{
 		const state = await installScanApi(page);
 		await page.goto('/fixtures/capture.html');
@@ -460,7 +465,7 @@ test.describe('purchase capture — scan loop', function ()
 		await expect(page.locator('#grocyai-capture-status')).toContainText('Confirm or cancel');
 	});
 
-	test('@cap a failed camera submission locks capture without retrying', async function ({ page })
+	test('@flowcapture @cap a failed camera submission locks capture without retrying', async function ({ page })
 	{
 		const state = await installScanApi(page, { failScans: 1 });
 		await page.goto('/fixtures/capture.html');
@@ -476,9 +481,14 @@ test.describe('purchase capture — scan loop', function ()
 		await expect(page.locator('#grocyai-capture-camera-save-button')).toBeDisabled();
 		expect(state.scans).toBe(1);
 		expect(state.tripReads).toBe(0);
+		let finishDialogs = 0;
+		page.on('dialog', dialog => { finishDialogs++; return dialog.dismiss(); });
+		await page.locator('#grocyai-capture-finish-button').click();
+		expect(finishDialogs).toBe(0);
+		expect(state.finishUpdates).toBe(0);
 	});
 
-	test('@cap a lost response with a new saved scan locks capture for review', async function ({ page })
+	test('@flowcapture @cap a lost response with a new saved scan locks capture for review', async function ({ page })
 	{
 		const state = await installScanApi(page, { savedResponseFailures: 1 });
 		await page.goto('/fixtures/capture.html');
@@ -526,7 +536,7 @@ test.describe('purchase capture — scan loop', function ()
 		expect(state.tripReads).toBe(0);
 	});
 
-	test('@cap a camera scan in flight cannot be moved to a newly started trip', async function ({ page })
+	test('@flowcapture @cap a camera scan in flight cannot be moved to a newly started trip', async function ({ page })
 	{
 		const state = await installScanApi(page, { holdScan: true });
 		await page.goto('/fixtures/capture.html');
@@ -545,6 +555,12 @@ test.describe('purchase capture — scan loop', function ()
 		}, KNOWN_GTIN);
 		await page.evaluate(function (gtin) { window.Grocy.BarcodeScanned(gtin, 'grocyai-capture-barcode'); }, UNKNOWN_GTIN);
 		expect(state.scans).toBe(1);
+		let finishDialogs = 0;
+		page.on('dialog', dialog => { finishDialogs++; return dialog.dismiss(); });
+		await page.locator('#grocyai-capture-finish-button').click();
+		expect(finishDialogs).toBe(0);
+		expect(state.finishUpdates).toBe(0);
+		await expect(page.locator('#grocyai-capture-status')).toContainText('Wait for the current scan');
 		state.releaseScan();
 		await expect(page.locator('#grocyai-capture-status')).toContainText('Reload this page');
 		await expect(page.locator('#grocyai-capture-camera-save-button')).toBeDisabled();
@@ -564,7 +580,7 @@ test.describe('purchase capture — scan loop', function ()
 			const cameraBox = await page.locator('#camerabarcodescanner-start-button').boundingBox();
 			expect(cameraBox.width, width + 'px camera button width').toBeGreaterThanOrEqual(44);
 			expect(cameraBox.height, width + 'px camera button height').toBeGreaterThanOrEqual(44);
-			expect(cameraBox.x, width + 'px camera button must follow the input').toBeGreaterThanOrEqual(inputBox.x + inputBox.width);
+			expect(cameraBox.y + cameraBox.height, width + 'px camera button must precede the input').toBeLessThanOrEqual(inputBox.y);
 			expect(cameraBox.x + cameraBox.width, width + 'px camera button must stay inside viewport').toBeLessThanOrEqual(width);
 			const addBox = await page.locator('#grocyai-capture-add-button').boundingBox();
 			expect(addBox.height, width + 'px Add button height').toBeGreaterThanOrEqual(44);
@@ -711,9 +727,11 @@ test.describe('purchase capture — review and commit', function ()
 		await expect(detail.locator('.grocy-ai-capture-review-quantity input')).toHaveValue('2');
 
 		page.once('dialog', function (dialog) { return dialog.accept(); });
+		await page.locator('#grocyai-review-summary-button').click();
 		await page.locator('#grocyai-capture-review-commit').click();
 
-		await expect(detail.locator('.alert-success')).toHaveText('Committed — transaction txn-1001');
+		await expect(detail.locator('.alert-success')).toHaveText('Purchase committed');
+		await expect(detail).toContainText('Committed — transaction txn-1001');
 		expect(state.commits, 'commit must be posted exactly once').toBe(1);
 		expect(state.lastCommitStatus).toBe(200);
 		await expectNoForbiddenWrites(page);
@@ -726,6 +744,7 @@ test.describe('purchase capture — review and commit', function ()
 
 		await page.locator('#grocyai-capture-review-trips button').first().click();
 		const detail = page.locator('#grocyai-capture-review-detail');
+		await page.locator('#grocyai-review-summary-button').click();
 		await expect(detail.locator('#grocyai-capture-review-commit')).toBeVisible();
 
 		page.once('dialog', function (dialog) { return dialog.accept(); });
@@ -806,7 +825,7 @@ test('@units changes and clearing persist through reload', async ({ page }) =>
 	await page.reload(); await page.locator('#grocyai-capture-review-trips button').first().click();
 	await expect(page.getByLabel('Purchase unit', { exact: true })).toHaveValue('3'); await expect(page.getByLabel('Stock unit', { exact: true })).toHaveValue('');
 });
-test('@units unsaved choices survive late refresh and rejected save', async ({ page }) =>
+test('@flowreview @units unsaved choices survive late refresh and rejected save', async ({ page }) =>
 {
 	const state = await unitReview(page);
 	await page.getByLabel('Purchase unit', { exact: true }).selectOption('3'); await page.getByLabel('Stock unit', { exact: true }).selectOption('');
@@ -820,7 +839,7 @@ test('@units unsaved choices survive late refresh and rejected save', async ({ p
 test('@units legacy results remain manually reviewable', async ({ page }) =>
 {
 	await unitReview(page, true); await expect(page.getByLabel('Purchase unit', { exact: true })).toHaveValue(''); await expect(page.getByLabel('Stock unit', { exact: true })).toHaveValue('');
-	await expect(page.locator('.grocy-ai-product-research-unit-source')).toContainText(['No unit suggestion; choose manually.', 'No unit suggestion; choose manually.']);
+	await expect(page.locator('.grocy-ai-product-research-unit-source')).toContainText(['No suggestion available', 'No suggestion available']);
 });
 
 test('@units purchase clearing and stock selection persist as explicit reviewer edits', async ({ page }) =>
@@ -832,7 +851,7 @@ test('@units purchase clearing and stock selection persist as explicit reviewer 
 	await expect(page.getByLabel('Purchase unit', { exact: true })).toHaveValue(''); await expect(page.getByLabel('Stock unit', { exact: true })).toHaveValue('3');
 });
 
-test('@units an older research response cannot overwrite a successful unit save', async ({ page }) =>
+test('@flowreview @units an older research response cannot overwrite a successful unit save', async ({ page }) =>
 {
 	const state = await unitReview(page);
 	state.holdRead = true;
@@ -876,6 +895,7 @@ test('@mobilequeue many trip checks stay collapsed until requested', async ({ pa
 	await page.route('**/trips/7/receipt-readiness', route => json(route, { ready: false, reasons, receipts: [] }));
 	await page.goto('/fixtures/capture-review.html');
 	await page.locator('#grocyai-capture-review-trips button').first().click();
+	await page.locator('#grocyai-review-summary-button').click();
 	const readiness = page.locator('#grocyai-receipt-readiness');
 	await expect(readiness).toContainText('48 review checks remain');
 	await expect(readiness.getByRole('button', { name: /View 48 review checks/ })).toBeVisible();
@@ -899,7 +919,7 @@ for (const width of [320, 390]) test('@mobilequeue active card permits vertical 
 	expect(await card.evaluate(element => getComputedStyle(element).touchAction)).toBe('pan-y pinch-zoom');
 });
 
-for (const width of [320, 390]) test('@mobilequeue single card navigation, focus and swipe at ' + width, async ({ page }) =>
+for (const width of [320, 390]) test('@flowreview @mobilequeue single card navigation, focus and swipe at ' + width, async ({ page }) =>
 {
 	await page.setViewportSize({ width, height: 844 });
 	await installReviewApi(page, { lines: [1, 2, 3].map(seq => makeLine({ id: seq, seq, scanned_barcode: UNKNOWN_GTIN })) });
@@ -932,7 +952,7 @@ for (const width of [320, 390]) test('@mobilequeue single card navigation, focus
 	await expect(page.locator('.grocy-ai-review-card:visible')).toHaveCount(3);
 });
 
-test('@mobilequeue research edits survive trip refresh and failed save', async ({ page }) =>
+test('@flowreview @mobilequeue research edits survive trip refresh and failed save', async ({ page }) =>
 {
 	const state = await unitReview(page, true);
 	await page.route('**/trips/7/receipt-readiness', route => json(route, { ready: true, reasons: [], receipts: [{ receipt: { id: 1, status: 'needs_review', merchant: '' }, lines: [{ id: 1, kind: 'item', description: 'Milk receipt', decision: 'include', quantity: 1, line_total: 2, paired_capture_line_id: 31, allocations: [] }], totals: { entered_total: 2, printed_total: 2, difference: 0 }, issues: [] }] }));
@@ -940,6 +960,7 @@ test('@mobilequeue research edits survive trip refresh and failed save', async (
 	await page.locator('#grocyai-capture-review-trips button').first().click();
 	await expect(page.getByLabel('Line total', { exact: true })).toHaveValue('2');
 	await page.getByLabel('Proposed name').fill('Unsaved milk');
+	await page.getByRole('button', { name: /Optional details/ }).click();
 	await page.getByLabel('Brand research note').fill('My brand');
 	await page.getByLabel('Purchase unit', { exact: true }).selectOption('3');
 	await page.getByRole('button', { name: 'Save line', exact: true }).click();
@@ -958,7 +979,7 @@ test('@mobilequeue research edits survive trip refresh and failed save', async (
 	await expect(page.locator('#grocyai-review-announcement')).not.toContainText('Unsaved');
 });
 
-test('@mobilequeue late receipt save cannot replace a switched trip', async ({ page }) =>
+test('@flowreview @mobilequeue late receipt save cannot replace a switched trip', async ({ page }) =>
 {
 	await installReviewApi(page, { lines: [] });
 	await page.route('**/capture/trips', route => json(route, { trips: [makeTrip({ id: 7 }), makeTrip({ id: 8 })] }));
@@ -1012,6 +1033,7 @@ test('@mobilequeue a saved research field clears after component disposal withou
 	await expect.poll(() => typeof release).toBe('function');
 	await page.locator('#grocyai-capture-review-trips button').first().click();
 	await expect(page.getByLabel('Proposed name')).toHaveValue('Saved later');
+	await page.getByRole('button', { name: /Optional details/ }).click();
 	await page.getByLabel('Brand research note').fill('Keep newer brand');
 	const response = page.waitForResponse(r => r.request().method() === 'PUT' && r.url().endsWith('/lines/1/research'));
 	release(); await response;
@@ -1091,4 +1113,577 @@ for (const scenario of [
 		await expect(page.locator('.grocy-ai-review-card:visible')).toHaveAttribute('data-review-key', 'receipt:9:20');
 		await expect(page.locator('#grocyai-review-announcement')).toContainText('Needs review');
 	}
+});
+
+test('@flowcapture latest accepted UPC, recent distinct lines, counts and disclosure persist', async ({ page }) => {
+ const state = await installScanApi(page);
+ let releaseName;
+ await page.route('**/api/objects/products/101', route => new Promise(resolve => { releaseName = () => resolve(json(route, {id:101,name:'Refreshed oats'})); }));
+ await page.goto('/fixtures/capture.html');
+ await expect(page.locator('#grocyai-capture-status')).toContainText('Trip started');
+ for (const barcode of [KNOWN_GTIN, UNKNOWN_GTIN, '12345678', '1234567890123', '12345678901234', KNOWN_GTIN]) {
+  await page.locator('#grocyai-capture-barcode').fill(barcode);
+  await page.locator('#grocyai-capture-add-button').click();
+  await expect.poll(() => state.scans).toBeGreaterThan(0);
+  await expect(page.locator('#grocyai-capture-barcode')).toHaveValue('');
+ }
+ await expect(page.locator('#grocyai-capture-latest')).toContainText(KNOWN_GTIN);
+ await expect(page.locator('#grocyai-capture-trip-summary')).toContainText('5 distinct items');
+ await expect(page.locator('#grocyai-capture-trip-summary')).toContainText('Total quantity: 6');
+ await expect(page.locator('#grocyai-capture-lines .grocy-ai-capture-line:visible')).toHaveCount(3);
+ await page.locator('#grocyai-capture-show-all').click();
+ await expect(page.locator('#grocyai-capture-lines .grocy-ai-capture-line:visible')).toHaveCount(5);
+ await page.evaluate(() => Grocy.BarcodeScanned('012345678905', 'grocyai-capture-barcode'));
+ await expect(page.locator('#grocyai-capture-camera-barcode')).toHaveValue(KNOWN_GTIN);
+ expect(state.scans).toBe(6);
+ await page.locator('#grocyai-capture-camera-cancel-button').click();
+ releaseName();
+ await expect(page.locator('#grocyai-capture-latest')).toContainText('Refreshed oats');
+ await expect(page.locator('#grocyai-capture-show-all')).toHaveAttribute('aria-expanded','true');
+ await page.evaluate(() => Grocy.BarcodeScanned('012345678905', 'grocyai-capture-barcode'));
+ await page.locator('#grocyai-capture-camera-save-button').click();
+ await expect.poll(() => state.scans).toBe(7);
+ await expect(page.locator('#grocyai-capture-latest')).toContainText(KNOWN_GTIN);
+ expect(state.byBarcode[KNOWN_GTIN].quantity).toBe(3);
+ await expect(page.locator('#grocyai-capture-camera-confirmation')).toBeHidden();
+ await expect(page.locator('#camerabarcodescanner-start-button')).toHaveAttribute('aria-disabled','false');
+ await page.screenshot({path:'/tmp/grocy-flow-capture-390.png',fullPage:true});
+ await page.evaluate(() => document.body.classList.add('night-mode'));
+ await page.screenshot({path:'/tmp/grocy-flow-capture-390-dark.png',fullPage:true});
+ await page.evaluate(() => document.body.classList.remove('night-mode'));
+ await expect(page.locator('#grocyai-capture-new-trip-button')).toBeHidden();
+ await page.locator('#grocyai-capture-trip-actions summary').click();
+ await expect(page.locator('#grocyai-capture-delete-trip-button')).toBeVisible();
+ page.on('dialog', dialog => dialog.dismiss());
+ const writes = await page.evaluate(() => __captureFixture.captureWrites);
+ await page.locator('#grocyai-capture-delete-trip-button').click();
+ expect(await page.evaluate(() => __captureFixture.captureWrites)).toBe(writes);
+});
+
+test('@flowcapture resumed edited quantities are labeled honestly', async ({ page }) => {
+ await installScanApi(page);
+ await page.goto('/fixtures/capture.html?trip=12');
+ await expect(page.locator('#grocyai-capture-trip-summary')).toContainText('Total quantity: 2');
+ await expect(page.locator('#grocyai-capture-trip-summary')).not.toContainText('scans');
+});
+
+for (const width of [320,390,430,1280]) test(`@flowcapture accessible layout ${width}`, async ({ page }) => {
+ await page.setViewportSize({width,height:900});
+ await installScanApi(page);
+ const longName = 'A very long product name with extra descriptive words '.repeat(8);
+ await page.route('**/api/objects/products/101', route => json(route, {id:101,name:longName}));
+ await page.goto('/fixtures/capture.html');
+ await expect(page.locator('#grocyai-capture-status')).toContainText('Trip started');
+ await page.locator('#grocyai-capture-barcode').fill(KNOWN_GTIN);
+ await page.locator('#grocyai-capture-add-button').click();
+ await expect(page.locator('#grocyai-capture-latest')).toContainText(longName.trim());
+ const geometry = await page.evaluate(() => {
+  const input = document.getElementById('grocyai-capture-barcode');
+  const trigger = document.getElementById('camerabarcodescanner-start-button');
+  return {previous:trigger.previousElementSibling.id, camera:trigger.getBoundingClientRect().toJSON(), input:input.getBoundingClientRect().toJSON(), overflow:document.documentElement.scrollWidth > innerWidth};
+ });
+ expect(geometry.previous).toBe('grocyai-capture-barcode');
+ expect(geometry.camera.bottom).toBeLessThanOrEqual(geometry.input.top);
+ expect(geometry.camera.width).toBeCloseTo(geometry.input.width,0);
+ expect(geometry.overflow).toBe(false);
+ await expect(page.locator('#camerabarcodescanner-start-button')).toContainText('Scan barcode');
+ await page.locator('#grocyai-capture-barcode').focus();
+ expect(await page.locator('#grocyai-capture-barcode').evaluate(el => getComputedStyle(el).outlineStyle)).not.toBe('none');
+ for (const night of [false,true]) {
+  await page.evaluate(night => document.body.classList.toggle('night-mode',night),night);
+  const styles = await page.locator('.grocy-ai-flow-card').first().evaluate(el => ({text:getComputedStyle(el).color,surface:getComputedStyle(el).backgroundColor}));
+  const luminance = color => {
+   const channels = color.match(/[0-9]+/g).slice(0,3).map(Number).map(value => { value /= 255; return value <= .04045 ? value / 12.92 : Math.pow((value + .055) / 1.055,2.4); });
+   return channels[0] * .2126 + channels[1] * .7152 + channels[2] * .0722;
+  };
+  const values = [luminance(styles.text),luminance(styles.surface)].sort((a,b)=>b-a);
+  expect((values[0]+.05)/(values[1]+.05)).toBeGreaterThanOrEqual(4.5);
+  const field = await page.locator('#grocyai-capture-barcode').evaluate(el => ({text:getComputedStyle(el).color,surface:getComputedStyle(el).backgroundColor}));
+  expect(field).toEqual(styles);
+  expect(await page.locator('#grocyai-capture-header-review-link').evaluate(el => getComputedStyle(el).textDecorationLine)).toBe('none');
+  if (width === 390) await page.screenshot({path: night ? '/tmp/grocy-flow-capture-390-long-dark.png' : '/tmp/grocy-flow-capture-390-long.png', fullPage:true});
+ }
+ for (const selector of ['#grocyai-capture-add-button','#grocyai-capture-finish-button','#grocyai-capture-trip-actions summary'])
+  expect((await page.locator(selector).boundingBox()).height).toBeGreaterThanOrEqual(44);
+ expect(await page.locator('.grocy-ai-flow-actions').first().evaluate(el=>parseFloat(getComputedStyle(el).gap))).toBeGreaterThanOrEqual(8);
+ expect(await page.locator('.grocy-ai-capture-input-row').evaluate(el=>parseFloat(getComputedStyle(el).rowGap))).toBeGreaterThanOrEqual(12);
+ await page.evaluate(() => {
+  document.getElementById('camerabarcodescanner-start-button').classList.add('disabled');
+  window.__scannerClicked = false;
+  document.addEventListener('click',event => { if(event.target.id === 'camerabarcodescanner-start-button') window.__scannerClicked = true; });
+ });
+ await expect(page.locator('#camerabarcodescanner-start-button')).toHaveAttribute('aria-disabled','true');
+ await expect(page.locator('#camerabarcodescanner-start-button')).toHaveAttribute('tabindex','-1');
+ await page.locator('#camerabarcodescanner-start-button').evaluate(el => el.click());
+ expect(await page.evaluate(() => __scannerClicked)).toBe(false);
+});
+
+
+test('@flowcapture Delete trip retains two confirmations and never starts another trip automatically', async ({page}) => {
+ const state = await installScanApi(page);
+ await page.goto('/fixtures/capture.html');
+ await expect(page.locator('#grocyai-capture-status')).toContainText('Trip started');
+ await page.locator('#grocyai-capture-trip-actions summary').click();
+ let dialogs = 0; let acceptThrough = 0;
+ page.on('dialog', dialog => { dialogs++; return dialogs <= acceptThrough ? dialog.accept() : dialog.dismiss(); });
+ await page.locator('#grocyai-capture-delete-trip-button').click();
+ expect(dialogs).toBe(1); expect(state.cancellations).toBe(0);
+ dialogs = 0; acceptThrough = 1;
+ await page.locator('#grocyai-capture-delete-trip-button').click();
+ expect(dialogs).toBe(2); expect(state.cancellations).toBe(0);
+ dialogs = 0; acceptThrough = 2;
+ await page.locator('#grocyai-capture-delete-trip-button').click();
+ await expect(page.locator('#grocyai-capture-status')).toContainText('Trip deleted');
+ expect(dialogs).toBe(2); expect(state.cancellations).toBe(1); expect(state.tripCreations).toBe(1);
+ await expect(page.locator('#grocyai-capture-delete-trip-button')).toBeDisabled();
+ await expectNoForbiddenWrites(page);
+});
+
+// Moving actions above receipt evidence or optional fields above required controls breaks review order.
+for (const width of [320, 390, 430, 1280]) for (const dark of [false, true]) test('@flowreview required fields, ordered sections and comfortable layout ' + width + (dark ? ' night' : ' light'), async ({ page }) =>
+{
+ await page.setViewportSize({ width, height: 844 });
+ const state = await unitReview(page, true);
+ await page.route('**/trips/7/receipt-readiness', route => json(route, { ready: false, reasons: ['capture_line_31_product_review_required', 'receipt_1_unfinished'], receipts: [{ receipt: { id: 1, status: 'needs_review', merchant: 'Neighborhood Market' }, lines: [{ id: 1, kind: 'item', description: 'Whole milk, one bottle', decision: 'needs_review', quantity: 1, line_total: 3.25, paired_capture_line_id: 31, allocations: [] }], totals: { entered_total: 3.25, printed_total: 3.25, difference: 0 }, issues: [] }] }));
+ await page.locator('#grocyai-capture-review-trips button').first().click();
+ if (dark) await page.locator('body').evaluate(el => el.classList.add('night-mode'));
+ if (dark) expect(await page.getByLabel('Purchase unit', { exact: true }).evaluate(el => getComputedStyle(el).appearance)).toBe('none');
+ const card = page.locator('.grocy-ai-review-card.is-active');
+ await expect(card).toHaveCount(1);
+ expect(await card.evaluate(el => Array.from(el.children).filter(n => /grocy-ai-flow-(participation|research|receipt|product-actions)/.test(n.className)).map(n => n.className.split(' ').find(c => /^grocy-ai-flow-(participation|research|receipt|product-actions)$/.test(c))))).toEqual(['grocy-ai-flow-participation', 'grocy-ai-flow-research', 'grocy-ai-flow-receipt', 'grocy-ai-flow-product-actions']);
+ await expect(card.locator('.grocy-ai-product-research-unit-source')).toContainText(['No suggestion available', 'No suggestion available']);
+ for (const label of ['Proposed name', 'Location', 'Purchase unit', 'Stock unit']) {
+  const input = card.getByLabel(label, { exact: true });
+  await expect(input).toHaveAttribute('aria-required', 'true');
+  expect((await input.boundingBox()).height).toBeGreaterThanOrEqual(44);
+ }
+ const optional = card.locator('.grocy-ai-flow-optional');
+ expect(await card.getByLabel('Stock unit', { exact: true }).evaluate((el) => !!(el.compareDocumentPosition(el.closest('.grocy-ai-product-research').querySelector('.grocy-ai-flow-optional')) & Node.DOCUMENT_POSITION_FOLLOWING))).toBe(true);
+ if (width < 768) await expect(optional.locator('.grocy-ai-flow-optional-content')).toBeHidden();
+ await optional.getByRole('button', { name: /Optional details/ }).click();
+ await expect(card.getByLabel('Brand research note')).not.toHaveAttribute('aria-required', 'true');
+ for (const name of ['Save research draft', 'Approve new product', 'Link existing product']) await expect(card.locator('.grocy-ai-flow-product-actions').getByRole('button', { name, exact: true })).toBeVisible();
+ await page.locator('#grocyai-capture-review-trips button').first().click();
+ await expect(page.locator('.grocy-ai-flow-optional-content')).toBeVisible();
+ await page.locator('#grocyai-review-summary-button').click();
+ await expect(page.locator('#grocyai-purchase-summary h3')).toBeFocused();
+ await page.locator('#grocyai-purchase-summary-back').click();
+ expect(state.writes).toEqual([]);
+ expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+ if (width === 390) { await page.locator('#grocyai-review-prev').scrollIntoViewIfNeeded(); await page.screenshot({ path: '/tmp/grocy-flow-review-390' + (dark ? '-dark' : '') + '.png', fullPage: true }); }
+});
+
+test('@flowreview next unresolved follows server blockers, wraps and leaves selection when no target exists', async ({ page }) =>
+{
+ await installReviewApi(page, { lines: [1, 2, 3].map(seq => makeLine({ id: seq, seq, scanned_barcode: UNKNOWN_GTIN })) });
+ let reasons = ['capture_line_1_product_review_required', 'capture_line_3_product_review_required'];
+ await page.route('**/trips/7/receipt-readiness', route => json(route, { ready: false, reasons, receipts: [] }));
+ await page.goto('/fixtures/capture-review.html'); await page.locator('#grocyai-capture-review-trips button').first().click();
+ const jump = page.locator('#grocyai-review-next-unresolved');
+ await jump.click(); await expect(page.locator('.grocy-ai-review-card.is-active')).toHaveAttribute('data-review-key', 'scan:3');
+ await jump.click(); await expect(page.locator('.grocy-ai-review-card.is-active')).toHaveAttribute('data-review-key', 'scan:1');
+ reasons = ['capture_line_999_product_review_required'];
+ await page.locator('#grocyai-capture-review-trips button').first().click();
+ await jump.click(); await expect(page.locator('.grocy-ai-review-card.is-active')).toHaveAttribute('data-review-key', 'scan:1');
+ await expectNoForbiddenWrites(page);
+});
+
+test('@flowreview saved research notice and external actions survive draft and trip reloads', async ({ page }) =>
+{
+ const state = await unitReview(page);
+ await page.getByLabel('Proposed name').fill('Corrected milk');
+ await page.getByRole('button', { name: 'Save research draft', exact: true }).click();
+ await expect.poll(() => state.selected.name).toBe('Corrected milk');
+ await expect(page.locator('.grocy-ai-flow-product-actions')).toContainText('Product review saved.');
+ await expect(page.getByRole('button', { name: 'Approve new product', exact: true })).toHaveCount(1);
+ await page.locator('#grocyai-capture-review-trips button').first().click();
+ await expect(page.locator('.grocy-ai-product-review-notice')).toContainText('Product review saved.');
+ await expect(page.getByRole('button', { name: 'Approve new product', exact: true })).toHaveCount(1);
+});
+
+for (const mode of ['excluded', 'permission', 'committed']) test('@flowreview external product actions honor ' + mode + ' guard', async ({ page }) =>
+{
+ const state = await unitReview(page);
+ if (mode === 'excluded') state.capture.lines[0].selected = 0;
+ if (mode === 'committed') state.capture.committed = true;
+ if (mode === 'permission') await page.evaluate(() => { window.Grocy.UserPermissions = [{ permission_name: 'MASTER_DATA_EDIT', has_permission: 0 }]; });
+ await page.locator('#grocyai-capture-review-trips button').first().click();
+ if (mode === 'committed') await page.locator('#grocyai-purchase-summary-back').click();
+ for (const name of ['Approve new product', 'Link existing product']) await expect(page.locator('.grocy-ai-flow-product-actions').getByRole('button', { name, exact: true })).toBeDisabled();
+ if (mode !== 'committed') await expect(page.getByRole('button', { name: 'Save research draft', exact: true })).toBeEnabled();
+ expect(state.writes).toEqual([]);
+});
+
+test('@flowreview approval retains both confirmations, exact body and created product identity after reload', async ({ page }) =>
+{
+ const state = await unitReview(page);
+ await page.getByLabel('Location', { exact: true }).selectOption('1');
+ const writes = [];
+ await page.route('**/lines/1/research/approve', async route => {
+  writes.push(route.request().postDataJSON()); state.capture.lines[0].status = 'known'; state.capture.lines[0].resolved_product_id = 101;
+  await json(route, { outcome: 'approved', product_id: 101 });
+ });
+ const dialogs = []; page.on('dialog', async d => { dialogs.push(d.message()); await d.accept(); });
+ await page.getByRole('button', { name: 'Approve new product', exact: true }).click();
+ await expect(page.locator('.grocy-ai-product-review-notice')).toContainText('Product #101 created');
+ expect(dialogs).toHaveLength(2);
+ expect(writes).toEqual([{ revision: 2, fields: { name: 'Milk', location_id: 1, qu_id_purchase: 2, qu_id_stock: 2 } }]);
+ await expect(page.locator('.grocy-ai-product-review-notice')).toContainText('Commit purchase to add it to stock');
+ await page.locator('#grocyai-capture-review-trips button').first().click();
+ await expect(page.locator('.grocy-ai-product-review-notice')).toContainText('Product #101 created');
+ expect(state.capture.commits).toBe(0);
+});
+
+
+// Removing stage isolation, complete commit gating, or response trip ownership breaks these cases.
+async function openSummary(page) {
+ await page.goto('/fixtures/capture-review.html');
+ await page.locator('#grocyai-capture-review-trips button').first().click();
+ await expect(page.locator('#grocyai-purchase-summary')).toHaveCount(1);
+ if (!await page.locator('#grocyai-purchase-summary').isVisible()) await page.locator('#grocyai-review-summary-button').click();
+ await expect(page.locator('#grocyai-purchase-summary')).toBeVisible();
+}
+for (const width of [320, 390, 430, 1280]) for (const dark of [false, true]) test('@flowsummary inspect blocked summary and return to exact mounted editor ' + width + ' dark=' + dark, async ({ page }) => {
+ await page.setViewportSize({ width, height: 844 });
+ const state = await installReviewApi(page, { lines: [1, 2].map(id => makeLine({ id, seq: id, scanned_barcode: UNKNOWN_GTIN })) });
+ await page.route('**/receipt-readiness', route => json(route, { ready: false, reasons: ['capture_line_2_product_review_required', 'no_receipts', 'future_global_check'], receipts: [] }));
+ await page.goto('/fixtures/capture-review.html');
+ if (dark) await page.locator('body').evaluate(el => el.classList.add('night-mode'));
+ await page.locator('#grocyai-capture-review-trips button').first().click();
+ await expect(page.locator('[data-review-key="scan:2"]')).toHaveClass(/is-active/);
+ const editor = page.locator('[data-review-key="scan:2"]');
+ await editor.evaluate(el => el.dataset.identity = 'retained');
+ await page.locator('#grocyai-review-summary-button').click();
+ const summary = page.locator('#grocyai-purchase-summary');
+ await expect(summary).toBeVisible();
+ await expect(summary.getByRole('heading', { name: 'Confirm purchase' })).toBeFocused();
+ await expect(page.locator('#grocyai-capture-review-commit')).toBeDisabled();
+ await expect(page.locator('#grocyai-receipt-readiness-details')).toBeHidden();
+ await summary.getByRole('button', { name: /View 3 review checks/ }).click();
+ await expect(page.locator('#grocyai-receipt-readiness-details')).toContainText('future global check');
+ await expect(page.locator('#grocyai-receipt-readiness-details li')).toHaveCount(3);
+ expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+ const back = page.locator('#grocyai-purchase-summary-back');
+ expect((await back.boundingBox()).height).toBeGreaterThanOrEqual(44);
+ await back.click();
+ await expect(editor).toHaveClass(/is-active/);
+ await expect(editor).toHaveAttribute('data-identity', 'retained');
+ await page.locator('#grocyai-review-summary-button').click();
+ await summary.locator('[data-review-target="scan:2"]').click();
+ await expect(editor.locator('h3')).toBeFocused();
+ expect(state.commits).toBe(0);
+ await expectNoForbiddenWrites(page);
+ if (width === 390) { await page.locator('#grocyai-review-summary-button').click(); await page.screenshot({ path: '/tmp/grocy-flow-summary-390' + (dark ? '-dark' : '') + '.png', fullPage: true }); }
+});
+for (const outcome of ['committed', 'partial', 'checksum_mismatch', 'receipt_review_required', 'commit_failed', 'http', 'timeout']) test('@flowsummary pending commit is single flight and recovery remains on summary: ' + outcome, async ({ page }) => {
+ const state = await installReviewApi(page);
+ let release;
+ await page.route('**/trips/7/commit', async route => {
+  state.commits++;
+  expect(route.request().postDataJSON()).toEqual({ confirmed_checksum: CHECKSUM });
+  await new Promise(resolve => release = resolve);
+  if (outcome === 'timeout') return route.abort('timedout');
+  if (outcome === 'http') return json(route, { error_message: 'Failure' }, 500);
+  if (outcome === 'committed') state.committed = true;
+  return json(route, { outcome, applied: 1, transaction_id: outcome === 'committed' ? 'txn-1001' : null }, outcome === 'checksum_mismatch' ? 409 : 200);
+ });
+ page.on('dialog', dialog => dialog.accept());
+ await openSummary(page);
+ const button = page.locator('#grocyai-capture-review-commit');
+ await button.click();
+ await expect(page.locator('#grocyai-capture-review-commit-result')).toContainText('Committing purchase');
+ await page.locator('#grocyai-purchase-summary-back').click();
+ await page.locator('#grocyai-review-summary-button').click();
+ await button.evaluate(el => { el.disabled = false; el.click(); el.click(); });
+ expect(state.commits).toBe(1);
+ release();
+ const result = page.locator('#grocyai-capture-review-commit-result');
+ if (outcome === 'committed') {
+  await expect(page.locator('#grocyai-purchase-summary')).toContainText('Purchase committed');
+  await expect(button).toHaveCount(0);
+  await expect(page.getByRole('link', { name: 'View inventory' })).toHaveAttribute('href', '/stockoverview');
+  await expect(page.getByRole('link', { name: 'Start new trip', exact: true })).toHaveAttribute('href', '/grocyai/capture');
+ } else {
+  await expect(result).toContainText(outcome === 'partial' ? 'unresolved items remain' : outcome === 'checksum_mismatch' ? 'trip changed' : outcome === 'receipt_review_required' ? 'Receipt review is required' : 'Reload');
+  await expect(page.locator('#grocyai-purchase-summary')).toBeVisible();
+ }
+ expect(state.commits).toBe(1);
+});
+for (const gate of ['readiness', 'checksum', 'committed']) test('@flowsummary rejects ' + gate + ' guard even for programmatic click', async ({ page }) => {
+ const state = await installReviewApi(page);
+ if (gate === 'readiness') await page.route('**/receipt-readiness', route => route.abort());
+ if (gate === 'checksum') await page.route('**/trips/7', route => json(route, { trip: makeTrip({ status: 'reviewing' }), lines: state.lines, checksum: null }));
+ if (gate === 'committed') state.committed = true;
+ page.on('dialog', dialog => dialog.accept());
+ await openSummary(page);
+ const button = page.locator('#grocyai-capture-review-commit');
+ if (gate === 'committed') await expect(button).toHaveCount(0);
+ else { await expect(button).toBeDisabled(); await button.evaluate(el => { el.disabled = false; el.click(); }); }
+ expect(state.commits).toBe(0);
+});
+
+test('@flowsummary capture localizes trip status and formats fractional totals', async ({ page }) => {
+ await installScanApi(page);
+ await page.route('**/trips/12', route => json(route, { trip: makeTrip({ id: 12 }), lines: [makeLine({ id: 1, trip_id: 12, quantity: 0.1 }), makeLine({ id: 2, trip_id: 12, seq: 2, quantity: 0.2 })] }));
+ await page.route('**/fixtures/capture.html?trip=12', async route => { const response = await route.fetch(); await route.fulfill({ response, body: (await response.text()).replace('data-label-status-open="Open"', 'data-label-status-open="Open local"') }); });
+ await page.goto('/fixtures/capture.html?trip=12');
+ await expect(page.locator('#grocyai-capture-trip-summary')).toContainText('Open local');
+ await expect(page.locator('#grocyai-capture-trip-summary')).toContainText('Total quantity: 0.3');
+ await expect(page.locator('#grocyai-capture-trip-summary')).not.toContainText('0.30000000000000004');
+});
+
+test('@flowsummary unsaved research and receipt drafts survive summary navigation and same-trip reload', async ({ page }) => {
+ const state = await unitReview(page, true);
+ await page.route('**/receipt-readiness', route => json(route, { ready: true, reasons: [], receipts: [{ receipt: { id: 1, status: 'finished', merchant: 'Market' }, lines: [{ id: 1, kind: 'item', description: 'Milk', decision: 'include', quantity: 1, line_total: 2, paired_capture_line_id: 31, allocations: [] }], totals: { entered_total: 2, printed_total: 2, difference: 0 }, issues: [] }] }));
+ await page.locator('#grocyai-capture-review-trips button').first().click();
+ await page.getByLabel('Proposed name').fill('Unsaved milk');
+ await page.getByLabel('Line total', { exact: true }).fill('8');
+ await page.locator('#grocyai-review-summary-button').click();
+ await expect(page.locator('#grocyai-capture-review-commit')).toBeDisabled();
+ await expect(page.locator('#grocyai-capture-review-commit-result')).toContainText('Unsaved');
+ await expect(page.locator('#grocyai-purchase-summary')).toContainText('Reviewed total: 2');
+ await page.locator('#grocyai-capture-review-trips button').first().click();
+ await expect(page.locator('#grocyai-purchase-summary')).toBeVisible();
+ await expect(page.locator('#grocyai-capture-review-commit')).toBeDisabled();
+ await page.locator('#grocyai-purchase-summary-back').click();
+ await expect(page.getByLabel('Proposed name')).toHaveValue('Unsaved milk');
+ await expect(page.getByLabel('Line total', { exact: true })).toHaveValue('8');
+ expect(state.writes).toEqual([]); expect(state.capture.commits).toBe(0);
+});
+for (const switchTrip of [false, true]) test('@flowsummary delayed commit survives same-trip reload and cannot alter a different trip ' + switchTrip, async ({ page }) => {
+ const state = await installReviewApi(page);
+ let release;
+ await page.route('**/trips/7/commit', async route => { state.commits++; await new Promise(resolve => release = resolve); state.committed = true; await json(route, { outcome: 'committed', transaction_id: 'txn-1001', applied: 1 }); });
+ if (switchTrip) {
+  await page.route('**/trips', route => json(route, { trips: [makeTrip({ id: 7 }), makeTrip({ id: 8 })] }));
+  await page.route('**/trips/8', route => json(route, { trip: makeTrip({ id: 8, status: 'reviewing' }), lines: [], checksum: CHECKSUM }));
+  await page.route('**/trips/8/receipt-readiness', route => json(route, { ready: false, reasons: ['no_receipts'], receipts: [] }));
+ }
+ page.on('dialog', dialog => dialog.accept());
+ await openSummary(page);
+ await page.locator('#grocyai-capture-review-commit').click();
+ await expect(page.locator('#grocyai-capture-review-commit-result')).toContainText('Committing');
+ await page.locator('#grocyai-capture-review-trips button').nth(switchTrip ? 1 : 0).click();
+ if (switchTrip) { await expect(page.locator('#grocyai-review-summary-button')).toBeVisible(); await page.locator('#grocyai-review-summary-button').click(); }
+ else await expect(page.locator('#grocyai-capture-review-commit')).toBeDisabled();
+ release();
+ if (switchTrip) {
+  await expect(page.locator('#grocyai-purchase-summary')).toContainText('Trip #8');
+  await expect(page.locator('#grocyai-capture-review-commit-result')).toBeEmpty();
+  await expect(page.locator('#grocyai-capture-review-commit')).toBeDisabled();
+  await page.locator('#grocyai-capture-review-trips button').first().click();
+ }
+ await expect(page.locator('#grocyai-purchase-summary')).toContainText('Purchase committed');
+ await expect(page.locator('#grocyai-capture-review-commit')).toHaveCount(0);
+ expect(state.commits).toBe(1);
+});
+
+
+test('@flowsummary pending research mutation blocks commit without an unsaved field', async ({ page }) => {
+ const state = await unitReview(page);
+ let release;
+ await page.route('**/lines/1/receipt-evidence', async route => { await new Promise(resolve => release = resolve); await json(route, {}); });
+ await page.getByLabel('Receipt line evidence').dispatchEvent('change');
+ await expect.poll(() => typeof release).toBe('function');
+ await page.locator('#grocyai-review-summary-button').click();
+ await expect(page.locator('#grocyai-capture-review-commit')).toBeDisabled();
+ release();
+ await expect(page.locator('#grocyai-capture-review-commit')).toBeEnabled();
+ expect(state.capture.commits).toBe(0);
+});
+
+test('@flowsummary many groups stay behind compact disclosure', async ({ page }) => {
+ await installReviewApi(page);
+ await page.route('**/receipt-readiness', route => json(route, { ready: false, reasons: Array.from({ length: 48 }, (_, i) => 'capture_line_' + (i + 1) + '_product_review_required'), receipts: [] }));
+ await openSummary(page);
+ const groups = page.locator('#grocyai-summary-check-groups');
+ await expect(groups).toHaveCount(1);
+ await expect(groups).toBeHidden();
+ await page.getByRole('button', { name: 'View 48 review checks' }).click();
+ await expect(groups.getByRole('button')).toHaveCount(48);
+ await expect(groups).toBeVisible();
+});
+
+
+test('@flowsummary recovery rechecks full readiness gate without retrying commit', async ({ page }) => {
+ const state = await installReviewApi(page);
+ let ready = true;
+ await page.route('**/receipt-readiness', route => json(route, { ready, reasons: ready ? [] : ['no_receipts'], receipts: [] }));
+ await page.route('**/trips/7/commit', route => { state.commits++; return json(route, {}, 500); });
+ page.on('dialog', dialog => dialog.accept());
+ await openSummary(page);
+ await page.locator('#grocyai-capture-review-commit').click();
+ await expect(page.getByRole('button', { name: 'Reload and recheck purchase' })).toBeVisible();
+ await expect(page.locator('#grocyai-capture-review-commit')).toBeDisabled();
+ ready = false;
+ await page.getByRole('button', { name: 'Reload and recheck purchase' }).click();
+ await expect(page.locator('#grocyai-receipt-readiness')).toContainText('review checks remain');
+ await expect(page.locator('#grocyai-capture-review-commit')).toBeDisabled();
+ ready = true;
+ await page.getByRole('button', { name: 'Reload and recheck purchase' }).click();
+ await expect(page.locator('#grocyai-capture-review-commit')).toBeEnabled();
+ expect(state.commits).toBe(1);
+});
+
+test('@flowsummary confirmed success survives a failed follow-up reload', async ({ page }) => {
+ const state = await installReviewApi(page);
+ await page.route('**/trips/7', route => state.committed ? route.abort('failed') : json(route, { trip: makeTrip({ status: 'reviewing' }), lines: state.lines, checksum: CHECKSUM }));
+ page.on('dialog', dialog => dialog.accept());
+ await openSummary(page);
+ await page.locator('#grocyai-capture-review-commit').click();
+ await expect(page.locator('#grocyai-purchase-summary')).toContainText('Purchase committed');
+ await expect(page.locator('#grocyai-capture-review-commit')).toHaveCount(0);
+ await expect(page.getByRole('link', { name: 'View inventory' })).toBeVisible();
+ expect(state.commits).toBe(1);
+});
+
+
+test('@flowsummary confirmed success returns to read-only summary after Back to review and failed follow-up reload', async ({ page }) => {
+ const state = await installReviewApi(page);
+ let release;
+ await page.route('**/trips/7/commit', async route => {
+  state.commits++;
+  await new Promise(resolve => release = resolve);
+  state.committed = true;
+  await json(route, { outcome: 'committed', transaction_id: 'txn-1001', applied: 1 });
+ });
+ await page.route('**/trips/7', route => state.committed ? route.abort('failed') : json(route, { trip: makeTrip({ status: 'reviewing' }), lines: state.lines, checksum: CHECKSUM }));
+ page.on('dialog', dialog => dialog.accept());
+ await openSummary(page);
+ await page.locator('#grocyai-capture-review-commit').click();
+ await expect(page.locator('#grocyai-capture-review-commit-result')).toContainText('Committing');
+ await page.locator('#grocyai-purchase-summary-back').click();
+ await expect(page.locator('#grocyai-review-stage')).toBeVisible();
+ release();
+ await expect(page.locator('#grocyai-purchase-summary')).toBeVisible();
+ await expect(page.locator('#grocyai-purchase-summary')).toContainText('Purchase committed');
+ await expect(page.locator('#grocyai-purchase-summary')).toContainText('txn-1001');
+ await expect(page.locator('#grocyai-capture-review-commit')).toHaveCount(0);
+ await expect(page.getByRole('link', { name: 'View inventory' })).toBeVisible();
+ await page.locator('#grocyai-purchase-summary-back').click();
+ await expect(page.locator('#grocyai-capture-review-selected-1')).toBeDisabled();
+ await expect(page.locator('.grocy-ai-capture-review-line-controls input[type="number"]')).toBeDisabled();
+ expect(state.commits).toBe(1);
+});
+
+
+for (const edit of ['include', 'location']) for (const scope of ['same', 'other', 'failure']) test('@flowsummary @fixwave direct ' + edit + ' PUT waits for settlement and authoritative refresh: ' + scope, async ({ page }) => {
+ const state = await installReviewApi(page);
+ let releaseWrite, releaseRefresh, settled = false, refreshed = false, location = null;
+ await page.route('**/api/objects/locations', route => json(route, [{ id: 9, name: 'Pantry' }]));
+ await page.route('**/trips', route => json(route, { trips: [makeTrip({ id: 7 }), makeTrip({ id: 8 })] }));
+ await page.route('**/trips/8', route => json(route, { trip: makeTrip({ id: 8, status: 'reviewing' }), lines: [], checksum: CHECKSUM }));
+ await page.route('**/trips/8/receipt-readiness', route => json(route, { ready: true, reasons: [], receipts: [] }));
+ const write = async route => {
+  expect(route.request().postDataJSON()).toEqual(edit === 'include' ? { selected: false } : { default_location_id: 9 });
+  await new Promise(resolve => releaseWrite = resolve);
+  settled = true;
+  if (scope === 'failure') return json(route, {}, 500);
+  if (edit === 'include') state.lines[0].selected = 0; else location = 9;
+  return json(route, edit === 'include' ? { trip: makeTrip({ status: 'reviewing' }), lines: state.lines, checksum: CHECKSUM } : makeTrip({ status: 'reviewing', default_location_id: location }));
+ };
+ await page.route('**/trips/7', route => route.request().method() === 'PUT' ? write(route) : json(route, { trip: makeTrip({ status: 'reviewing', default_location_id: location }), lines: state.lines, checksum: CHECKSUM }));
+ if (edit === 'include') await page.route('**/trips/7/lines/1', write);
+ await page.route('**/trips/7/receipt-readiness', async route => {
+  if (settled && !refreshed) await new Promise(resolve => releaseRefresh = () => { refreshed = true; resolve(); });
+  return json(route, { ready: true, reasons: [], receipts: [] });
+ });
+ page.on('dialog', dialog => dialog.accept());
+ await page.goto('/fixtures/capture-review.html');
+ await page.locator('#grocyai-capture-review-trips button').first().click();
+ if (edit === 'include') await page.locator('#grocyai-capture-review-selected-1').uncheck();
+ else await page.locator('#grocyai-capture-review-location').selectOption('9');
+ await expect.poll(() => typeof releaseWrite).toBe('function');
+ await page.locator('#grocyai-review-summary-button').click();
+ const commit = page.locator('#grocyai-capture-review-commit');
+ await expect(commit).toBeDisabled();
+ await commit.evaluate(el => { el.disabled = false; el.click(); });
+ expect(state.commits).toBe(0);
+ if (scope === 'same') {
+  await page.locator('#grocyai-capture-review-trips button').first().click();
+  await expect(commit).toBeDisabled();
+ }
+ if (scope === 'other') {
+  await page.locator('#grocyai-capture-review-trips button').nth(1).click();
+  await page.locator('#grocyai-review-summary-button').click();
+  await expect(commit).toBeEnabled();
+ }
+ releaseWrite();
+ if (scope === 'other') {
+  await expect.poll(() => settled).toBe(true);
+  await page.locator('#grocyai-capture-review-trips button').first().click();
+ }
+ await expect.poll(() => typeof releaseRefresh).toBe('function');
+ await expect(commit).toBeDisabled();
+ releaseRefresh();
+ if (scope === 'other') await page.locator('#grocyai-review-summary-button').click();
+ await expect(commit).toBeEnabled();
+ await page.locator('#grocyai-purchase-summary-back').click();
+ if (scope === 'failure') await expect(page.locator('#grocyai-capture-review-error')).toContainText('That change could not be saved');
+ if (edit === 'include') { if (scope === 'failure') await expect(page.locator('#grocyai-capture-review-selected-1')).toBeChecked(); else await expect(page.locator('#grocyai-capture-review-selected-1')).not.toBeChecked(); }
+ else await expect(page.locator('#grocyai-capture-review-location')).toHaveValue(scope === 'failure' ? '' : '9');
+ expect(state.commits).toBe(0);
+});
+
+for (const outcome of ['partial', 'http']) test('@flowsummary @fixwave Back from pending commit restores ' + outcome + ' recovery after failure', async ({ page }) => {
+ const state = await installReviewApi(page);
+ let release, completed = false;
+ await page.route('**/trips/7/commit', async route => {
+  state.commits++;
+  await new Promise(resolve => release = resolve);
+  completed = true;
+  return outcome === 'http' ? json(route, {}, 500) : json(route, { outcome: 'partial', applied: 1, transaction_id: 'txn-partial' });
+ });
+ await page.route('**/trips/7', route => completed ? route.abort('failed') : json(route, { trip: makeTrip({ status: 'reviewing' }), lines: state.lines, checksum: CHECKSUM }));
+ page.on('dialog', dialog => dialog.accept());
+ await openSummary(page);
+ await page.locator('#grocyai-capture-review-commit').click();
+ await expect(page.locator('#grocyai-capture-review-commit-result')).toContainText('Committing');
+ await page.locator('#grocyai-purchase-summary-back').click();
+ release();
+ await expect(page.locator('#grocyai-purchase-summary')).toBeVisible();
+ const result = page.locator('#grocyai-capture-review-commit-result');
+ await expect(result).toContainText(outcome === 'partial' ? 'Committed 1' : 'could not be confirmed');
+ await expect(result).toContainText('Reload');
+ await expect(result).toBeFocused();
+ await expect(page.getByRole('button', { name: 'Reload and recheck purchase' })).toBeVisible();
+ await expect(page.locator('#grocyai-capture-review-commit')).toBeDisabled();
+ await page.locator('#grocyai-capture-review-commit').evaluate(el => { el.disabled = false; el.click(); });
+ expect(state.commits).toBe(1);
+});
+
+test('@flowsummary @fixwave different UPC purchase quantities keep allocation boundaries and unverified units', async ({ page }) => {
+ const state = await installReviewApi(page, { lines: [
+  makeLine({ id: 101, seq: 1, scanned_barcode: KNOWN_GTIN, resolved_product_id: 101, status: 'known', selected: 1 }),
+  makeLine({ id: 102, seq: 2, scanned_barcode: UNKNOWN_GTIN, resolved_product_id: 101, status: 'known', selected: 1 })
+ ] });
+ await page.route('**/api/objects/products/101', route => json(route, { id: 101, name: 'Milk', qu_id_purchase: 1 }));
+ await page.route('**/api/objects/quantity_units', route => json(route, [{ id: 1, name: 'bottle' }]));
+ await page.route('**/receipt-readiness', route => json(route, { ready: true, reasons: [], receipts: [{ receipt: { id: 1, status: 'finished' }, totals: {}, lines: [{ id: 1, kind: 'item', decision: 'include', allocations: [
+  { id: 1, active: 1, product_id: 101, capture_line_id: 101, quantity: 1, unit_price: 2 },
+  { id: 2, active: 1, product_id: 101, capture_line_id: 102, quantity: 1, unit_price: 12 }
+ ] }] }] }));
+ await openSummary(page);
+ const product = page.locator('[data-summary-product="101"]');
+ await expect(product.locator('li')).toHaveCount(2);
+ await expect(product.locator('li')).toContainText(['Scan #1 · UPC ' + KNOWN_GTIN + ' · purchased quantity: 1', 'Scan #2 · UPC ' + UNKNOWN_GTIN + ' · purchased quantity: 1']);
+ await expect(product.locator('li')).toContainText(['Effective purchase unit unverified', 'Effective purchase unit unverified']);
+ await expect(product).not.toContainText('2 bottle');
+ await expect(product).not.toContainText('1 bottle');
+ expect(state.commits).toBe(0);
+});
+
+test('@flowsummary @fixwave already_committed response restores confirmed success without recommit', async ({ page }) => {
+ const state = await installReviewApi(page);
+ let completed = false;
+ await page.route('**/trips/7/commit', route => { state.commits++; completed = true; return json(route, { outcome: 'already_committed', transaction_id: 'txn-existing', applied: 0 }, 409); });
+ await page.route('**/trips/7', route => completed ? route.abort('failed') : json(route, { trip: makeTrip({ status: 'reviewing' }), lines: state.lines, checksum: CHECKSUM }));
+ page.on('dialog', dialog => dialog.accept());
+ await openSummary(page);
+ await page.locator('#grocyai-capture-review-commit').click();
+ await expect(page.locator('#grocyai-purchase-summary')).toContainText('Purchase committed');
+ await expect(page.locator('#grocyai-purchase-summary')).toContainText('txn-existing');
+ await expect(page.locator('#grocyai-capture-review-commit')).toHaveCount(0);
+ await expect(page.getByRole('link', { name: 'View inventory' })).toBeVisible();
+ expect(state.commits).toBe(1);
 });

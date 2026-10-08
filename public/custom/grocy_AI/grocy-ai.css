@@ -957,3 +957,129 @@ details.grocy-ai-diagnostics:not([open]) > .grocy-ai-diagnostic-body {
 	.grocy-ai-receipt-compact-summary p { margin-bottom: .35rem; }
 	.grocy-ai-receipt-details:not(.is-expanded) { display: none; }
 }
+
+/* Shared purchase flow surfaces; deliberately scoped away from Grocy controls. */
+.grocy-ai-purchase-flow {
+ --grocy-ai-flow-surface: #fff;
+ --grocy-ai-flow-border: #ced4da;
+ --grocy-ai-flow-text: #212529;
+ --grocy-ai-flow-muted: #495057;
+ --grocy-ai-flow-primary: #0056b3;
+ --grocy-ai-flow-radius: 12px;
+ color: var(--grocy-ai-flow-text);
+ max-width: 960px;
+ margin: 0 auto;
+}
+.night-mode .grocy-ai-purchase-flow {
+ --grocy-ai-flow-surface: #242a30;
+ --grocy-ai-flow-border: #65717d;
+ --grocy-ai-flow-text: #f1f3f5;
+ --grocy-ai-flow-muted: #c4ccd4;
+ --grocy-ai-flow-primary: #94c8ff;
+}
+.grocy-ai-purchase-flow .grocy-ai-flow-card {
+ padding: 16px;
+ margin-bottom: 16px;
+ background: var(--grocy-ai-flow-surface);
+ border: 1px solid var(--grocy-ai-flow-border);
+ border-radius: var(--grocy-ai-flow-radius);
+ color: var(--grocy-ai-flow-text);
+}
+.grocy-ai-purchase-flow h3 { font-size: 1.15rem; margin: 0 0 12px; }
+.grocy-ai-purchase-flow .grocy-ai-flow-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.grocy-ai-purchase-flow .grocy-ai-flow-footer { padding: 16px 0 calc(16px + env(safe-area-inset-bottom, 0px)); }
+.grocy-ai-purchase-flow .btn,
+.grocy-ai-purchase-flow summary,
+.grocy-ai-purchase-flow input { min-height: 44px; }
+.grocy-ai-purchase-flow summary { cursor: pointer; padding: 12px 0; }
+.grocy-ai-purchase-flow :is(button,a,input,summary):focus { outline: 3px solid var(--grocy-ai-flow-primary); outline-offset: 3px; }
+.grocy-ai-purchase-flow .grocy-ai-flow-upc { font-family: monospace; overflow-wrap: anywhere; }
+.grocy-ai-purchase-flow .grocy-ai-flow-badge { display: inline-block; padding: 4px 8px; border: 1px solid var(--grocy-ai-flow-border); border-radius: 8px; }
+.grocy-ai-purchase-flow .text-muted { color: var(--grocy-ai-flow-muted) !important; }
+.grocy-ai-purchase-flow .grocy-ai-capture-input-row { display: flex; flex-direction: column; gap: 12px; }
+.grocy-ai-purchase-flow .grocy-ai-capture-input-row label { order: 1; margin: 0; }
+.grocy-ai-purchase-flow .grocy-ai-capture-input-row #grocyai-capture-barcode { order: 2; width: 100%; flex: none; }
+.grocy-ai-purchase-flow .grocy-ai-capture-input-row #camerabarcodescanner-start-button { order: 0; width: 100%; flex: none; position: static; margin: 0; font-size: 1rem; min-height: 48px; }
+.grocy-ai-purchase-flow .grocy-ai-capture-line,
+.grocy-ai-purchase-flow .grocy-ai-capture-latest-body { gap: 12px; flex-wrap: wrap; color: var(--grocy-ai-flow-text); background: var(--grocy-ai-flow-surface); }
+.grocy-ai-purchase-flow .grocy-ai-capture-line-detail { min-width: 0; flex: 1 1 160px; overflow-wrap: anywhere; }
+.grocy-ai-purchase-flow [hidden] { display: none !important; }
+.grocy-ai-purchase-flow #grocyai-capture-show-all { margin-top: 12px; }
+.grocy-ai-purchase-flow .grocy-ai-capture-camera-confirmation,
+.grocy-ai-purchase-flow .grocy-ai-capture-status { color: var(--grocy-ai-flow-text); background: var(--grocy-ai-flow-surface); border-color: var(--grocy-ai-flow-border); }
+.grocy-ai-purchase-flow label { display: block; margin-bottom: 12px; }
+@media (max-width: 340px) {
+ .grocy-ai-purchase-flow .grocy-ai-flow-card { padding: 12px; }
+ .grocy-ai-purchase-flow .grocy-ai-flow-footer > .btn { width: 100%; }
+}
+.grocy-ai-purchase-flow .btn-primary { background: #0056b3; border-color: #0056b3; color: #fff; }
+.grocy-ai-purchase-flow .btn-outline-primary { color: var(--grocy-ai-flow-primary); border-color: var(--grocy-ai-flow-primary); }
+.grocy-ai-purchase-flow .btn-outline-secondary { color: var(--grocy-ai-flow-muted); border-color: var(--grocy-ai-flow-border); }
+.grocy-ai-purchase-flow .grocy-ai-capture-line-quantity { color: var(--grocy-ai-flow-text); background: var(--grocy-ai-flow-surface); border: 1px solid var(--grocy-ai-flow-border); }
+.night-mode .grocy-ai-purchase-flow .btn-primary { background: #94c8ff; border-color: #94c8ff; color: #212529; }
+.night-mode .grocy-ai-purchase-flow .btn-outline-danger { color: #ff9ba5; border-color: #ff9ba5; }
+.grocy-ai-purchase-flow .grocy-ai-capture-latest-name,
+.grocy-ai-purchase-flow .grocy-ai-capture-latest-barcode { display: block; }
+.grocy-ai-purchase-flow :is(.btn-outline-primary, .btn-outline-secondary, .btn-outline-danger) { background: transparent; }
+.grocy-ai-purchase-flow :is(.btn-outline-primary, .btn-outline-secondary, .btn-outline-danger):hover { background: var(--grocy-ai-flow-text); color: var(--grocy-ai-flow-surface); }
+.night-mode .grocy-ai-purchase-flow #camerabarcodescanner-start-button { color: #212529 !important; }
+.grocy-ai-purchase-flow .btn { display: inline-flex; align-items: center; justify-content: center; }
+.grocy-ai-purchase-flow #grocyai-capture-trip-summary { margin-bottom: 12px; }
+.grocy-ai-purchase-flow .form-control {
+ background: var(--grocy-ai-flow-surface);
+ color: var(--grocy-ai-flow-text);
+ border-color: var(--grocy-ai-flow-border);
+ border-radius: var(--grocy-ai-flow-radius);
+}
+.grocy-ai-purchase-flow .form-control::placeholder { color: var(--grocy-ai-flow-muted); opacity: 1; }
+.grocy-ai-purchase-flow a.btn { text-decoration: none; }
+
+/* Review uses the same purchase-flow tokens as capture. */
+#grocyai-capture-review .grocy-ai-flow-participation,
+#grocyai-capture-review .grocy-ai-flow-research,
+#grocyai-capture-review .grocy-ai-flow-receipt,
+#grocyai-capture-review .grocy-ai-flow-product-actions { margin-top: 16px; min-width: 0; }
+#grocyai-capture-review .grocy-ai-flow-product-actions { border-top: 1px solid var(--grocy-ai-flow-border); padding-top: 16px; }
+#grocyai-capture-review .grocy-ai-product-research { margin: 0; padding: 0; background: transparent; color: var(--grocy-ai-flow-text); border: 0; }
+#grocyai-capture-review .grocy-ai-product-research-actions { display: flex; flex-direction: column; gap: 8px; }
+#grocyai-capture-review .grocy-ai-flow-product-actions label { margin: 12px 0 0; }
+#grocyai-capture-review :is(button, .btn, input:not([type=checkbox]), select) { min-height: 44px; max-width: 100%; white-space: normal; }
+#grocyai-capture-review .grocy-ai-receipt { color: var(--grocy-ai-flow-text); background: var(--grocy-ai-flow-surface); border-color: var(--grocy-ai-flow-border); }
+#grocyai-capture-review .grocy-ai-receipt-compact-summary { display: block; }
+#grocyai-capture-review .grocy-ai-capture-review-status { gap: 8px; }
+#grocyai-capture-review .grocy-ai-capture-review-line-barcode { font-family: monospace; }
+#grocyai-capture-review .grocy-ai-flow-optional-content { padding-top: 12px; }
+#grocyai-capture-review #grocyai-review-next-unresolved { margin-bottom: 12px; }
+#grocyai-capture-review .grocy-ai-capture-review-line-controls { gap: 8px; }
+#grocyai-capture-review .grocy-ai-receipt-line { background: var(--grocy-ai-flow-surface); color: var(--grocy-ai-flow-text); }
+#grocyai-capture-review :is(select, textarea):focus { outline: 3px solid var(--grocy-ai-flow-primary); outline-offset: 3px; }
+#grocyai-capture-review .grocy-ai-required-marker { color: #c82333; }
+.night-mode #grocyai-capture-review .grocy-ai-required-marker { color: #ff9ba5; }
+@media (max-width: 767.98px) {
+ #grocyai-capture-review .grocy-ai-flow-optional-content:not(.is-expanded) { display: none; }
+ #grocyai-capture-review .grocy-ai-flow-footer .btn { width: 100%; }
+ #grocyai-capture-review .grocy-ai-capture-review-line-description { width: 100%; }
+}
+
+/* Native WebKit select painting otherwise hides dark-theme text on a white surface. */
+#grocyai-capture-review select.form-control {
+ -webkit-appearance: none;
+ appearance: none;
+ padding-right: 32px;
+ background-image: linear-gradient(45deg, transparent 50%, var(--grocy-ai-flow-text) 50%), linear-gradient(135deg, var(--grocy-ai-flow-text) 50%, transparent 50%);
+ background-position: calc(100% - 18px) 50%, calc(100% - 13px) 50%;
+ background-size: 5px 5px;
+ background-repeat: no-repeat;
+}
+.night-mode #grocyai-capture-review { color-scheme: dark; }
+
+/* Confirmation is a presentation stage; the mounted review editors retain their ownership. */
+.grocy-ai-purchase-flow .grocy-ai-purchase-summary { display: grid; gap: 16px; min-width: 0; }
+.grocy-ai-purchase-flow .grocy-ai-purchase-summary :is(h3,h4,h5,p,li) { overflow-wrap: anywhere; }
+.grocy-ai-purchase-flow .grocy-ai-summary-product + .grocy-ai-summary-product { border-top: 1px solid var(--grocy-ai-flow-border); padding-top: 12px; margin-top: 12px; }
+.grocy-ai-purchase-flow .grocy-ai-purchase-summary .grocy-ai-flow-actions + .grocy-ai-flow-actions { margin-top: 12px; }
+.grocy-ai-purchase-flow .grocy-ai-purchase-summary .grocy-ai-flow-footer { display: flex; flex-wrap: wrap; gap: 8px; }
+.grocy-ai-purchase-flow .grocy-ai-purchase-summary .grocy-ai-flow-footer :is(p,h4,[role=status]) { flex-basis: 100%; }
+.grocy-ai-purchase-flow .grocy-ai-purchase-summary h3:focus { outline: 3px solid var(--grocy-ai-flow-primary); outline-offset: 3px; }
+
+.grocy-ai-purchase-flow .btn:disabled { opacity: .65; cursor: not-allowed; }
