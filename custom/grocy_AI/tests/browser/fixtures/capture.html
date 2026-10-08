@@ -7,6 +7,7 @@
 	<style>
 		* { box-sizing: border-box; }
 		body { margin: 0; padding: 16px; font-family: Roboto, sans-serif; color: #212529; }
+		body.night-mode { background: #1b2025; color: #f1f3f5; }
 		.row { display: flex; flex-wrap: wrap; margin: 0 -8px; }
 		.col { width: 100%; padding: 0 8px; }
 		.form-control { display: block; width: 100%; min-width: 0; padding: 8px; border: 1px solid #ced4da; }
@@ -21,6 +22,7 @@
 		.d-flex { display: flex; }
 		.justify-content-between { justify-content: space-between; }
 		.align-items-center { align-items: center; }
+		.text-white { color: #fff !important; }
 		.text-muted { color: #6c757d; }
 		.badge { padding: 4px 8px; border-radius: 8px; background: #e2e3e5; }
 		.alert { padding: 12px; border: 1px solid transparent; border-radius: 4px; }
@@ -36,7 +38,7 @@
 	<main>
 		<!-- Mirrors views/grocyai_capture.blade.php: the STOCK_PURCHASE-gated scan loop. -->
 
-		<div class="row permission-STOCK_PURCHASE"
+				<div class="row permission-STOCK_PURCHASE grocy-ai-purchase-flow"
 			id="grocyai-capture"
 			data-trips-endpoint="/api/grocy-ai/capture/trips"
 			data-products-endpoint="/api/objects/products"
@@ -50,13 +52,37 @@
 			data-label-camera-pending="Confirm or cancel the scanned UPC before finishing."
 			data-label-camera-unverified="Scan outcome could not be verified. Reload this page and review the trip before scanning again."
 			data-label-empty="No items yet. Scan or enter a GTIN above."
+			data-label-scan-barcode="Scan barcode"
+			data-label-distinct-items="distinct items"
+			data-label-total-quantity="Total quantity"
+			data-label-saved="Saved"
+			data-label-needs-details="Needs details"
+			data-label-show-all="Show all items"
+			data-label-show-recent="Show recent items"
+			data-label-trip="Trip"
+			data-label-delete-first="Delete this trip from the active list? Receipt and scan history will be kept for audit."
+			data-label-delete-second="Final confirmation: delete this trip? This cannot be undone from this screen."
+			data-label-delete-error="The trip could not be deleted. Reload it and try again."
+			data-label-deleted="Trip deleted. Start a new trip to scan more items."
 			data-label-quantity="Quantity">
 			<div class="col">
-				<section class="grocy-ai-capture-scan-section" aria-labelledby="grocyai-capture-scan-heading">
+				<section class="grocy-ai-flow-card">
+					<h3>Current trip</h3>
+					<div id="grocyai-capture-trip-summary" role="status" aria-live="polite"></div>
+					<a class="btn btn-outline-primary" id="grocyai-capture-header-review-link" href="/grocyai/capture/review">Review trip</a>
+					<details id="grocyai-capture-trip-actions">
+						<summary>Trip actions</summary>
+						<div class="grocy-ai-flow-actions">
+							<button type="button" class="btn btn-outline-secondary btn-lg" id="grocyai-capture-new-trip-button">Start new trip</button>
+							<button type="button" class="btn btn-outline-danger" id="grocyai-capture-delete-trip-button">Delete trip</button>
+						</div>
+					</details>
+				</section>
+				<section class="grocy-ai-capture-scan-section grocy-ai-flow-card" aria-labelledby="grocyai-capture-scan-heading">
 					<h3 id="grocyai-capture-scan-heading">Scan</h3>
 					<div class="form-group mb-2">
-						<label for="grocyai-capture-barcode">GTIN</label>
 						<div class="grocy-ai-capture-input-row">
+							<label for="grocyai-capture-barcode">Enter UPC manually</label>
 							<input type="text"
 								class="form-control form-control-lg barcodescanner-input"
 								id="grocyai-capture-barcode"
@@ -65,22 +91,21 @@
 								enterkeyhint="done"
 								placeholder="8, 12, 13, or 14 digits"
 								data-target="grocyai-capture-barcode">
-							<a id="camerabarcodescanner-start-button" class="btn btn-sm btn-primary text-white" data-target="grocyai-capture-barcode" aria-label="Scan barcode"><i class="fa-solid fa-camera"></i></a>
+							<a id="camerabarcodescanner-start-button" class="btn btn-sm btn-primary text-white" data-target="grocyai-capture-barcode" aria-label="Scan barcode">
+								<i class="fa-solid fa-camera"></i>
+							</a>
 						</div>
 					</div>
 					<div id="grocyai-capture-camera-confirmation" class="grocy-ai-capture-camera-confirmation alert alert-secondary mb-2" hidden>
 						<label for="grocyai-capture-camera-barcode">Confirm scanned UPC or edit it</label>
 						<input type="text" class="form-control form-control-lg" id="grocyai-capture-camera-barcode" inputmode="numeric" autocomplete="off" enterkeyhint="done">
-						<div class="grocy-ai-actions mt-2">
+						<div class="grocy-ai-actions grocy-ai-flow-actions mt-2">
 							<button type="button" class="btn btn-primary btn-lg" id="grocyai-capture-camera-save-button">Add scanned item</button>
 							<button type="button" class="btn btn-outline-secondary btn-lg" id="grocyai-capture-camera-cancel-button">Cancel scan</button>
 						</div>
 					</div>
-					<div class="grocy-ai-actions">
+					<div class="grocy-ai-actions grocy-ai-flow-actions">
 						<button type="button" class="btn btn-primary btn-lg" id="grocyai-capture-add-button">Add</button>
-						<button type="button" class="btn btn-outline-secondary btn-lg" id="grocyai-capture-new-trip-button">Start new trip</button>
-						<button type="button" class="btn btn-outline-primary btn-lg" id="grocyai-capture-finish-button">Finish scanning</button>
-						<a class="btn btn-outline-primary btn-lg" id="grocyai-capture-review-link" href="/grocyai/capture/review">Review trip</a>
 					</div>
 					<div class="grocy-ai-capture-status alert alert-secondary mt-3 mb-0"
 						id="grocyai-capture-status"
@@ -88,25 +113,35 @@
 						aria-live="polite"
 						aria-atomic="true"></div>
 				</section>
-
-				<section class="grocy-ai-capture-lines-section mt-3" aria-labelledby="grocyai-capture-lines-heading">
+				<section class="grocy-ai-flow-card">
+					<h3>Latest scanned item</h3>
+					<div id="grocyai-capture-latest" aria-live="polite"></div>
+				</section>
+				<section class="grocy-ai-capture-lines-section grocy-ai-flow-card mt-3" aria-labelledby="grocyai-capture-lines-heading">
 					<h3 id="grocyai-capture-lines-heading">Captured items</h3>
 					<ul class="list-group grocy-ai-capture-lines"
 						id="grocyai-capture-lines"
 						aria-live="polite"
 						aria-labelledby="grocyai-capture-lines-heading"></ul>
+					<button type="button" class="btn btn-outline-secondary" id="grocyai-capture-show-all" aria-expanded="false" aria-controls="grocyai-capture-lines">Show all items</button>
 				</section>
+				<footer class="grocy-ai-flow-footer grocy-ai-flow-actions">
+					<button type="button" class="btn btn-outline-primary btn-lg" id="grocyai-capture-finish-button">Finish scanning</button>
+					<a class="btn btn-primary btn-lg" id="grocyai-capture-review-link" href="/grocyai/capture/review">Review trip</a>
+				</footer>
 			</div>
 		</div>
 	</main>
 
-	<script src="/fixtures/capture-harness.js"></script>
+	<script src="/fixtures/capture-harness.js">
+			</script>
 	<script>
 		if (new URLSearchParams(window.location.search).get('saved') === '12')
 		{
 			document.getElementById('grocyai-capture').setAttribute('data-default-trip-id', '12');
 		}
 	</script>
-	<script src="/assets/capture.js?v=2.5.4"></script>
+	<script src="/assets/capture.js?v=2.5.4">
+			</script>
 </body>
 </html>

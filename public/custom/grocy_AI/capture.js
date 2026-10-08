@@ -40,7 +40,7 @@
 		cameraUnverified: 'Scan outcome could not be verified. Reload this page and review the trip before scanning again.',
 		barcode: 'UPC',
 		empty: 'No items yet. Scan or enter a GTIN above.',
-		quantity: 'Quantity'
+		quantity: 'Quantity', distinctItems: 'distinct items', totalQuantity: 'Total quantity', saved: 'Saved', needsDetails: 'Needs details', showAll: 'Show all items', showRecent: 'Show recent items', trip: 'Trip', scanBarcode: 'Scan barcode', deleteFirst: 'Delete this trip from the active list? Receipt and scan history will be kept for audit.', deleteSecond: 'Final confirmation: delete this trip? This cannot be undone from this screen.', deleteError: 'The trip could not be deleted. Reload it and try again.', deleted: 'Trip deleted. Start a new trip to scan more items.'
 	};
 
 	/**
@@ -137,7 +137,19 @@
 			cameraUnverified: d.labelCameraUnverified || DEFAULT_COPY.cameraUnverified,
 			barcode: d.labelBarcode || DEFAULT_COPY.barcode,
 			empty: d.labelEmpty || DEFAULT_COPY.empty,
-			quantity: d.labelQuantity || DEFAULT_COPY.quantity
+			quantity: d.labelQuantity || DEFAULT_COPY.quantity,
+			distinctItems: d.labelDistinctItems || DEFAULT_COPY.distinctItems,
+			totalQuantity: d.labelTotalQuantity || DEFAULT_COPY.totalQuantity,
+			saved: d.labelSaved || DEFAULT_COPY.saved,
+			needsDetails: d.labelNeedsDetails || DEFAULT_COPY.needsDetails,
+			showAll: d.labelShowAll || DEFAULT_COPY.showAll,
+			showRecent: d.labelShowRecent || DEFAULT_COPY.showRecent,
+			trip: d.labelTrip || DEFAULT_COPY.trip,
+			scanBarcode: d.labelScanBarcode || DEFAULT_COPY.scanBarcode,
+			deleteFirst: d.labelDeleteFirst || DEFAULT_COPY.deleteFirst,
+			deleteSecond: d.labelDeleteSecond || DEFAULT_COPY.deleteSecond,
+			deleteError: d.labelDeleteError || DEFAULT_COPY.deleteError,
+			deleted: d.labelDeleted || DEFAULT_COPY.deleted
 		};
 	}
 
@@ -168,6 +180,14 @@
 		var cameraSaveButton = document.getElementById('grocyai-capture-camera-save-button');
 		var cameraCancelButton = document.getElementById('grocyai-capture-camera-cancel-button');
 
+		var summaryEl = document.getElementById('grocyai-capture-trip-summary');
+		var latestEl = document.getElementById('grocyai-capture-latest');
+		var showAllButton = document.getElementById('grocyai-capture-show-all');
+		var deleteButton = document.getElementById('grocyai-capture-delete-trip-button');
+		var recentIds = [];
+		var latestId = null;
+		var showAll = false;
+		var currentStatus = null;
 		var currentTripId = null;
 		var lines = [];
 		var productNames = {};
@@ -176,6 +196,13 @@
 		var pendingCameraReads = [];
 		var cameraSubmitting = false;
 		var cameraLocked = false;
+
+		function setReviewUrl(url)
+		{
+			if (reviewLink) reviewLink.setAttribute('href', url);
+			var headerLink = document.getElementById('grocyai-capture-header-review-link');
+			if (headerLink) headerLink.setAttribute('href', url);
+		}
 
 		function setStatus(message)
 		{
@@ -207,6 +234,11 @@
 			{
 				return;
 			}
+			if (summaryEl) summaryEl.textContent = (currentTripId === null ? '' : copy.trip + ' #' + currentTripId + ' · ' + currentStatus + ' · ') + lines.length + ' ' + copy.distinctItems + ' · ' + copy.totalQuantity + ': ' + lines.reduce(function (sum, line) { return sum + Number(line.quantity); }, 0);
+			if (showAllButton) { showAllButton.hidden = lines.length <= 3; showAllButton.textContent = showAll ? copy.showRecent : copy.showAll; showAllButton.setAttribute('aria-expanded', String(showAll)); }
+			if (finishButton) finishButton.hidden = currentStatus !== 'open';
+			if (deleteButton) deleteButton.disabled = currentTripId === null || currentStatus === 'committed' || lines.some(function (line) { return line.applied_at !== null; }) || pendingScans > 0 || finishing || cameraLocked || cameraSubmitting;
+			if (latestEl) latestEl.textContent = '';
 			linesEl.textContent = '';
 			if (lines.length === 0)
 			{
@@ -222,13 +254,15 @@
 				var item = document.createElement('li');
 				item.className = 'list-group-item d-flex justify-content-between align-items-center grocy-ai-capture-line status-' + label.status;
 				item.setAttribute('data-line-id', String(line.id));
+				item.hidden = !showAll && recentIds.slice(-3).indexOf(String(line.id)) === -1;
 
 				var name = document.createElement('span');
 				name.className = 'grocy-ai-capture-line-name';
 				name.textContent = label.text;
 				var detail = document.createElement('div');
+				detail.className = 'grocy-ai-capture-line-detail';
 				var barcode = document.createElement('span');
-				barcode.className = 'grocy-ai-capture-line-barcode text-muted';
+				barcode.className = 'grocy-ai-capture-line-barcode grocy-ai-flow-upc text-muted';
 				barcode.textContent = copy.barcode + ' ' + String(line.scanned_barcode);
 				detail.appendChild(name);
 				detail.appendChild(barcode);
@@ -241,6 +275,19 @@
 				item.appendChild(detail);
 				item.appendChild(quantity);
 				linesEl.appendChild(item);
+				if (latestEl && String(line.id) === latestId) {
+					var latest = document.createElement('div');
+					latest.className = 'grocy-ai-capture-latest-body d-flex align-items-center';
+					var latestDetail = detail.cloneNode(true);
+					latestDetail.querySelector('.grocy-ai-capture-line-name').className = 'grocy-ai-capture-latest-name';
+					latestDetail.querySelector('.grocy-ai-capture-line-barcode').className = 'grocy-ai-capture-latest-barcode grocy-ai-flow-upc text-muted';
+					var latestQuantity = quantity.cloneNode(true);
+					latestQuantity.className = 'grocy-ai-flow-badge';
+					latest.appendChild(latestDetail);
+					latest.appendChild(latestQuantity);
+					var badge = document.createElement('span'); badge.className = 'grocy-ai-flow-badge'; badge.textContent = line.status === 'known' ? copy.saved : copy.needsDetails;
+					latest.appendChild(badge); latestEl.appendChild(latest);
+				}
 			});
 		}
 
@@ -270,16 +317,17 @@
 
 		function startTrip()
 		{
-			if (finishing || cameraLocked || cameraSubmitting)
+			if (finishing || cameraLocked || cameraSubmitting || pendingScans > 0)
 			{
 				return Promise.resolve(null);
 			}
 			return fetchJson(tripsEndpoint, { method: 'POST', body: '{}' }).then(function (trip)
 			{
 				currentTripId = trip && trip.id !== undefined ? trip.id : null;
+				currentStatus = trip.status; recentIds = []; latestId = null; showAll = false;
 				if (reviewLink)
 				{
-					reviewLink.setAttribute('href', currentTripId === null ? reviewUrl : reviewUrl + '?trip=' + encodeURIComponent(String(currentTripId)));
+					setReviewUrl(currentTripId === null ? reviewUrl : reviewUrl + '?trip=' + encodeURIComponent(String(currentTripId)));
 				}
 				lines = [];
 				productNames = {};
@@ -299,7 +347,7 @@
 				currentTripId = null;
 				if (reviewLink)
 				{
-					reviewLink.setAttribute('href', reviewUrl);
+					setReviewUrl(reviewUrl);
 				}
 				setStatus(copy.tripError);
 			});
@@ -318,9 +366,12 @@
 					throw new Error('invalid_resume_trip');
 				}
 				currentTripId = tripId;
+				currentStatus = payload.trip.status;
 				lines = payload.lines;
+				recentIds = lines.map(function (line) { return String(line.id); });
+				latestId = null; showAll = false;
 				productNames = {};
-				if (reviewLink) reviewLink.setAttribute('href', reviewUrl + '?trip=' + encodeURIComponent(tripId));
+				if (reviewLink) setReviewUrl(reviewUrl + '?trip=' + encodeURIComponent(tripId));
 				lines.forEach(function (line) { if (line.status === 'known') resolveProductName(line.resolved_product_id); });
 				render();
 				setStatus(copy.tripResumed.replace('%s', tripId));
@@ -330,7 +381,7 @@
 				currentTripId = null;
 				lines = [];
 				render();
-				if (reviewLink) reviewLink.setAttribute('href', reviewUrl);
+				if (reviewLink) setReviewUrl(reviewUrl);
 				setStatus(copy.resumeError);
 			});
 		}
@@ -338,7 +389,7 @@
 		function submitBarcode(rawBarcode, failClosed)
 		{
 			var barcode = String(rawBarcode === undefined || rawBarcode === null ? '' : rawBarcode).trim();
-			if (barcode === '' || currentTripId === null || finishing || (cameraSubmitting && !failClosed))
+			if (barcode === '' || currentTripId === null || cameraLocked || finishing || (cameraSubmitting && !failClosed))
 			{
 				return Promise.resolve(null);
 			}
@@ -351,6 +402,8 @@
 					throw new Error('invalid_scan_payload');
 				}
 				lines = upsertLines(lines, line);
+				latestId = String(line.id);
+				recentIds = recentIds.filter(function (id) { return id !== latestId; }); recentIds.push(latestId);
 				render();
 				if (line.status === 'known')
 				{
@@ -366,12 +419,14 @@
 			}).finally(function ()
 			{
 				pendingScans--;
+				render();
 			});
 		}
 
 		function lockCameraAfterFailedScan()
 		{
 			cameraLocked = true;
+			configureScanner();
 			if (cameraSaveButton) cameraSaveButton.disabled = true;
 			if (cameraCancelButton) cameraCancelButton.disabled = true;
 			if (newTripButton) newTripButton.disabled = true;
@@ -421,6 +476,7 @@
 				return;
 			}
 			cameraSubmitting = true;
+			configureScanner();
 			if (cameraSaveButton) cameraSaveButton.disabled = true;
 			if (cameraCancelButton) cameraCancelButton.disabled = true;
 			if (newTripButton) newTripButton.disabled = true;
@@ -436,6 +492,7 @@
 			}).catch(function () { lockCameraAfterFailedScan(); }).finally(function ()
 			{
 				cameraSubmitting = false;
+				configureScanner();
 				if (!cameraLocked)
 				{
 					if (cameraSaveButton) cameraSaveButton.disabled = false;
@@ -444,6 +501,7 @@
 					if (addButton) addButton.disabled = false;
 					if (input) input.disabled = false;
 				}
+				render();
 			});
 		}
 
@@ -500,6 +558,20 @@
 			});
 		}
 
+		function cancelTrip()
+		{
+			if (currentTripId === null || finishing || pendingScans > 0 || cameraLocked || cameraSubmitting || currentStatus === 'committed' || lines.some(function (line) { return line.applied_at !== null; })) return Promise.resolve(null);
+			if (!window.confirm(copy.deleteFirst) || !window.confirm(copy.deleteSecond)) return Promise.resolve(null);
+			var tripId = currentTripId; finishing = true; render();
+			return fetchJson(tripsEndpoint + '/' + encodeURIComponent(String(tripId)) + '/cancel', { method: 'POST', body: '{}' }).then(function (result) {
+				if (!result || result.canceled !== true || String(result.trip_id) !== String(tripId)) throw new Error('invalid_cancel_response');
+				currentTripId = null; currentStatus = null; lines = []; recentIds = []; latestId = null; pendingCameraReads = []; showNextCameraRead();
+				if (reviewLink) setReviewUrl(reviewUrl);
+				var url = new URL(window.location.href); url.searchParams.delete('trip'); window.history.replaceState(null, '', url.pathname + url.search + url.hash);
+				setStatus(copy.deleted);
+			}).catch(function () { setStatus(copy.deleteError); }).finally(function () { finishing = false; render(); });
+		}
+
 		function clearInput()
 		{
 			if (input)
@@ -517,6 +589,35 @@
 			}
 		}
 
+		if (showAllButton) showAllButton.addEventListener('click', function () { showAll = !showAll; render(); });
+		if (deleteButton) deleteButton.addEventListener('click', cancelTrip);
+		// The core creates its trigger after this module loads in some layouts. Only label/style
+		// that trigger; never move it away from the input used by the core's .prev() lookup.
+		function configureScanner()
+		{
+			var trigger = root.querySelector('#camerabarcodescanner-start-button');
+			if (!trigger) return;
+			if (trigger.textContent !== copy.scanBarcode) trigger.textContent = copy.scanBarcode;
+			var disabled = cameraLocked || cameraSubmitting || trigger.classList.contains('disabled') || (input && input.disabled);
+			trigger.setAttribute('aria-label', copy.scanBarcode);
+			trigger.setAttribute('role', 'button');
+			trigger.setAttribute('tabindex', disabled ? '-1' : '0');
+			trigger.setAttribute('aria-disabled', String(disabled));
+		}
+		configureScanner();
+		if (typeof MutationObserver !== 'undefined') {
+			var scannerObserver = new MutationObserver(configureScanner); scannerObserver.observe(root, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'disabled'] });
+		}
+		root.addEventListener('click', function (event)
+		{
+			var trigger = event.target.closest && event.target.closest('#camerabarcodescanner-start-button');
+			if (trigger && (cameraLocked || cameraSubmitting || trigger.classList.contains('disabled') || (input && input.disabled)))
+			{
+				event.preventDefault();
+				event.stopImmediatePropagation();
+			}
+		}, true);
+		root.addEventListener('keydown', function (event) { if (event.target.id === 'camerabarcodescanner-start-button' && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); event.target.click(); } });
 		if (addButton)
 		{
 			addButton.addEventListener('click', function () { submitBarcode(input ? input.value : ''); });
