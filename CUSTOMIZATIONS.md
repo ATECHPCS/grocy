@@ -144,3 +144,7 @@ The scanned UPC pairing selector is now an action choice instead of a receipt li
 ### Product approval feedback (October 8, 2026)
 
 Product approval reports missing required fields, cancellation, saving, and failures beside its action buttons and brings feedback into view on mobile. Successful creation or linking leaves a status on the scan card after its reload. Approval creates a catalog product immediately after two confirmations; receipt reconciliation and Commit purchase still gate stock changes. Review assets use `2.6.16`, customization marker `ATECHPCS-grocy_AI-39`.
+
+### Required product fields (October 8, 2026)
+
+Product research labels mark Proposed name, Location, Purchase unit, and Stock unit with red asterisks and accessible required state. The legend clarifies these fields are required for product creation; partial research draft saving remains available. Package research notes and classification fields remain optional. Review assets use `2.6.17`, customization marker `ATECHPCS-grocy_AI-40`.
