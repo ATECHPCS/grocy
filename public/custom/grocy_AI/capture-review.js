@@ -446,12 +446,14 @@
 		{
 			var tripId = currentTripId, revision = loadRevision;
 			var editedLine = currentLines.find(function (line) { return line.seq === seq; });
+			var removed = false;
 			return directMutation(tripId, function ()
 			{
 				return fetchJson(lineUrl(tripId, seq), { method: 'PUT', body: JSON.stringify(body) }).then(function (payload)
 				{
 					// Explicit deletion settles only the removed scan, including after a trip switch.
-					if (body.delete === true && editedLine && isLoadedTripPayload(payload) && String(payload.trip.id) === tripId && !payload.lines.some(function (line) { return line.id === editedLine.id; }) && researchStates[tripId]) delete researchStates[tripId][editedLine.id];
+					removed = body.delete === true && editedLine && isLoadedTripPayload(payload) && String(payload.trip.id) === tripId && !payload.lines.some(function (line) { return line.id === editedLine.id; });
+					if (removed && researchStates[tripId]) delete researchStates[tripId][editedLine.id];
 					if (revision !== loadRevision || tripId !== currentTripId) return;
 					if (isLoadedTripPayload(payload))
 					{
@@ -466,6 +468,12 @@
 					directErrorsByTrip[tripId] = body.delete === true && error.status === 409 && typeof error.serverMessage === 'string' && error.serverMessage.indexOf('This scan has receipt allocation history;') === 0 ? error.serverMessage : copy.saveError;
 					if (tripId === currentTripId && tripId === requestedTripId) flashError(directErrorsByTrip[tripId]);
 				});
+			}).then(function ()
+			{
+				if (!removed || tripId !== currentTripId || tripId !== requestedTripId || loadingTrip || reviewStage !== 'review') return;
+				// The deleted control no longer exists; keep the user at the remaining review card.
+				var target = detailEl.querySelector('.grocy-ai-review-card.is-active .grocy-ai-review-heading') || detailEl.querySelector('#grocyai-review-announcement');
+				if (target) { target.tabIndex = -1; target.focus({ preventScroll: true }); target.scrollIntoView({ block: 'start' }); }
 			});
 		}
 

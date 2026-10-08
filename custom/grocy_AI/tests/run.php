@@ -908,8 +908,8 @@ $captureReviewAssetMatch = [];
 preg_match('/\$grocyAiAssetVersion = \'([^\']+)\'/', $captureTemplate, $captureAssetMatch);
 preg_match('/\$grocyAiAssetVersion = \'([^\']+)\'/', $captureReviewTemplate, $captureReviewAssetMatch);
 $stableVersion = json_decode(file_get_contents($repoRoot . '/custom/grocy_AI/version.json'), true, 512, JSON_THROW_ON_ERROR);
-check(($captureAssetMatch[1] ?? null) === '2.6.19' && ($captureReviewAssetMatch[1] ?? null) === '2.6.19', 'Capture and review synchronize mobile purchase flow assets at 2.6.19');
-check(($stableVersion['Customization'] ?? null) === 'ATECHPCS-grocy_AI-42', 'Capture view changes invalidate the persisted production Blade cache');
+check(($captureAssetMatch[1] ?? null) === '2.6.20' && ($captureReviewAssetMatch[1] ?? null) === '2.6.20', 'Capture and review synchronize mobile purchase flow assets at 2.6.20');
+check(($stableVersion['Customization'] ?? null) === 'ATECHPCS-grocy_AI-43', 'Capture view changes invalidate the persisted production Blade cache');
 check(($assetVersionMatch[1] ?? null) === $moduleVersion, 'The grocy_AI asset token matches the portable module version');
 check(substr_count($productFormTemplate, '{{ $grocyAiAssetVersion }}') === 4, 'All custom product-form assets use the grocy_AI token');
 $resolvedTemplate = file_get_contents($repoRoot . '/views/quantityunitconversionsresolved.blade.php');
@@ -1351,8 +1351,8 @@ $reviewBlade = file_get_contents(__DIR__ . '/../../../views/grocyai_capture_revi
 $reviewFixture = file_get_contents(__DIR__ . '/browser/fixtures/capture-review.html');
 $captureFixture = file_get_contents(__DIR__ . '/browser/fixtures/capture.html');
 $reviewVersion = json_decode(file_get_contents(__DIR__ . '/../version.json'), true);
-check(str_contains($reviewBlade, "$" . "grocyAiAssetVersion = '2.6.19';"), 'Capture review Blade uses release asset token 2.6.19');
-check(($reviewVersion['Customization'] ?? '') === 'ATECHPCS-grocy_AI-42', 'Mobile purchase flow release advances the customization marker to 42');
+check(str_contains($reviewBlade, "$" . "grocyAiAssetVersion = '2.6.20';"), 'Capture review Blade uses release asset token 2.6.20');
+check(($reviewVersion['Customization'] ?? '') === 'ATECHPCS-grocy_AI-43', 'Mobile purchase flow release advances the customization marker to 43');
 foreach (['Blade' => $reviewBlade, 'browser fixture' => $reviewFixture] as $surface => $markup)
 {
 	$queuePosition = strpos($markup, 'capture-review-queue.js?v=');
@@ -1361,12 +1361,12 @@ foreach (['Blade' => $reviewBlade, 'browser fixture' => $reviewFixture] as $surf
 }
 foreach (['capture-receipts.js', 'capture-product-research.js', 'capture-review-queue.js', 'capture-review.js', 'grocy-ai.css'] as $asset)
 {
-	check(str_contains($reviewFixture, $asset . '?v=2.6.19'), 'Browser fixture versions ' . $asset . ' at 2.6.19');
+	check(str_contains($reviewFixture, $asset . '?v=2.6.20'), 'Browser fixture versions ' . $asset . ' at 2.6.20');
 }
 
 foreach (['capture.js', 'grocy-ai.css'] as $asset)
 {
-	check(str_contains($captureFixture, $asset . '?v=2.6.19'), 'Capture browser fixture versions ' . $asset . ' at 2.6.19');
+	check(str_contains($captureFixture, $asset . '?v=2.6.20'), 'Capture browser fixture versions ' . $asset . ' at 2.6.20');
 }
 
 if ($failures > 0)
