@@ -18,15 +18,24 @@ class GrocyAiCaptureProductService
 	public function ApproveDraft(int $tripId, int $lineId, int $revision, array $fields, string $actor): array
 	{
 		$required = ['name', 'location_id', 'qu_id_purchase', 'qu_id_stock'];
-		$allowed = [...$required, 'product_group_id', 'taxonomy_leaf_slug', 'parent_product_id'];
+		$allowed = [...$required, 'product_group_id', 'taxonomy_leaf_slug', 'parent_product_id', 'parent_mode', 'new_parent_name'];
 		if (array_diff($required, array_keys($fields)) !== [] || array_diff(array_keys($fields), $allowed) !== []) throw new \InvalidArgumentException('Invalid approval fields');
 		$name = $fields['name'];
 		if (!is_string($name) || trim($name) !== $name || $name === '' || mb_strlen($name) > 200) throw new \InvalidArgumentException('Invalid product name');
 		foreach (['location_id', 'qu_id_purchase', 'qu_id_stock'] as $key) if (!is_int($fields[$key]) || $fields[$key] < 1) throw new \InvalidArgumentException('Invalid product reference');
 		foreach (['product_group_id', 'parent_product_id'] as $key) if (array_key_exists($key, $fields) && $fields[$key] !== null && (!is_int($fields[$key]) || $fields[$key] < 1)) throw new \InvalidArgumentException('Invalid product reference');
+		$parentMode = $fields['parent_mode'] ?? (isset($fields['parent_product_id']) ? 'existing' : 'standalone');
+		if (!in_array($parentMode, ['standalone', 'existing', 'create'], true)) throw new \InvalidArgumentException('Invalid parent mode');
+		if (($parentMode === 'existing') !== isset($fields['parent_product_id'])) throw new \InvalidArgumentException('Choose an existing parent or keep standalone');
+		$parentName = $fields['new_parent_name'] ?? null;
+		if ($parentMode === 'create')
+		{
+			if (!is_string($parentName) || trim($parentName) !== $parentName || $parentName === '' || mb_strlen($parentName) > 200 || $this->NormalizeCatalogName($parentName) === $this->NormalizeCatalogName($name)) throw new \InvalidArgumentException('Enter a distinct generic parent name');
+		}
+		elseif ($parentName !== null) throw new \InvalidArgumentException('New parent name requires create parent mode');
 		$leaf = $fields['taxonomy_leaf_slug'] ?? null;
 		if ($leaf !== null && (!is_string($leaf) || preg_match('/^[a-z][a-z0-9-]{0,99}$/D', $leaf) !== 1)) throw new \InvalidArgumentException('Invalid taxonomy leaf');
-		return $this->Finalize($tripId, $lineId, $revision, $actor, 'approved', function (array $line) use ($fields, $name, $leaf): int
+		return $this->Finalize($tripId, $lineId, $revision, $actor, 'approved', function (array $line) use ($fields, $name, $leaf, $parentMode, $parentName): int
 		{
 			if ($leaf !== null) GrocyAiTaxonomyMigration::Bootstrap($this->Db);
 			$this->RequireActive('locations', $fields['location_id']);
@@ -43,17 +52,32 @@ class GrocyAiCaptureProductService
 				$parentUnit->execute([$fields['parent_product_id']]);
 				$parentStockUnit = (int)$parentUnit->fetchColumn();
 			}
-			$nameQuery = $this->Db->prepare('SELECT id FROM products WHERE name = ? COLLATE NOCASE LIMIT 1');
-			$nameQuery->execute([$name]);
-			if ($nameQuery->fetchColumn() !== false) throw new \RuntimeException('Product name already exists');
+			if ($this->CatalogNameExists($name)) throw new \RuntimeException('Product name already exists');
 			$factor = $this->UnitFactor($fields['qu_id_purchase'], $fields['qu_id_stock']);
+			$parentId = $fields['parent_product_id'] ?? null;
+			if ($parentMode === 'create')
+			{
+				// The live uniqueness check and both creations share Finalize's write lock.
+				if ($this->CatalogNameExists($parentName)) throw new \RuntimeException('Generic parent name already exists. Choose an existing parent or rename the proposed parent.');
+				$parentRow = (new Database($this->Db))->products()->createRow([
+					'name' => $parentName,
+					'location_id' => $fields['location_id'],
+					'qu_id_purchase' => $fields['qu_id_stock'],
+					'qu_id_stock' => $fields['qu_id_stock'],
+					'product_group_id' => $fields['product_group_id'] ?? null,
+					'parent_product_id' => null
+				]);
+				$parentRow->save();
+				$parentId = (int)$parentRow->id;
+			}
+
 			$row = (new Database($this->Db))->products()->createRow([
 				'name' => $name,
 				'location_id' => $fields['location_id'],
 				'qu_id_purchase' => $fields['qu_id_purchase'],
 				'qu_id_stock' => $fields['qu_id_stock'],
 				'product_group_id' => $fields['product_group_id'] ?? null,
-				'parent_product_id' => $fields['parent_product_id'] ?? null
+				'parent_product_id' => $parentId
 			]);
 			$row->save();
 			$productId = (int)$row->id;
@@ -66,6 +90,7 @@ class GrocyAiCaptureProductService
 			if ($leaf !== null)
 			{
 				(new GrocyAiTaxonomyService($this->Db, false))->AssignProductTaxonomy($productId, ['leaf_slug' => $leaf, 'ruleset_version' => GrocyAiTaxonomyMigration::VERSION], true);
+				if ($parentMode === 'create') (new GrocyAiTaxonomyService($this->Db, false))->AssignProductTaxonomy($parentId, ['leaf_slug' => $leaf, 'ruleset_version' => GrocyAiTaxonomyMigration::VERSION], true);
 			}
 			return $productId;
 		}, $fields);
@@ -104,6 +129,7 @@ class GrocyAiCaptureProductService
 				ksort($confirmed);
 				if ($original !== $confirmed) throw new \RuntimeException('Confirmation changed');
 				$result = ['product_id' => (int)$draft['final_product_id'], 'outcome' => $outcome, 'revision' => (int)$draft['revision']];
+				if (($confirmed['parent_mode'] ?? null) === 'create') $result['parent_product_id'] = (int)$after['parent_product_id'];
 				$this->Db->commit();
 				return $result;
 			}
@@ -116,17 +142,37 @@ class GrocyAiCaptureProductService
 			if ($draft['line_status'] === 'known' && ($outcome !== 'linked' || $owner === null || (int)$draft['resolved_product_id'] !== $owner)) throw new \RuntimeException('Known capture requires owner link');
 			$line = ['scanned_barcode' => $barcode, 'canonical_gtin' => $canonical];
 			$productId = $persist($line);
+			$result = ['product_id' => $productId, 'outcome' => $outcome, 'revision' => $revision + 1];
+			if (($confirmed['parent_mode'] ?? null) === 'create')
+			{
+				$parentQuery = $this->Db->prepare('SELECT parent_product_id FROM products WHERE id = ?');
+				$parentQuery->execute([$productId]);
+				$result['parent_product_id'] = (int)$parentQuery->fetchColumn();
+			}
 			$this->Db->prepare('UPDATE grocy_ai_capture_research_drafts SET outcome = ?, final_product_id = ?, revision = revision + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?')->execute([$outcome, $productId, $draft['id']]);
-			$this->Db->prepare('INSERT INTO grocy_ai_capture_research_audit (trip_id, draft_id, actor, action, before_json, after_json) VALUES (?, ?, ?, ?, ?, ?)')->execute([$tripId, $draft['id'], $actor, $outcome, json_encode(['revision' => $revision, 'outcome' => $draft['outcome']], JSON_THROW_ON_ERROR), json_encode(['product_id' => $productId, 'confirmed' => $confirmed], JSON_THROW_ON_ERROR)]);
+			$this->Db->prepare('INSERT INTO grocy_ai_capture_research_audit (trip_id, draft_id, actor, action, before_json, after_json) VALUES (?, ?, ?, ?, ?, ?)')->execute([$tripId, $draft['id'], $actor, $outcome, json_encode(['revision' => $revision, 'outcome' => $draft['outcome']], JSON_THROW_ON_ERROR), json_encode($result + ['confirmed' => $confirmed], JSON_THROW_ON_ERROR)]);
 			(new GrocyAiCaptureService($this->Db, false))->ReresolveBarcode($canonical, $actor);
 			$this->Db->commit();
-			return ['product_id' => $productId, 'outcome' => $outcome, 'revision' => $revision + 1];
+			return $result;
 		}
 		catch (\Throwable $error)
 		{
 			if ($this->Db->inTransaction()) $this->Db->rollBack();
 			throw $error;
 		}
+	}
+
+	private function NormalizeCatalogName(string $name): string
+	{
+		return mb_convert_case(trim($name), MB_CASE_FOLD, 'UTF-8');
+	}
+
+	private function CatalogNameExists(string $name): bool
+	{
+		// SQLite NOCASE is ASCII-only; match case consistently for household names.
+		$normalized = $this->NormalizeCatalogName($name);
+		foreach ($this->Db->query('SELECT name FROM products') as $row) if ($this->NormalizeCatalogName($row['name']) === $normalized) return true;
+		return false;
 	}
 
 	private function RequireActive(string $table, int $id): void

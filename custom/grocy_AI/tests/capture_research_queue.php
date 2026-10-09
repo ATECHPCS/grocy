@@ -347,7 +347,7 @@ foreach (['valid', 'reverse', 'zero', 'product_specific', 'inactive', 'unknown',
 			checkResearch($unitReview['purchase_unit_candidates'] === [] && $unitReview['stock_unit_candidates'] === [], 'ambiguous local evidence suppresses model candidates: ' . $case);
 		}
 		if ($case === 'parent') checkResearch($done['result']['parent_product_id'] === null, 'incompatible model parent discarded');
-		if ($case === 'saved_parent') checkResearch($us->ReviewForTrip(1)['drafts'][0]['selected']['qu_id_stock'] === null, 'unit cannot preselect against saved parent');
+		if ($case === 'saved_parent') checkResearch($us->ReviewForTrip(1)['drafts'][0]['selected']['qu_id_stock'] === 1 && $us->ReviewForTrip(1)['drafts'][0]['selected']['parent_mode'] === 'existing', 'explicit parent remains reviewable without erasing suggested stock unit');
 		if ($case === 'stored_legacy')
 		{
 			$udb->prepare('UPDATE grocy_ai_capture_classification_jobs SET result_json = ? WHERE id = ?')->execute([json_encode(['status'=>'suggested', 'product_group_id'=>null, 'taxonomy_leaf_slug'=>null, 'parent_product_id'=>null]), $uc['id']]);

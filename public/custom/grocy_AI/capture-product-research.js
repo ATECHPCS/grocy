@@ -50,7 +50,15 @@
 	{
 		return fetch(url, { method: method, credentials: 'same-origin', cache: 'no-store', headers: { Accept: 'application/json', 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) }).then(function (response)
 		{
-			if (!response.ok) throw new Error(response.status === 403 ? 'You need product edit permission.' : response.status === 409 ? 'This draft changed. Reload and review it again.' : method === 'GET' ? 'Could not load product research. Reload and try again.' : 'Could not save product review.');
+			if (!response.ok)
+			{
+				var fallback = response.status === 403 ? 'You need product edit permission.' : response.status === 409 ? 'This draft changed. Reload and review it again.' : method === 'GET' ? 'Could not load product research. Reload and try again.' : 'Could not save product review.';
+				return response.json().catch(function () { return {}; }).then(function (payload)
+				{
+					var safeMessages = ['This parent is no longer available as a generic parent. Keep this product standalone or choose another parent.', 'Generic parent name already exists. Choose an existing parent or rename the proposed parent.', 'Enter a distinct generic parent name', 'Choose an existing parent or keep standalone', 'This parent uses an incompatible stock unit. Keep this product standalone, choose another parent, or review the units.'];
+					throw new Error(method !== 'GET' && [400, 409].indexOf(response.status) !== -1 && safeMessages.indexOf(payload.error_message) !== -1 ? payload.error_message : fallback);
+				});
+			}
 			return response.json();
 		});
 	}
@@ -119,7 +127,7 @@
 					if (options.onEdit) options.onEdit();
 					if (!active) return;
 					showFeedback('Saved.');
-					var notice = result && result.outcome === 'approved' ? 'Product #' + result.product_id + ' created. Complete receipt reconciliation, then Commit purchase to add it to stock.' : result && result.outcome === 'linked' ? 'Product #' + result.product_id + ' linked to this scan. Complete receipt reconciliation, then Commit purchase to add stock.' : 'Product review saved.';
+					var notice = result && result.outcome === 'approved' ? 'Product #' + result.product_id + (result.parent_product_id ? ' and generic parent #' + result.parent_product_id : '') + ' created. Complete receipt reconciliation, then Commit purchase to add it to stock.' : result && result.outcome === 'linked' ? 'Product #' + result.product_id + ' linked to this scan. Complete receipt reconciliation, then Commit purchase to add stock.' : 'Product review saved.';
 					notices[noticeKey] = notice;
 					return reloadTrip ? options.reload(notice, line.seq) : load();
 				}).catch(function (error)
@@ -239,6 +247,11 @@
 				return { value: leafOption.slug, label: leafOption.label + (suggested ? ' · ' + (sources[suggested.source] || suggested.source) + ' suggestion' : '') };
 			})), draft.selected.taxonomy_leaf_slug);
 			var parent = select(card, 'Generic parent', [{ value: '', label: 'No generic parent' }].concat(catalog.generic_parents.map(function (product) { var candidate = (draft.parent_candidates || []).find(function (item) { return Number(item.id) === Number(product.id); }); return { value: product.id, label: product.name + ' (#' + product.id + ')' + (candidate ? ' · ' + (sources[candidate.source] || candidate.source) + ' suggestion' : '') }; })), draft.selected.parent_product_id);
+			var parentMode = select(card, 'Parent handling', [{ value: 'standalone', label: 'Keep standalone' }, { value: 'existing', label: 'Use existing parent' }, { value: 'create', label: 'Create generic parent' }], draft.selected.parent_mode || (parent.value ? 'existing' : 'standalone'));
+			var parentNameEdited = !!draft.selected.new_parent_name || Object.prototype.hasOwnProperty.call(pendingEdits[line.id] || {}, 'new_parent_name') && pendingEdits[line.id].new_parent_name != null;
+			var parentName = field(card, 'New generic parent name', draft.selected.new_parent_name || (name.value.trim() + ' (generic)'));
+			var parentExplanation = node('p', 'grocy-ai-product-research-parent-explanation text-muted', 'Optional: group only interchangeable products. Existing choices are catalog roots, not automatically generic products. A new editable proposal keeps the product name, including flavor/preparation, and adds “(generic)”; review whether that grouping is useful. The new parent uses the reviewed location, product group and food classification.');
+			card.appendChild(parentExplanation);
 			var savedEvidenceId = draft.receipt_evidence ? String(draft.receipt_evidence.receipt_line_id) : '';
 			var evidenceChoices = (options.receipts || []).flatMap(function (receipt)
 			{
@@ -252,17 +265,17 @@
 			if (draft.receipt_evidence && !evidence.value) { var current = node('option', null, 'Receipt #' + draft.receipt_evidence.receipt_id + ' · line #' + savedEvidenceId + ': ' + draft.receipt_evidence.description); current.value = savedEvidenceId; evidence.appendChild(current); evidence.value = savedEvidenceId; }
 			var controls = node('div', 'grocy-ai-product-research-actions');
 			card.appendChild(controls);
-			var initialFields = { name: name.value.trim(), brand: brand.value.trim() || null, package: packageField.value.trim() || null, product_group_id: group.value ? Number(group.value) : null, taxonomy_leaf_slug: taxonomy.value || null, parent_product_id: parent.value ? Number(parent.value) : null };
+			var initialFields = { name: name.value.trim(), brand: brand.value.trim() || null, package: packageField.value.trim() || null, product_group_id: group.value ? Number(group.value) : null, taxonomy_leaf_slug: taxonomy.value || null, parent_product_id: parentMode.value === 'existing' && parent.value ? Number(parent.value) : null, parent_mode: parentMode.value, new_parent_name: parentMode.value === 'create' ? parentName.value.trim() : null };
 			var fieldEdits = pendingEdits[line.id] || {};
 			pendingEdits[line.id] = fieldEdits;
 			var touchedFields = {};
-			[['name', name], ['brand', brand], ['package', packageField], ['product_group_id', group], ['taxonomy_leaf_slug', taxonomy], ['parent_product_id', parent]].forEach(function (entry)
+			[['name', name], ['brand', brand], ['package', packageField], ['product_group_id', group], ['taxonomy_leaf_slug', taxonomy], ['parent_product_id', parent], ['parent_mode', parentMode], ['new_parent_name', parentName]].forEach(function (entry)
 			{
 				var key = entry[0], control = entry[1];
 				if (Object.prototype.hasOwnProperty.call(fieldEdits, key)) control.value = fieldEdits[key] == null ? '' : String(fieldEdits[key]);
 				function remember()
 				{
-					fieldEdits[key] = control.tagName === 'SELECT' ? (control.value ? (key === 'taxonomy_leaf_slug' ? control.value : Number(control.value)) : null) : control.value;
+					fieldEdits[key] = control.tagName === 'SELECT' ? (control.value ? (key === 'taxonomy_leaf_slug' || key === 'parent_mode' ? control.value : Number(control.value)) : null) : control.value;
 					if (options.onEdit) options.onEdit();
 				}
 				control.addEventListener('input', remember);
@@ -271,8 +284,9 @@
 			[['product_group_id', group], ['taxonomy_leaf_slug', taxonomy], ['parent_product_id', parent]].forEach(function (entry) { entry[1].addEventListener('change', function () { touchedFields[entry[0]] = true; }); });
 			button(controls, 'Save research draft', function ()
 			{
-				var values = { name: name.value.trim(), brand: brand.value.trim() || null, package: packageField.value.trim() || null, product_group_id: group.value ? Number(group.value) : null, taxonomy_leaf_slug: taxonomy.value || null, parent_product_id: parent.value ? Number(parent.value) : null };
+				var values = { name: name.value.trim(), brand: brand.value.trim() || null, package: packageField.value.trim() || null, product_group_id: group.value ? Number(group.value) : null, taxonomy_leaf_slug: taxonomy.value || null, parent_product_id: parentMode.value === 'existing' && parent.value ? Number(parent.value) : null, parent_mode: parentMode.value, new_parent_name: parentMode.value === 'create' ? parentName.value.trim() : null };
 				if (!values.name) { showFeedback('Enter a product name.'); return; }
+				if (parentMode.value === 'create' && (!values.new_parent_name || values.new_parent_name.toLocaleLowerCase() === values.name.toLocaleLowerCase())) { showFeedback('Enter a distinct generic parent name.'); return; }
 				if (unitsReady)
 				{
 					values.qu_id_purchase = purchaseUnit.value ? Number(purchaseUnit.value) : null;
@@ -360,8 +374,9 @@
 			function checkParentUnits()
 			{
 				var generation = ++compatibilityGeneration;
-				parentCompatible = !parent.value || !stockUnit.value;
-				compatibilityMessage.textContent = '';
+				parentCompatible = parentMode.value !== 'existing' || !parent.value || !stockUnit.value;
+				compatibilityMessage.textContent = parentMode.value === 'create' ? 'New parent purchase and stock units will both use ' + ((stockUnit.selectedOptions[0] || {}).textContent || 'the chosen stock unit') + '. No conversion, barcode, or stock is created for the parent.' : '';
+				if (keepStandalone) keepStandalone.hidden = true;
 				if (parentCompatible) return;
 				compatibilityMessage.textContent = 'Checking generic parent stock unit…';
 				Promise.all([request('/api/objects/products/' + encodeURIComponent(parent.value), 'GET'), request('/api/objects/quantity_unit_conversions', 'GET')]).then(function (results)
@@ -370,7 +385,19 @@
 					var product = results[0], conversions = results[1];
 					if (!product || !Array.isArray(conversions)) throw new Error('Unavailable compatibility check');
 					parentCompatible = Number(product.active) !== 0 && product.parent_product_id == null && (Number(product.qu_id_stock) === Number(stockUnit.value) || conversions.some(function (conversion) { return conversion.product_id == null && Number(conversion.from_qu_id) === Number(product.qu_id_stock) && Number(conversion.to_qu_id) === Number(stockUnit.value) && Number(conversion.factor) > 0; }));
-					compatibilityMessage.textContent = parentCompatible ? 'Generic parent stock unit is compatible.' : 'Generic parent needs a compatible stock unit. Choose another parent or stock unit.';
+					var explicitParent = ['parent_product_id', 'parent_mode'].some(function (key) { return Object.prototype.hasOwnProperty.call(draft.user_edits || {}, key) || Object.prototype.hasOwnProperty.call(fieldEdits, key); });
+					if (!parentCompatible && !explicitParent)
+					{
+						parentMode.value = 'standalone';
+						parent.value = '';
+						parentCompatible = true;
+						rememberParentIntent();
+						compatibilityMessage.textContent = 'The previous parent suggestion is incompatible with this stock unit. This product will stay standalone.';
+						keepStandalone.hidden = true;
+						return;
+					}
+					keepStandalone.hidden = parentCompatible;
+					compatibilityMessage.textContent = parentCompatible ? 'Generic parent stock unit is compatible.' : 'This parent uses an incompatible stock unit. Keep this product standalone, choose another parent, or review the units.';
 				}).catch(function ()
 				{
 					if (!active || generation !== compatibilityGeneration) return;
@@ -378,7 +405,29 @@
 					compatibilityMessage.textContent = 'Could not check parent units. Approval will validate compatibility.';
 				});
 			}
-			parent.addEventListener('change', checkParentUnits);
+			function rememberParentIntent()
+			{
+				fieldEdits.parent_mode = parentMode.value;
+				fieldEdits.parent_product_id = parentMode.value === 'existing' && parent.value ? Number(parent.value) : null;
+				fieldEdits.new_parent_name = parentMode.value === 'create' ? parentName.value : null;
+				if (options.onEdit) options.onEdit();
+			}
+			function updateParentMode()
+			{
+				parentName.parentNode.hidden = parentMode.value !== 'create';
+				parentName.setAttribute('aria-required', String(parentMode.value === 'create'));
+				parentName.parentNode.querySelectorAll('.grocy-ai-required-marker').forEach(function (marker) { marker.hidden = parentMode.value !== 'create'; });
+				checkParentUnits();
+			}
+			markRequired(parentName);
+			parentMode.addEventListener('change', function () { if (parentMode.value === 'create' && !parentNameEdited) parentName.value = name.value.trim() + ' (generic)'; rememberParentIntent(); updateParentMode(); });
+			parentName.addEventListener('input', function () { parentNameEdited = true; });
+			name.addEventListener('input', function () { if (!parentNameEdited && parentMode.value === 'create') { parentName.value = name.value.trim() + ' (generic)'; rememberParentIntent(); } });
+			parent.addEventListener('change', function () { parentMode.value = parent.value ? 'existing' : 'standalone'; rememberParentIntent(); updateParentMode(); });
+			var keepStandalone = button(card, 'Keep standalone', function () { parentMode.value = 'standalone'; parent.value = ''; rememberParentIntent(); updateParentMode(); });
+			keepStandalone.classList.add('grocy-ai-product-research-standalone');
+			updateParentMode();
+
 			stockUnit.addEventListener('change', checkParentUnits);
 			purchaseUnit.addEventListener('change', checkParentUnits);
 			function confirmWrite(kind, summary, body)
@@ -399,8 +448,18 @@
 				if (!parentCompatible) { showFeedback('Review generic parent stock unit compatibility first.'); return; }
 				if (group.value) fields.product_group_id = Number(group.value);
 				if (taxonomy.value) fields.taxonomy_leaf_slug = taxonomy.value;
-				if (parent.value) fields.parent_product_id = Number(parent.value);
-				confirmWrite('approve', fields.name + ' · barcode ' + draft.scanned_barcode + ' · location ' + (location.selectedOptions[0] || {}).textContent + ' · purchase unit ' + (purchaseUnit.selectedOptions[0] || {}).textContent + ' · stock unit ' + (stockUnit.selectedOptions[0] || {}).textContent + ' · group ' + (group.selectedOptions[0] || {}).textContent + ' · classification ' + (taxonomy.selectedOptions[0] || {}).textContent + ' · parent ' + (parent.selectedOptions[0] || {}).textContent, { revision: draft.revision, fields: fields });
+				fields.parent_mode = parentMode.value;
+				if (parentMode.value === 'existing')
+				{
+					if (!parent.value) { showFeedback('Choose an existing parent or keep standalone.'); return; }
+					fields.parent_product_id = Number(parent.value);
+				}
+				if (parentMode.value === 'create')
+				{
+					fields.new_parent_name = parentName.value.trim();
+					if (!fields.new_parent_name || fields.new_parent_name.toLocaleLowerCase() === fields.name.toLocaleLowerCase()) { showFeedback('Enter a distinct generic parent name.'); return; }
+				}
+				confirmWrite('approve', fields.name + ' · barcode ' + draft.scanned_barcode + ' · location ' + (location.selectedOptions[0] || {}).textContent + ' · purchase unit ' + (purchaseUnit.selectedOptions[0] || {}).textContent + ' · stock unit ' + (stockUnit.selectedOptions[0] || {}).textContent + ' · group ' + (group.selectedOptions[0] || {}).textContent + ' · classification ' + (taxonomy.selectedOptions[0] || {}).textContent + ' · parent ' + (parentMode.value === 'create' ? 'create ' + fields.new_parent_name + ' (purchase and stock unit ' + (stockUnit.selectedOptions[0] || {}).textContent + ')' : parentMode.value === 'existing' ? (parent.selectedOptions[0] || {}).textContent : 'standalone') + ' · No stock is added; Commit purchase is required later', { revision: draft.revision, fields: fields });
 			}, true);
 			var search = field(controls, 'Search existing products', '');
 			var products = select(controls, 'Existing product', [{ value: '', label: 'Choose an existing product' }].concat(draft.possible_existing_products.map(function (product) { return { value: product.id, label: product.name + ' (#' + product.id + '; exact name suggestion)' }; })), '');
@@ -450,8 +509,11 @@
 				card.insertBefore(purchaseUnit.parentNode, stockUnit.parentNode);
 				card.insertBefore(optional, controls);
 				optional.appendChild(optionalContent);
-				[brand, packageField, group, taxonomy, parent, evidence].forEach(function (control) { optionalContent.appendChild(control.parentNode); });
+				[brand, packageField, group, taxonomy, parentMode, parent, parentName, evidence].forEach(function (control) { optionalContent.appendChild(control.parentNode); });
 				Array.prototype.forEach.call(card.querySelectorAll('.grocy-ai-product-research-names, .grocy-ai-product-research-notes, .grocy-ai-product-research-brand-source, .grocy-ai-product-research-package-source'), function (note) { optionalContent.appendChild(note); });
+				optionalContent.appendChild(parentExplanation);
+				optionalContent.appendChild(compatibilityMessage);
+				optionalContent.appendChild(keepStandalone);
 				expandOptional();
 			}
 			finishCard();

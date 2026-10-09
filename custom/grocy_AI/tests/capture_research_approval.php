@@ -169,4 +169,60 @@ try { $controller->Link($request, $response, $args); throw new RuntimeException(
 $db->exec("INSERT INTO user_permissions_resolved (user_id, permission_name) VALUES (1, 'MASTER_DATA_EDIT')");
 approvalCheck($controller->Approve($request->withParsedBody(['revision' => 1, 'fields' => $fields, 'barcode' => 'forged']), $response, $args)->getStatusCode() === 400, 'approval rejects excess body fields');
 approvalCheck($controller->Link($request->withParsedBody(['revision' => 1]), $response, $args)->getStatusCode() === 400, 'link requires explicit product ID');
+// Optional parent creation is one audited catalog transaction; stock remains untouched.
+$db->exec("INSERT INTO grocy_ai_capture_lines (id, trip_id, seq, scanned_barcode, canonical_gtin, status) VALUES (10, 1, 7, '4012345678901', '04012345678901', 'unknown')");
+$research->EnqueueUnknown(1, 10, '4012345678901');
+$parentFields = [...$fields, 'name' => 'Hot honey carrots', 'parent_mode' => 'create', 'new_parent_name' => 'Hot honey carrots (generic)'];
+$beforeParentCreation = $nativeSnapshot();
+$db->exec("CREATE TRIGGER fail_optional_child BEFORE INSERT ON product_barcodes BEGIN SELECT RAISE(ABORT, 'fail'); END");
+approvalReject(fn() => $approval->ApproveDraft(1, 10, 1, $parentFields, 'test'));
+approvalCheck($nativeSnapshot() === $beforeParentCreation, 'child failure rolls back both parent and child');
+$db->exec('DROP TRIGGER fail_optional_child');
+approvalReject(fn() => $approval->ApproveDraft(1, 10, 1, [...$parentFields, 'new_parent_name' => 'HOT HONEY CARROTS'], 'test'));
+approvalReject(fn() => $approval->ApproveDraft(1, 10, 1, [...$parentFields, 'new_parent_name' => 'Test cereal'], 'test'));
+approvalReject(fn() => $approval->ApproveDraft(1, 10, 1, [...$parentFields, 'parent_product_id' => $id], 'test'));
+approvalCheck($nativeSnapshot() === $beforeParentCreation, 'invalid or duplicate parent leaves catalog unchanged');
+approvalReject(fn() => $approval->ApproveDraft(1, 10, 1, [...$parentFields, 'taxonomy_leaf_slug' => 'stale-leaf'], 'test'));
+approvalReject(fn() => $approval->ApproveDraft(1, 10, 1, [...$parentFields, 'qu_id_purchase' => 99], 'test'));
+approvalCheck($nativeSnapshot() === $beforeParentCreation, 'invalid child classification or reference rolls back optional parent');
+$parentCreated = $approval->ApproveDraft(1, 10, 1, $parentFields, 'test');
+$parentId = $parentCreated['parent_product_id'];
+$parentRow = $db->query('SELECT * FROM products WHERE id = ' . $parentId)->fetch(PDO::FETCH_ASSOC);
+approvalCheck($parentId > 0 && (int)$parentRow['qu_id_stock'] === 1 && (int)$parentRow['qu_id_purchase'] === 1 && $parentRow['parent_product_id'] === null, 'new parent has compatible same units and no ancestor');
+approvalCheck((int)$db->query('SELECT parent_product_id FROM products WHERE id = ' . $parentCreated['product_id'])->fetchColumn() === $parentId, 'new child links to created parent');
+approvalCheck((int)$db->query('SELECT COUNT(*) FROM product_barcodes WHERE product_id = ' . $parentId)->fetchColumn() === 0 && (int)$db->query('SELECT COUNT(*) FROM stock_log')->fetchColumn() === 0, 'parent has no barcode or stock');
+approvalCheck($approval->ApproveDraft(1, 10, 1, $parentFields, 'test') === $parentCreated, 'retry returns identical child and parent IDs');
+approvalReject(fn() => $approval->ApproveDraft(1, 10, 1, [...$parentFields, 'new_parent_name' => 'Other parent'], 'test'));
+approvalReject(fn() => $approval->ApproveDraft(1, 10, 1, [...$parentFields, 'parent_mode' => 'standalone'], 'test'));
+$db->exec("INSERT INTO grocy_ai_capture_lines (id, trip_id, seq, scanned_barcode, canonical_gtin, status) VALUES (11, 1, 8, '9780201379624', '09780201379624', 'unknown')");
+$research->EnqueueUnknown(1, 11, '9780201379624');
+$duplicateResponse = $controller->Approve($request->withParsedBody(['revision' => 1, 'fields' => [...$parentFields, 'name' => 'Second flavored carrots', 'new_parent_name' => 'TEST CEREAL']]), $response, ['tripId' => '1', 'seq' => '8']);
+approvalCheck($duplicateResponse->getStatusCode() === 409 && str_contains((string)$duplicateResponse->getBody(), 'Choose an existing parent or rename'), 'duplicate parent provides actionable safe API feedback');
+$db->exec("INSERT INTO products (name, location_id, qu_id_purchase, qu_id_stock) VALUES ('Crème carrots (generic)', 1, 1, 1)");
+$beforeUnicodeParent = $nativeSnapshot();
+approvalReject(fn() => $approval->ApproveDraft(1, 11, 1, [...$parentFields, 'name' => 'Second flavored carrots', 'new_parent_name' => 'CRÈME CARROTS (GENERIC)'], 'test'));
+approvalCheck($nativeSnapshot() === $beforeUnicodeParent, 'Unicode case collision leaves catalog unchanged');
+approvalReject(fn() => $approval->ApproveDraft(1, 11, 1, [...$parentFields, 'name' => 'CRÈME CARROTS (GENERIC)', 'new_parent_name' => 'Distinct parent'], 'test'));
+approvalCheck($nativeSnapshot() === $beforeUnicodeParent, 'Unicode child collision creates neither parent nor child');
+$db->exec("INSERT INTO products (name, location_id, qu_id_purchase, qu_id_stock) VALUES ('Straße (generic)', 1, 1, 1), ('ΟΣ (generic)', 1, 1, 1)");
+$beforeFullFold = $nativeSnapshot();
+foreach (['STRASSE (GENERIC)', 'ος (generic)'] as $foldedParent)
+{
+	approvalReject(fn() => $approval->ApproveDraft(1, 11, 1, [...$parentFields, 'name' => 'Distinct child', 'new_parent_name' => $foldedParent], 'test'));
+	approvalCheck($nativeSnapshot() === $beforeFullFold, 'full Unicode fold collision creates no parent or child');
+}
+foreach ([['Straße', 'STRASSE'], ['ΟΣ', 'ος']] as [$childName, $newParentName])
+{
+	approvalReject(fn() => $approval->ApproveDraft(1, 11, 1, [...$parentFields, 'name' => $childName, 'new_parent_name' => $newParentName], 'test'));
+	approvalCheck($nativeSnapshot() === $beforeFullFold, 'parent-child full-fold equal names are rejected');
+}
+foreach (['inactive', 'deleted', 'nonroot'] as $invalidParentCase)
+{
+	$liveParentId = $invalidParentCase === 'deleted' ? 9999 : $parentId;
+	if ($invalidParentCase === 'inactive') $db->prepare('UPDATE products SET active = 0 WHERE id = ?')->execute([$parentId]);
+	if ($invalidParentCase === 'nonroot') $db->prepare('UPDATE products SET parent_product_id = ? WHERE id = ?')->execute([$id, $parentId]);
+	$invalidParentResponse = $controller->Approve($request->withParsedBody(['revision' => 1, 'fields' => [...$fields, 'name' => 'Distinct child', 'parent_mode' => 'existing', 'parent_product_id' => $liveParentId]]), $response, ['tripId' => '1', 'seq' => '8']);
+	approvalCheck($invalidParentResponse->getStatusCode() === 400 && str_contains((string)$invalidParentResponse->getBody(), 'Keep this product standalone or choose another parent'), 'invalidated parent provides actionable safe API feedback: ' . $invalidParentCase);
+	$db->prepare('UPDATE products SET active = 1, parent_product_id = NULL WHERE id = ?')->execute([$parentId]);
+}
 echo "capture research approval: PASS\n";
