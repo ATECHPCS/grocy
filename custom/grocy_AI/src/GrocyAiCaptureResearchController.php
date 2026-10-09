@@ -224,8 +224,16 @@ class GrocyAiCaptureResearchController extends BaseApiController
 			if ($kind === 'link' && $this->HasFields($body, ['revision', 'product_id']) && is_int($body['revision']) && is_int($body['product_id'])) return $this->ApiResponse($response, $service->LinkDraft($ids['trip_id'], $lineId, $body['revision'], $body['product_id'], (string)GROCY_USER_ID));
 			return $this->GenericErrorResponse($response, 'Invalid product approval', 400);
 		}
-		catch (\InvalidArgumentException) { return $this->GenericErrorResponse($response, 'Invalid product approval', 400); }
-		catch (\RuntimeException|\PDOException) { return $this->GenericErrorResponse($response, 'Product review conflict', 409); }
+		catch (\InvalidArgumentException $error)
+		{
+			$safe = in_array($error->getMessage(), ['Enter a distinct generic parent name', 'Choose an existing parent or keep standalone'], true) ? $error->getMessage() : ($error->getMessage() === 'Incompatible parent unit' ? 'This parent uses an incompatible stock unit. Keep this product standalone, choose another parent, or review the units.' : 'Invalid product approval');
+			return $this->GenericErrorResponse($response, $safe, 400);
+		}
+		catch (\RuntimeException|\PDOException $error)
+		{
+			$safe = $error->getMessage() === 'Generic parent name already exists. Choose an existing parent or rename the proposed parent.' ? $error->getMessage() : 'Product review conflict';
+			return $this->GenericErrorResponse($response, $safe, 409);
+		}
 	}
 
 	private function ReviewMutation(Request $request, Response $response, array $args, string $kind): Response

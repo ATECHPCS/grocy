@@ -9,7 +9,7 @@ function draft(state = 'ready')
 async function setup(page, state = 'ready', settings = {})
 {
 	const data = { draft: draft(state), writes: [], receipts: [], lines: [line], drafts: null, approved: false, evidenceReject: false, referenceGets: [], catalogGets: 0, catalog: { contract_version: 1, taxonomy_version: 'v1', product_groups: [{ id: 3, name: 'Beverages' }, { id: 4, name: 'Pantry' }], taxonomy_leaves: [{ slug: 'plant-milk', label: 'Plant milk' }, { slug: 'produce', label: 'Produce' }], generic_parents: [{ id: 95, name: 'Generic Produce', qu_id_stock: 2 }] } };
-	await page.route('**/api/objects/**', route => { const path = new URL(route.request().url()).pathname; data.referenceGets.push(path); return route.fulfill({ json: path.endsWith('/products/95') ? { id: 95, name: 'Generic Produce', active: 1, parent_product_id: null, qu_id_stock: data.parentStockUnit || 2 } : path.endsWith('/quantity_unit_conversions') ? [] : path.endsWith('/locations') ? [{ id: 1, name: 'Pantry', active: 1 }] : path.endsWith('/products') ? [{ id: 82, name: 'Oat Milk', active: 1 }, { id: 91, name: 'Completely Different Pantry Item', active: 1 }] : [{ id: 2, name: 'Each', active: 1 }] }); });
+	await page.route('**/api/objects/**', route => { const path = new URL(route.request().url()).pathname; data.referenceGets.push(path); return route.fulfill({ json: path.endsWith('/products/95') ? { id: 95, name: 'Generic Produce', active: 1, parent_product_id: null, qu_id_stock: data.parentStockUnit || 2 } : path.endsWith('/quantity_unit_conversions') ? [] : path.endsWith('/locations') ? [{ id: 1, name: 'Pantry', active: 1 }] : path.endsWith('/products') ? [{ id: 82, name: 'Oat Milk', active: 1 }, { id: 91, name: 'Completely Different Pantry Item', active: 1 }] : (data.unitRows || [{ id: 2, name: 'Each', active: 1 }]) }); });
 	await page.route('**/api/grocy-ai/capture/**', route =>
 	{
 		const path = new URL(route.request().url()).pathname;
@@ -24,7 +24,7 @@ async function setup(page, state = 'ready', settings = {})
 		if (path.endsWith('/receipt-evidence') && data.evidenceReject) return route.fulfill({ status: 400, json: { error_message: 'Invalid evidence' } });
 		if (path.endsWith('/receipt-evidence')) { data.draft.receipt_evidence = { receipt_line_id: 19, description: 'OAT MILK 1L' }; data.draft.revision++; return route.fulfill({ json: data.draft }); }
 		if (path.endsWith('/retry')) { data.draft.job_state = 'queued'; return route.fulfill({ json: data.draft }); }
-		if (path.endsWith('/approve') || path.endsWith('/link')) { data.approved = true; data.draft.outcome = path.endsWith('/approve') ? 'approved' : 'linked'; return route.fulfill({ json: { product_id: 82, outcome: data.draft.outcome, revision: 3 } }); }
+		if (path.endsWith('/approve') || path.endsWith('/link')) { data.approved = true; data.draft.outcome = path.endsWith('/approve') ? 'approved' : 'linked'; return route.fulfill({ json: { product_id: 82, outcome: data.draft.outcome, revision: 3, ...(route.request().postDataJSON().fields?.parent_mode === 'create' ? { parent_product_id: 96 } : {}) } }); }
 		return route.fulfill({ status: 404, json: {} });
 	});
 	await page.goto('/fixtures/capture-review.html');
@@ -279,7 +279,7 @@ test('provider miss allows local group, taxonomy leaf, and compatible generic pa
 	await page.locator('#grocyai-capture-review-trips button').click();
 	await page.getByLabel('Product group').selectOption('4');
 	await page.getByLabel('Food classification').selectOption('produce');
-	await page.getByLabel('Generic parent').selectOption('95');
+	await page.getByLabel('Generic parent', { exact: true }).selectOption('95');
 	await page.getByLabel('Purchase unit').selectOption('2');
 	await page.getByLabel('Stock unit').selectOption('2');
 	const prompts = [];
@@ -365,14 +365,14 @@ test('classification suggestions show source and preserve explicit parent cleari
 	data.draft.selected = { ...data.draft.selected, product_group_id: 4, taxonomy_leaf_slug: 'produce', parent_product_id: 95 };
 	data.draft.classification = { state: 'suggested', source: 'openai-classification', result: { status: 'suggested' } };
 	await page.locator('#grocyai-capture-review-trips button').click();
-	await expect(page.getByLabel('Generic parent')).toHaveValue('95');
+	await expect(page.getByLabel('Generic parent', { exact: true })).toHaveValue('95');
 	await expect(page.getByLabel('Product group').locator('option:checked')).toContainText('OpenAI classification');
 	await expect(page.getByText('Classification suggestions ready')).toBeVisible();
 	expect(data.writes).toHaveLength(0);
-	await page.getByLabel('Generic parent').selectOption('');
+	await page.getByLabel('Generic parent', { exact: true }).selectOption('');
 	await page.getByRole('button', { name: 'Save research draft' }).click();
 	await expect.poll(() => data.writes.some(w => w.body?.changes && Object.hasOwn(w.body.changes, 'parent_product_id') && w.body.changes.parent_product_id === null)).toBe(true);
-	await expect(page.getByLabel('Generic parent')).toHaveValue('');
+	await expect(page.getByLabel('Generic parent', { exact: true })).toHaveValue('');
 	expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
 
@@ -382,8 +382,8 @@ test('parent stock unit mismatch blocks confirmation before approval', async ({ 
 	data.parentStockUnit = 99;
 	await page.getByLabel('Purchase unit').selectOption('2');
 	await page.getByLabel('Stock unit').selectOption('2');
-	await page.getByLabel('Generic parent').selectOption('95');
-	await expect(page.getByText('Generic parent needs a compatible stock unit. Choose another parent or stock unit.')).toBeVisible();
+	await page.getByLabel('Generic parent', { exact: true }).selectOption('95');
+	await expect(page.getByText('This parent uses an incompatible stock unit. Keep this product standalone, choose another parent, or review the units.')).toBeVisible();
 	await page.getByRole('button', { name: 'Approve new product' }).click();
 	expect(data.writes.some(w => w.path.endsWith('/approve'))).toBe(false);
 });
@@ -401,7 +401,7 @@ for (const state of ['pending', 'queued', 'leased'])
 		await expect(status).not.toContainText('unavailable');
 		await expect(page.getByLabel('Product group')).toBeEnabled();
 		await expect(page.getByLabel('Food classification')).toBeEnabled();
-		await expect(page.getByLabel('Generic parent')).toBeEnabled();
+		await expect(page.getByLabel('Generic parent', { exact: true })).toBeEnabled();
 		expect(data.writes).toHaveLength(0);
 	});
 }
@@ -462,4 +462,69 @@ test('product creation required fields have visible red markers and accessible r
 	for (const label of ['Brand research note', 'Package research note', 'Product group', 'Food classification', 'Generic parent'])
 		await expect(page.getByLabel(label, { exact: true })).not.toHaveAttribute('aria-required', 'true');
 	await expect(page.getByText('Required for product creation')).toBeVisible();
+});
+
+
+test('@optionalparent creates editable optional parent only after two explicit confirmations', async ({ page }) =>
+{
+	const data = await setup(page);
+	await expect(page.getByLabel('Parent handling')).toHaveValue('standalone');
+	await page.getByLabel('Proposed name').fill('Hot honey carrots');
+	await page.getByLabel('Parent handling').selectOption('create');
+	await expect(page.getByLabel('New generic parent name')).toHaveValue('Hot honey carrots (generic)');
+	await page.getByLabel('New generic parent name').fill('Oat drinks (generic)');
+	await page.getByRole('button', { name: 'Save research draft' }).click();
+	await expect.poll(() => data.writes.some(w => w.body?.changes?.parent_mode === 'create' && w.body.changes.new_parent_name === 'Oat drinks (generic)')).toBe(true);
+	await page.getByLabel('Location').selectOption('1');
+	await page.getByLabel('Purchase unit').selectOption('2');
+	await page.getByLabel('Stock unit').selectOption('2');
+	let prompts = [];
+	page.on('dialog', async dialog => { prompts.push(dialog.message()); await dialog.accept(); });
+	await page.getByRole('button', { name: 'Approve new product' }).click();
+	await expect.poll(() => data.writes.some(w => w.path.endsWith('/approve'))).toBe(true);
+	expect(prompts).toHaveLength(2);
+	for (const prompt of prompts) { expect(prompt).toContain('Oat drinks (generic)'); expect(prompt).toContain('No stock'); expect(prompt).toContain('Each'); }
+	expect(data.writes.find(w => w.path.endsWith('/approve')).body.fields).toMatchObject({ parent_mode: 'create', new_parent_name: 'Oat drinks (generic)' });
+	await expect(page.locator('.grocy-ai-product-review-notice')).toContainText('generic parent #96');
+});
+
+test('@optionalparent mismatch offers standalone without erasing units and saves intent', async ({ page }) =>
+{
+	const data = await setup(page);
+	data.parentStockUnit = 99;
+	await page.getByLabel('Stock unit').selectOption('2');
+	await page.getByLabel('Generic parent', { exact: true }).selectOption('95');
+	await expect(page.getByText('This parent uses an incompatible stock unit. Keep this product standalone, choose another parent, or review the units.')).toBeVisible();
+	await page.getByRole('button', { name: 'Keep standalone', exact: true }).click();
+	await expect(page.getByLabel('Parent handling')).toHaveValue('standalone');
+	await expect(page.getByLabel('Stock unit')).toHaveValue('2');
+	await page.getByRole('button', { name: 'Save research draft' }).click();
+	await expect.poll(() => data.writes.some(w => w.body?.changes?.parent_mode === 'standalone' && w.body.changes.parent_product_id === null)).toBe(true);
+});
+
+test('@optionalparent duplicate parent shows actionable conflict without creating or dropping edits', async ({ page }) =>
+{
+	const data = await setup(page);
+	await page.getByLabel('Parent handling').selectOption('create');
+	await page.getByLabel('Location').selectOption('1');
+	await page.getByLabel('Purchase unit').selectOption('2');
+	await page.getByLabel('Stock unit').selectOption('2');
+	await page.route('**/research/approve', route => route.fulfill({ status: 409, json: { error_message: 'Generic parent name already exists. Choose an existing parent or rename the proposed parent.' } }));
+	page.on('dialog', dialog => dialog.accept());
+	await page.getByRole('button', { name: 'Approve new product' }).click();
+	await expect(page.getByText('Generic parent name already exists. Choose an existing parent or rename the proposed parent.')).toBeVisible();
+	await expect(page.getByLabel('New generic parent name')).toHaveValue('Oat Milk (generic)');
+	expect(data.approved).toBe(false);
+});
+
+test('@optionalparent incompatible automatic suggestion falls back to standalone after unit change', async ({ page }) =>
+{
+	const data = await setup(page);
+	data.unitRows = [{ id: 2, name: 'Each', active: 1 }, { id: 3, name: 'Ounce', active: 1 }];
+	data.draft.selected = { ...data.draft.selected, parent_product_id: 95, parent_mode: 'existing', qu_id_stock: 2 };
+	await page.locator('#grocyai-capture-review-trips button').click();
+	await expect(page.getByLabel('Generic parent', { exact: true })).toHaveValue('95');
+	await page.getByLabel('Stock unit').selectOption('3');
+	await expect(page.getByLabel('Parent handling')).toHaveValue('standalone');
+	await expect(page.getByLabel('Stock unit')).toHaveValue('3');
 });

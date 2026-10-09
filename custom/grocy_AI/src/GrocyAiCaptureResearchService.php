@@ -181,7 +181,7 @@ class GrocyAiCaptureResearchService
 			$matches[] = ['id' => (int)$parent['id'], 'name' => $parent['name'], 'qu_id_stock' => (int)$parent['qu_id_stock'], 'source' => 'local_identity', 'compatibility' => 'pending'];
 			if (count($matches) > 1) return [];
 		}
-		if ($matches === [] || !isset($selected['qu_id_stock'])) return $matches;
+		if ($matches === [] || !isset($selected['qu_id_stock'])) return [];
 		$stock = (int)$selected['qu_id_stock'];
 		if ($stock !== $matches[0]['qu_id_stock'])
 		{
@@ -197,10 +197,11 @@ class GrocyAiCaptureResearchService
 	/** @param array<string, mixed> $changes */
 	public function UpdateDraft(int $tripId, int $lineId, int $revision, array $changes, string $actor): array
 	{
-		if ($revision < 1 || $changes === [] || array_diff(array_keys($changes), ['name', 'brand', 'package', 'product_group_id', 'taxonomy_leaf_slug', 'parent_product_id', 'qu_id_purchase', 'qu_id_stock']) !== []) throw new \InvalidArgumentException('Invalid draft changes');
+		if ($revision < 1 || $changes === [] || array_diff(array_keys($changes), ['name', 'brand', 'package', 'product_group_id', 'taxonomy_leaf_slug', 'parent_product_id', 'qu_id_purchase', 'qu_id_stock', 'parent_mode', 'new_parent_name']) !== []) throw new \InvalidArgumentException('Invalid draft changes');
 		foreach ($changes as $key => $value)
 		{
-			if (in_array($key, ['name', 'brand', 'package'], true) && $value !== null && (!is_string($value) || trim($value) !== $value || $value === '' || mb_strlen($value) > 200)) throw new \InvalidArgumentException('Invalid draft field');
+			if (in_array($key, ['name', 'brand', 'package', 'new_parent_name'], true) && $value !== null && (!is_string($value) || trim($value) !== $value || $value === '' || mb_strlen($value) > 200)) throw new \InvalidArgumentException('Invalid draft field');
+			if ($key === 'parent_mode' && !in_array($value, ['standalone', 'existing', 'create'], true)) throw new \InvalidArgumentException('Invalid parent mode');
 			if ($key === 'name' && $value === null) throw new \InvalidArgumentException('Name is required');
 			if (in_array($key, ['product_group_id', 'parent_product_id', 'qu_id_purchase', 'qu_id_stock'], true) && $value !== null && (!is_int($value) || $value < 1)) throw new \InvalidArgumentException('Invalid group');
 			if ($key === 'taxonomy_leaf_slug' && $value !== null && (!is_string($value) || preg_match('/^[a-z0-9_-]{1,100}$/D', $value) !== 1)) throw new \InvalidArgumentException('Invalid taxonomy leaf');
@@ -393,12 +394,12 @@ class GrocyAiCaptureResearchService
 		{
 			foreach (['qu_id_purchase', 'qu_id_stock'] as $field) if (!array_key_exists($field, $edits) && !array_key_exists($field, json_decode($draft['selected_json'], true))) $selected[$field] = null;
 		}
-		if (isset($selected['parent_product_id'], $selected['qu_id_stock']) && !array_key_exists('qu_id_stock', $edits) && !array_key_exists('qu_id_stock', json_decode($draft['selected_json'], true)))
+		if (isset($selected['parent_product_id']) && !array_key_exists('parent_product_id', $edits) && !array_key_exists('parent_mode', $edits))
 		{
-			$parentQuery = $this->Db->prepare('SELECT qu_id_stock FROM products WHERE id = ? AND active = 1 AND parent_product_id IS NULL');
-			$parentQuery->execute([$selected['parent_product_id']]);
-			$parentStock = $parentQuery->fetchColumn();
-			if ($parentStock !== false && !$this->CompatibleUnits((int)$parentStock, $selected['qu_id_stock'])) $selected['qu_id_stock'] = null;
+			$parent = $this->Db->prepare('SELECT qu_id_stock FROM products WHERE id = ? AND active = 1 AND parent_product_id IS NULL');
+			$parent->execute([$selected['parent_product_id']]);
+			$parentStock = $parent->fetchColumn();
+			if ($parentStock === false || $selected['qu_id_stock'] === null || !$this->CompatibleUnits((int)$parentStock, $selected['qu_id_stock'])) unset($selected['parent_product_id']);
 		}
 		$candidates = ['product_group_id' => $this->GroupCandidates($suggested), 'taxonomy_leaf_slug' => $this->TaxonomyCandidates($suggested), 'parent_product_id' => $this->ParentCandidates($draft, $selected, $suggested)];
 		$catalog = ($classification['state'] ?? null) === 'suggested' ? $this->ReviewOptions() : ['product_groups' => [], 'taxonomy_leaves' => [], 'generic_parents' => []];
@@ -407,10 +408,12 @@ class GrocyAiCaptureResearchService
 			$value = $classification['result'][$field] ?? null;
 			if ($candidates[$field] === [] && ($classification['state'] ?? null) === 'suggested' && $value !== null)
 			{
-				foreach ($catalog[$choices] as $choice) if ($choice[$key] === $value && ($field !== 'parent_product_id' || $selected['qu_id_stock'] === null || $this->CompatibleUnits($choice['qu_id_stock'], $selected['qu_id_stock']))) $candidates[$field][] = $choice + ['source' => 'openai-classification'];
+				foreach ($catalog[$choices] as $choice) if ($choice[$key] === $value && ($field !== 'parent_product_id' || $selected['qu_id_stock'] !== null && $this->CompatibleUnits($choice['qu_id_stock'], $selected['qu_id_stock']))) $candidates[$field][] = $choice + ['source' => 'openai-classification'];
 			}
-			if (!array_key_exists($field, $edits) && !array_key_exists($field, $selected) && count($candidates[$field]) === 1) $selected[$field] = $candidates[$field][0][$key];
+			if (!array_key_exists($field, $edits) && !array_key_exists($field, $selected) && ($field !== 'parent_product_id' || !array_key_exists('parent_mode', $edits)) && count($candidates[$field]) === 1) $selected[$field] = $candidates[$field][0][$key];
 		}
+		if (!array_key_exists('parent_mode', $selected)) $selected['parent_mode'] = isset($selected['parent_product_id']) ? 'existing' : 'standalone';
+		if ($selected['parent_mode'] !== 'existing') unset($selected['parent_product_id']);
 		return ['id' => (int)$draft['id'], 'line_id' => $lineId, 'seq' => (int)$draft['seq'], 'revision' => (int)$draft['revision'], 'outcome' => $draft['outcome'], 'line_status' => $draft['line_status'], 'resolved_product_id' => $draft['resolved_product_id'] === null ? null : (int)$draft['resolved_product_id'], 'resolved_product_name' => $draft['resolved_product_name'], 'job_state' => $job['state'], 'safe_error_code' => $job['safe_error_code'], 'scanned_barcode' => $draft['scanned_barcode'], 'canonical_gtin' => $job['canonical_gtin'], 'selected' => $selected, 'user_edits' => $edits, 'suggested' => $suggested, 'classification' => $classification ?: null, 'name_alternatives' => $names, 'receipt_evidence' => $evidence, 'purchase_unit_candidates' => $unitCandidatesByField['qu_id_purchase'], 'stock_unit_candidates' => $unitCandidatesByField['qu_id_stock'], 'group_candidates' => $candidates['product_group_id'], 'taxonomy_candidates' => $candidates['taxonomy_leaf_slug'], 'parent_candidates' => $candidates['parent_product_id'], 'possible_existing_products' => $this->PossibleProducts($selected, $suggested), 'final_product_id' => $draft['final_product_id'] === null ? null : (int)$draft['final_product_id']];
 	}
 
