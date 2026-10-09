@@ -226,7 +226,13 @@ class GrocyAiCaptureResearchController extends BaseApiController
 		}
 		catch (\InvalidArgumentException $error)
 		{
-			$safe = in_array($error->getMessage(), ['Enter a distinct generic parent name', 'Choose an existing parent or keep standalone'], true) ? $error->getMessage() : ($error->getMessage() === 'Incompatible parent unit' ? 'This parent uses an incompatible stock unit. Keep this product standalone, choose another parent, or review the units.' : 'Invalid product approval');
+			$messages = [
+				'Enter a distinct generic parent name' => 'Enter a distinct generic parent name',
+				'Choose an existing parent or keep standalone' => 'Choose an existing parent or keep standalone',
+				'Invalid parent product' => 'This parent is no longer available as a generic parent. Keep this product standalone or choose another parent.',
+				'Incompatible parent unit' => 'This parent uses an incompatible stock unit. Keep this product standalone, choose another parent, or review the units.'
+			];
+			$safe = $messages[$error->getMessage()] ?? 'Invalid product approval';
 			return $this->GenericErrorResponse($response, $safe, 400);
 		}
 		catch (\RuntimeException|\PDOException $error)

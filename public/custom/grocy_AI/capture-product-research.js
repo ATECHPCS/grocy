@@ -55,7 +55,7 @@
 				var fallback = response.status === 403 ? 'You need product edit permission.' : response.status === 409 ? 'This draft changed. Reload and review it again.' : method === 'GET' ? 'Could not load product research. Reload and try again.' : 'Could not save product review.';
 				return response.json().catch(function () { return {}; }).then(function (payload)
 				{
-					var safeMessages = ['Generic parent name already exists. Choose an existing parent or rename the proposed parent.', 'Enter a distinct generic parent name', 'Choose an existing parent or keep standalone', 'This parent uses an incompatible stock unit. Keep this product standalone, choose another parent, or review the units.'];
+					var safeMessages = ['This parent is no longer available as a generic parent. Keep this product standalone or choose another parent.', 'Generic parent name already exists. Choose an existing parent or rename the proposed parent.', 'Enter a distinct generic parent name', 'Choose an existing parent or keep standalone', 'This parent uses an incompatible stock unit. Keep this product standalone, choose another parent, or review the units.'];
 					throw new Error(method !== 'GET' && [400, 409].indexOf(response.status) !== -1 && safeMessages.indexOf(payload.error_message) !== -1 ? payload.error_message : fallback);
 				});
 			}

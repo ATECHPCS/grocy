@@ -30,7 +30,7 @@ class GrocyAiCaptureProductService
 		$parentName = $fields['new_parent_name'] ?? null;
 		if ($parentMode === 'create')
 		{
-			if (!is_string($parentName) || trim($parentName) !== $parentName || $parentName === '' || mb_strlen($parentName) > 200 || mb_strtolower($parentName) === mb_strtolower($name)) throw new \InvalidArgumentException('Enter a distinct generic parent name');
+			if (!is_string($parentName) || trim($parentName) !== $parentName || $parentName === '' || mb_strlen($parentName) > 200 || $this->NormalizeCatalogName($parentName) === $this->NormalizeCatalogName($name)) throw new \InvalidArgumentException('Enter a distinct generic parent name');
 		}
 		elseif ($parentName !== null) throw new \InvalidArgumentException('New parent name requires create parent mode');
 		$leaf = $fields['taxonomy_leaf_slug'] ?? null;
@@ -162,11 +162,16 @@ class GrocyAiCaptureProductService
 		}
 	}
 
+	private function NormalizeCatalogName(string $name): string
+	{
+		return mb_convert_case(trim($name), MB_CASE_FOLD, 'UTF-8');
+	}
+
 	private function CatalogNameExists(string $name): bool
 	{
 		// SQLite NOCASE is ASCII-only; match case consistently for household names.
-		$normalized = mb_strtolower(trim($name));
-		foreach ($this->Db->query('SELECT name FROM products') as $row) if (mb_strtolower(trim($row['name'])) === $normalized) return true;
+		$normalized = $this->NormalizeCatalogName($name);
+		foreach ($this->Db->query('SELECT name FROM products') as $row) if ($this->NormalizeCatalogName($row['name']) === $normalized) return true;
 		return false;
 	}
 

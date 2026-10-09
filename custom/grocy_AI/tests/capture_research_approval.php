@@ -204,4 +204,25 @@ approvalReject(fn() => $approval->ApproveDraft(1, 11, 1, [...$parentFields, 'nam
 approvalCheck($nativeSnapshot() === $beforeUnicodeParent, 'Unicode case collision leaves catalog unchanged');
 approvalReject(fn() => $approval->ApproveDraft(1, 11, 1, [...$parentFields, 'name' => 'CRÈME CARROTS (GENERIC)', 'new_parent_name' => 'Distinct parent'], 'test'));
 approvalCheck($nativeSnapshot() === $beforeUnicodeParent, 'Unicode child collision creates neither parent nor child');
+$db->exec("INSERT INTO products (name, location_id, qu_id_purchase, qu_id_stock) VALUES ('Straße (generic)', 1, 1, 1), ('ΟΣ (generic)', 1, 1, 1)");
+$beforeFullFold = $nativeSnapshot();
+foreach (['STRASSE (GENERIC)', 'ος (generic)'] as $foldedParent)
+{
+	approvalReject(fn() => $approval->ApproveDraft(1, 11, 1, [...$parentFields, 'name' => 'Distinct child', 'new_parent_name' => $foldedParent], 'test'));
+	approvalCheck($nativeSnapshot() === $beforeFullFold, 'full Unicode fold collision creates no parent or child');
+}
+foreach ([['Straße', 'STRASSE'], ['ΟΣ', 'ος']] as [$childName, $newParentName])
+{
+	approvalReject(fn() => $approval->ApproveDraft(1, 11, 1, [...$parentFields, 'name' => $childName, 'new_parent_name' => $newParentName], 'test'));
+	approvalCheck($nativeSnapshot() === $beforeFullFold, 'parent-child full-fold equal names are rejected');
+}
+foreach (['inactive', 'deleted', 'nonroot'] as $invalidParentCase)
+{
+	$liveParentId = $invalidParentCase === 'deleted' ? 9999 : $parentId;
+	if ($invalidParentCase === 'inactive') $db->prepare('UPDATE products SET active = 0 WHERE id = ?')->execute([$parentId]);
+	if ($invalidParentCase === 'nonroot') $db->prepare('UPDATE products SET parent_product_id = ? WHERE id = ?')->execute([$id, $parentId]);
+	$invalidParentResponse = $controller->Approve($request->withParsedBody(['revision' => 1, 'fields' => [...$fields, 'name' => 'Distinct child', 'parent_mode' => 'existing', 'parent_product_id' => $liveParentId]]), $response, ['tripId' => '1', 'seq' => '8']);
+	approvalCheck($invalidParentResponse->getStatusCode() === 400 && str_contains((string)$invalidParentResponse->getBody(), 'Keep this product standalone or choose another parent'), 'invalidated parent provides actionable safe API feedback: ' . $invalidParentCase);
+	$db->prepare('UPDATE products SET active = 1, parent_product_id = NULL WHERE id = ?')->execute([$parentId]);
+}
 echo "capture research approval: PASS\n";

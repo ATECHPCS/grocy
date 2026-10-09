@@ -528,3 +528,22 @@ test('@optionalparent incompatible automatic suggestion falls back to standalone
 	await expect(page.getByLabel('Parent handling')).toHaveValue('standalone');
 	await expect(page.getByLabel('Stock unit')).toHaveValue('3');
 });
+
+test('@optionalparent invalidated explicit parent keeps choice and offers standalone recovery', async ({ page }) =>
+{
+	const data = await setup(page);
+	await page.getByLabel('Location').selectOption('1');
+	await page.getByLabel('Purchase unit').selectOption('2');
+	await page.getByLabel('Stock unit').selectOption('2');
+	await page.getByLabel('Generic parent', { exact: true }).selectOption('95');
+	await expect(page.getByText('Generic parent stock unit is compatible.')).toBeVisible();
+	await page.route('**/research/approve', route => route.fulfill({ status: 400, json: { error_message: 'This parent is no longer available as a generic parent. Keep this product standalone or choose another parent.' } }));
+	page.on('dialog', dialog => dialog.accept());
+	await page.getByRole('button', { name: 'Approve new product' }).click();
+	await expect(page.getByText('This parent is no longer available as a generic parent. Keep this product standalone or choose another parent.')).toBeVisible();
+	await expect(page.getByLabel('Parent handling')).toHaveValue('existing');
+	await expect(page.getByLabel('Generic parent', { exact: true })).toHaveValue('95');
+	await page.getByLabel('Parent handling').selectOption('standalone');
+	await expect(page.getByLabel('Stock unit')).toHaveValue('2');
+	expect(data.approved).toBe(false);
+});
