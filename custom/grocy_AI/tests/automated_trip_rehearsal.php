@@ -109,6 +109,7 @@ $productIds = array_map('intval', array_column($lines, 'resolved_product_id'));
 $parent = (int)$pdo->query('SELECT parent_product_id FROM products WHERE id = ' . $productIds[2])->fetchColumn();
 rehearsalAssert(count($approved) === 2 && $parent > 0 && (int)$pdo->query('SELECT COUNT(*) FROM products')->fetchColumn() === 4, 'One standalone and one parent/child approval must create three catalog rows');
 rehearsalAssert((int)$pdo->query('SELECT COUNT(*) FROM product_barcodes WHERE product_id = ' . $parent)->fetchColumn() === 0, 'Generic parent receives no barcode');
+rehearsalAssert($pdo->query('SELECT parent_product_id FROM products WHERE id = ' . $productIds[1])->fetchColumn() === null, 'Standalone cereal must have no parent product');
 rehearsalAssert($stockSnapshot() === $before, 'Product approval must preserve inventory');
 
 $canvas = imagecreatetruecolor(1, 1);

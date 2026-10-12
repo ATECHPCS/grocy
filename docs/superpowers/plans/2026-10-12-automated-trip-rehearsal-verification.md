@@ -50,3 +50,13 @@ An additional optional `php8.5 custom/grocy_AI/tests/capture_native_snapshot.php
 This is service integration plus direct receipt controller execution, not a full HTTP/browser/camera end-to-end run. It uses generated tiny PNGs and unavailable OCR manual fallback; it does not assess photography, image legibility, live OCR accuracy, provider discovery quality, or external-service availability. Deterministic worker results enter the genuine research completion and approval pipeline without calling providers. Router middleware/session startup are outside this script; native controller permission checks run against the isolated migrated admin fixture. The independent controller browser suite is being run separately and was pending when this backend report was written; no browser result is claimed here.
 
 No stock or catalog change reached production. Human trials remain a separate exercise.
+
+## Browser assertion correction and targeted verification
+
+The initial independent full browser run (`npm run test:release`, 583 scheduled tests) stopped with exit 130 after **234 passed, 1 failed, 1 interrupted, 347 not run**. The failed `@flowreview approval retains both confirmations, exact body and created product identity after reload` case expected an approval request without `parent_mode`; the current deliberate standalone selection sends `parent_mode: 'standalone'`. The exact request-body assertion now explicitly includes that field. Both confirmations, the created-product notice after reload, and zero stock commits remain asserted. No application code changed. The separate shared-receipt case was interrupted when the run was stopped, so that result is not classified as a product failure.
+
+Fresh targeted command from `custom/grocy_AI/tests/browser`:
+
+`npx playwright test specs/purchase-capture.spec.js --grep 'approval retains both confirmations, exact body and created product identity after reload' --project=chromium-mobile --project=webkit-mobile`
+
+Result: **2 passed (11.5s)**, exit 0. The isolated PHP rehearsal also passed again after adding an explicit assertion that standalone cereal has `parent_product_id IS NULL`. Syntax and diff checks passed. The full browser rerun is pending; this report does not claim a green full browser suite. Initial full-run log: `/tmp/grocy-20261012-browser-release.log`.

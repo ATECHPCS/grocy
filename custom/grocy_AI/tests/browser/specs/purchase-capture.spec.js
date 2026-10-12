@@ -1331,7 +1331,7 @@ test('@flowreview approval retains both confirmations, exact body and created pr
  await page.getByRole('button', { name: 'Approve new product', exact: true }).click();
  await expect(page.locator('.grocy-ai-product-review-notice')).toContainText('Product #101 created');
  expect(dialogs).toHaveLength(2);
- expect(writes).toEqual([{ revision: 2, fields: { name: 'Milk', location_id: 1, qu_id_purchase: 2, qu_id_stock: 2 } }]);
+ expect(writes).toEqual([{ revision: 2, fields: { name: 'Milk', location_id: 1, qu_id_purchase: 2, qu_id_stock: 2, parent_mode: 'standalone' } }]);
  await expect(page.locator('.grocy-ai-product-review-notice')).toContainText('Commit purchase to add it to stock');
  await page.locator('#grocyai-capture-review-trips button').first().click();
  await expect(page.locator('.grocy-ai-product-review-notice')).toContainText('Product #101 created');
