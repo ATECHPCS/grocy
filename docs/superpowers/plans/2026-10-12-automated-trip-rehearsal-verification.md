@@ -60,3 +60,9 @@ Fresh targeted command from `custom/grocy_AI/tests/browser`:
 `npx playwright test specs/purchase-capture.spec.js --grep 'approval retains both confirmations, exact body and created product identity after reload' --project=chromium-mobile --project=webkit-mobile`
 
 Result: **2 passed (11.5s)**, exit 0. The isolated PHP rehearsal also passed again after adding an explicit assertion that standalone cereal has `parent_product_id IS NULL`. Syntax and diff checks passed. The full browser rerun is pending; this report does not claim a green full browser suite. Initial full-run log: `/tmp/grocy-20261012-browser-release.log`.
+
+## Completed controller verification
+
+The fresh full browser command `env -u NO_COLOR -u FORCE_COLOR npm --prefix custom/grocy_AI/tests/browser run test:release -- --workers=1` completed with **583 passed (19.8 minutes), exit 0**, after the exact standalone approval-body assertion correction. Final log: `/tmp/grocy-20261012-browser-release-final.log`. This is browser fixture coverage in Chromium mobile/desktop and WebKit mobile, not a real HTTP UI-to-backend run.
+
+The controller independently reran `php8.5 custom/grocy_AI/tests/automated_trip_rehearsal.php`; native 256-migration schema, exact stock/log deltas and unchanged duplicate retry all passed. Final module gate remains274 checks and combined Node tests8 passed. Independent review and scoped correction review approved the test; no production code or household data changed. Human camera, physical permission/keyboard/gesture behavior, actual OCR/provider quality, and real HTTP/session acceptance remain separate.
