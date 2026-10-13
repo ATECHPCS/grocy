@@ -40,3 +40,10 @@ Final commands all exited 0:
 Repository automated tests generated populated screenshots at `/tmp/grocy-dashboard-390-light.png` and `/tmp/grocy-dashboard-390-dark.png`; both were inspected for readable text, action spacing and light/night surfaces. They cover simulated browser viewports, not a physical phone.
 
 The controller attempted the available native T3 preview after required status/open initialization. Navigation returned a generic client error for both the environment port URL and direct localhost URL while the fixture HTTP endpoint returned 200. No alternate browser automation was used. Automated screenshots remain the visual evidence; interactive native preview and physical phone acceptance remain separate limitations. Task review and whole-branch review are the controller's next gates before rollout.
+
+
+## Post-review navigation fixes
+
+After the 625/625 pre-review release gate, review found cancellation was missing from the Back pending signal, and completed upload metadata caused a false discard prompt. Per-trip cancellation now remains guarded through all settlement paths and trip switches; stale results cannot change another current/requested trip. Completed upload jobs no longer count as drafts, while failed/queued jobs still warn. Pending cancellation also disables current-trip Commit/Delete.
+
+Actual-browser regressions first failed 2/2 for the two findings (`/tmp/dashboard-fix-red-valid.log`). Scoped verification passed 18/18 new Chromium/WebKit regressions and 72/72 combined dashboard/navigation/deletion/upload cases (`/tmp/dashboard-fix-green.log`, `/tmp/dashboard-fix-focused.log`). The entire combined log has no failure/warning markers. Module 281/281, Node 78/78, changed JS syntax and diff checks passed fresh. Exact commands and test coverage are in the task implementation report. The full release was not repeated after the scoped fixes, following the controller's explicit instruction; its recorded 625/625 result belongs to the pre-review implementation. Re-review remains with the controller.
