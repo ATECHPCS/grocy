@@ -919,6 +919,21 @@ foreach (['/api/grocy-ai/capture/dashboard', '/api/grocy-ai/capture/trips', '/gr
 }
 check(str_contains($captureTemplate, 'grocyai-capture-dashboard-link') && str_contains($captureReviewTemplate, 'grocyai-capture-review-dashboard-link'), 'Capture and review expose Back to dashboard');
 
+// The stable image overlays individual views but copies the module/assets as directories.
+// Source-level dashboard checks alone cannot detect a missing deployed Blade template.
+$dashboardDockerfileLines = preg_split('/\r?\n/', file_get_contents($repoRoot . '/Dockerfile.atech'));
+$dashboardImageArtifacts = [
+	'views/grocyai_capture_dashboard.blade.php' => 'COPY views/grocyai_capture_dashboard.blade.php /app/www/views/grocyai_capture_dashboard.blade.php',
+	'custom/grocy_AI/src/GrocyAiCaptureDashboardService.php' => 'COPY custom/grocy_AI /app/www/custom/grocy_AI',
+	'public/custom/grocy_AI/capture-dashboard.js' => 'COPY public/custom/grocy_AI /app/www/public/custom/grocy_AI',
+	'public/custom/grocy_AI/grocy-ai.css' => 'COPY public/custom/grocy_AI /app/www/public/custom/grocy_AI'
+];
+foreach ($dashboardImageArtifacts as $dashboardArtifact => $dashboardCopyInstruction)
+{
+	check(is_file($repoRoot . '/' . $dashboardArtifact) && in_array($dashboardCopyInstruction, $dashboardDockerfileLines, true), 'Stable image packages dashboard artifact: ' . $dashboardArtifact);
+}
+
+
 check(($assetVersionMatch[1] ?? null) === $moduleVersion, 'The grocy_AI asset token matches the portable module version');
 check(substr_count($productFormTemplate, '{{ $grocyAiAssetVersion }}') === 4, 'All custom product-form assets use the grocy_AI token');
 $resolvedTemplate = file_get_contents($repoRoot . '/views/quantityunitconversionsresolved.blade.php');

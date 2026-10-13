@@ -20,6 +20,7 @@ COPY views/quantityunitconversionsresolved.blade.php /app/www/views/quantityunit
 COPY views/grocyai_conversioncoverage.blade.php /app/www/views/grocyai_conversioncoverage.blade.php
 COPY views/grocyai_bulkreview.blade.php /app/www/views/grocyai_bulkreview.blade.php
 COPY views/grocyai_capture.blade.php /app/www/views/grocyai_capture.blade.php
+COPY views/grocyai_capture_dashboard.blade.php /app/www/views/grocyai_capture_dashboard.blade.php
 COPY views/grocyai_capture_review.blade.php /app/www/views/grocyai_capture_review.blade.php
 COPY views/consume.blade.php /app/www/views/consume.blade.php
 COPY views/inventory.blade.php /app/www/views/inventory.blade.php
