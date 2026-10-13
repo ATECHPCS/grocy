@@ -55,3 +55,21 @@ Final scoped commands, all exit 0:
 - `node --check public/custom/grocy_AI/capture-review.js`, `node --check custom/grocy_AI/tests/browser/specs/purchase-capture.spec.js`, `git diff --check` — passed fresh after the focused gate.
 
 The earlier 625/625 full release run is the pre-review implementation gate; it was not repeated after these scoped fixes, following the controller's explicit verification instruction. No provider, production write, push or deployment occurred. Controller re-review remains next.
+
+
+## Final whole-branch fix wave
+
+Confirmed the final review finding: an unconfirmed commit POST clears `commitInFlight` while retaining `outcome: error`/`needsRecheck: true`, so the original Back pending guard allowed leaving despite possible stock changes. The guard now checks unresolved `needsRecheck` states across every trip scope. Confirmed `committed` results (including normalized `already_committed`) remain authoritative and may leave even if their follow-up GET failed. The existing explicit recheck clears uncertainty only after a valid trip/readiness response for the matching current and requested trip; failed or differently scoped reads cannot clear it.
+
+Added eight actual-browser regressions: lost, HTTP and malformed commit results block Back; failed trip/readiness rechecks remain blocked; successful reconciliation permits Back with exactly one original POST; switching before or after result settlement cannot bypass another trip's uncertainty; both confirmed completion outcomes with failed follow-up reads permit Back.
+
+TDD red: `env -u NO_COLOR -u FORCE_COLOR npm --prefix custom/grocy_AI/tests/browser run test -- --project=chromium-mobile --grep '@commitnav unconfirmed (lost|malformed)' --workers=1` — 2/2 failed as expected because Back navigated to the dashboard after the unconfirmed response (`/tmp/dashboard-commit-red.log`). Initial isolated green attempt passed 12/16; four trip-switch cases needed to reopen the existing summary presentation before choosing Recheck. Test setup was corrected without changing the guard or removing assertions (`/tmp/dashboard-commit-green.log`).
+
+Final scoped commands, all exit 0:
+
+- `env -u NO_COLOR -u FORCE_COLOR npm --prefix custom/grocy_AI/tests/browser run test -- --grep '@dashboard|@flowsummary' --workers=1` — 158/158 Chromium/WebKit in 6.0 minutes, including all new commit cases, previous cancellation/upload fixes and existing receipt/commit safeguards (`/tmp/dashboard-finalwave-focused.log`). Entire log scanned for numbered failure blocks, Error:, FAIL:, failed counts, timeouts and warnings: zero markers.
+- `php8.5 custom/grocy_AI/tests/run.php` — 281/281 (`/tmp/dashboard-finalwave-module.log`), standard absent real-data snapshot skips unchanged.
+- `node --test public/custom/grocy_AI/*.test.js` — 78 passed, zero failed/skipped (`/tmp/dashboard-finalwave-node.log`).
+- `node --check public/custom/grocy_AI/capture-review.js`, `node --check custom/grocy_AI/tests/browser/specs/purchase-capture.spec.js`, `git diff --check` — passed fresh after the covering browser gate.
+
+No full-suite repeat was performed, per the controller's explicit instruction; the original 625/625 result remains the pre-review implementation gate. This wave changes only the navigation guard, regression coverage and verification records. No push, deployment, provider call or production write occurred. Final scoped re-review remains with `dashboard_final_review`.

@@ -195,7 +195,7 @@
 		var shoppingLocations = [];
 
 		function leavingUnsettled() {
-			return commitInFlight || [directPendingByTrip, receiptPendingByTrip, researchBusyByTrip, cancellationPendingByTrip].some(function (map) { return Object.keys(map).some(function (key) { return map[key] > 0; }); }) || Object.keys(directRefreshRequiredByTrip).some(function (key) { return directRefreshRequiredByTrip[key]; });
+			return commitInFlight || Object.keys(commitStates).some(function (tripId) { var state = commitStates[tripId]; return state.needsRecheck && state.outcome !== 'committed'; }) || [directPendingByTrip, receiptPendingByTrip, researchBusyByTrip, cancellationPendingByTrip].some(function (map) { return Object.keys(map).some(function (key) { return map[key] > 0; }); }) || Object.keys(directRefreshRequiredByTrip).some(function (key) { return directRefreshRequiredByTrip[key]; });
 		}
 		function leavingDirty() {
 			return Object.keys(researchStates).some(function (trip) { return Object.keys(researchStates[trip] || {}).some(function (line) { return Object.keys(researchStates[trip][line] || {}).length > 0; }); }) || Object.keys(receiptStates).some(function (trip) { return Object.keys(receiptStates[trip].drafts || {}).length > 0 || (receiptStates[trip].uploads || []).some(function (job) { return job.status !== 'uploaded'; }); }) || receiptComponent && receiptComponent.hasUnsavedEdits();
