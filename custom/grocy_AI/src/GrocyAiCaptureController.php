@@ -12,23 +12,28 @@ use Psr\Http\Message\ServerRequestInterface as Request;
 class GrocyAiCaptureController extends BaseController
 {
 	/**
-	 * Renders the mobile purchase-capture scan-loop page (CAP-01). The page holds no durable state of its
-	 * own: it starts a trip and appends scans through the STOCK_PURCHASE-gated
-	 * `/api/grocy-ai/capture/trips` endpoints in capture.js. It writes no stock — the only audited
-	 * stock-write path is `CommitTrip`, reached from the later review surface, never this page.
+	 * Renders the personal dashboard, or the scanner for an explicit trip bookmark.
+	 * Landing and refresh never implicitly select or create a purchase session.
 	 */
 	public function Capture(Request $request, Response $response, array $args)
 	{
 		User::CheckPermission($request, User::PERMISSION_STOCK_PURCHASE);
 
-		$db = DatabaseService::GetInstance()->GetDbConnectionRaw();
-		new GrocyAiCaptureService($db);
-		$statement = $db->prepare("SELECT t.id FROM grocy_ai_capture_trips t JOIN grocy_ai_capture_lines l ON l.trip_id = t.id WHERE t.created_by = ? AND t.status = 'open' GROUP BY t.id ORDER BY t.id DESC LIMIT 1");
-		$statement->execute([(string)GROCY_USER_ID]);
-		$defaultTripId = $statement->fetchColumn();
+		$query = $request->getQueryParams();
+		if (array_key_exists('trip', $query) && (!is_string($query['trip']) || preg_match('/^[1-9][0-9]{0,9}$/D', $query['trip']) !== 1))
+		{
+			$response->getBody()->write('Invalid capture trip');
+			return $response->withStatus(400);
+		}
+
+		new GrocyAiCaptureService(DatabaseService::GetInstance()->GetDbConnectionRaw());
+		if (!array_key_exists('trip', $query))
+		{
+			return $this->RenderPage($response, 'grocyai_capture_dashboard');
+		}
 
 		return $this->RenderPage($response, 'grocyai_capture', [
-			'defaultTripId' => $defaultTripId === false ? null : (int)$defaultTripId
+			'defaultTripId' => (int)$query['trip']
 		]);
 	}
 

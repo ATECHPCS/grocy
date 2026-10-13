@@ -8,6 +8,7 @@ use Grocy\Services\DatabaseService;
 use GrocyAI\Services\GrocyAiBarcodeService;
 use GrocyAI\Services\GrocyAiBulkService;
 use GrocyAI\Services\GrocyAiCaptureService;
+use GrocyAI\Services\GrocyAiCaptureDashboardService;
 use GrocyAI\Services\GrocyAiReceiptService;
 use GrocyAI\Services\GrocyAiReceiptImageStore;
 use GrocyAI\Services\GrocyAiReceiptExtractor;
@@ -903,8 +904,34 @@ class GrocyAiApiController extends BaseApiController
 	}
 
 	/**
-	 * List capture trips, newest first (CAP-03 review surface). STOCK_PURCHASE-gated read.
+	 * Personal dashboard read. Actor comes only from the authenticated session.
 	 */
+	public function DashboardCapture(Request $request, Response $response, array $args): Response
+	{
+		User::CheckPermission($request, User::PERMISSION_STOCK_PURCHASE);
+		$query = $request->getQueryParams();
+		$cursors = [];
+		foreach (['active_before', 'completed_before'] as $key)
+		{
+			if (array_key_exists($key, $query) && (!is_string($query[$key]) || preg_match('/^[1-9][0-9]{0,9}$/D', $query[$key]) !== 1))
+			{
+				return $this->GenericErrorResponse($response, 'Invalid dashboard cursor', 400);
+			}
+			$cursors[$key] = isset($query[$key]) ? (int)$query[$key] : null;
+		}
+		try
+		{
+			$db = DatabaseService::GetInstance()->GetDbConnectionRaw();
+			new GrocyAiCaptureService($db);
+			return $this->ApiResponse($response, (new GrocyAiCaptureDashboardService($db))->ReadForUser((string)GROCY_USER_ID, $cursors['active_before'], $cursors['completed_before']));
+		}
+		catch (\RuntimeException)
+		{
+			return $this->GenericErrorResponse($response, 'Capture unavailable', 503);
+		}
+	}
+
+	/** List capture trips, newest first (CAP-03 review surface). STOCK_PURCHASE-gated read. */
 	public function ListCaptureTrips(Request $request, Response $response, array $args): Response
 	{
 		User::CheckPermission($request, User::PERMISSION_STOCK_PURCHASE);
