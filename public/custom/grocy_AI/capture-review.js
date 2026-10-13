@@ -517,6 +517,7 @@
 			return fetchJson(tripUrl(tripId) + '/cancel', { method: 'POST', body: '{}' }).then(function (result)
 			{
 				if (!result || result.canceled !== true || Number(result.trip_id) !== Number(tripId)) throw new Error('invalid_cancel_response');
+				delete commitStates[tripId];
 				if (currentTripId !== tripId || requestedTripId !== tripId) return;
 				++loadRevision;
 				currentTripId = null;

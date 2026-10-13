@@ -73,3 +73,16 @@ Final scoped commands, all exit 0:
 - `node --check public/custom/grocy_AI/capture-review.js`, `node --check custom/grocy_AI/tests/browser/specs/purchase-capture.spec.js`, `git diff --check` — passed fresh after the covering browser gate.
 
 No full-suite repeat was performed, per the controller's explicit instruction; the original 625/625 result remains the pre-review implementation gate. This wave changes only the navigation guard, regression coverage and verification records. No push, deployment, provider call or production write occurred. Final scoped re-review remains with `dashboard_final_review`.
+
+
+## Final-wave authorized cancellation cleanup
+
+The controller extended the final wave with a narrow working-flow cleanup: a validated successful cancellation is authoritative because the server rejects cancellation of committed/applied trips. Canceled trip recovery state must therefore be cleared so the all-trip Back guard cannot retain that canceled trip forever.
+
+Added exactly `delete commitStates[tripId]` after cancellation response validation and before the current/requested ownership check. This clears the original canceled scope even while another trip is selected. No other production behavior changed; invalid/failed cancellation does not clear the recovery state.
+
+Representative red: `env -u NO_COLOR -u FORCE_COLOR npm --prefix custom/grocy_AI/tests/browser run test -- --project=chromium-mobile --grep '@cancelrecovery validated cancellation clears commit_failed' --workers=1` failed 1/1 as expected: the canceled trip UI disappeared, but Back remained on review (`/tmp/dashboard-cancel-cleanup-red.log`).
+
+Final scoped command `env -u NO_COLOR -u FORCE_COLOR npm --prefix custom/grocy_AI/tests/browser run test -- --grep '@cancelrecovery|@commitnav|@reviewfix.*cancellation|deletes an uncommitted trip' --workers=1` passed 36/36 Chromium/WebKit in 1.6 minutes (`/tmp/dashboard-cancel-cleanup-green.log`), exit 0. Entire log scanned for numbered failure blocks, Error:, FAIL:, failed counts, timeouts and warnings: zero markers. The three new regressions pin failed/checksum-mismatch commit → successful cancellation → Back without another commit POST, including successful cancellation after selecting another trip. Existing cancellation/commit-navigation safeguards remain covered.
+
+`node --check public/custom/grocy_AI/capture-review.js`, `node --check custom/grocy_AI/tests/browser/specs/purchase-capture.spec.js`, and `git diff --check` passed fresh. No broader suite repetition, provider call, production write, push or deployment was performed, following the controller's narrow instruction. Final scoped review remains with the controller.
