@@ -44,7 +44,7 @@ The30-day window is rolling, based on committed_at: start inclusive, end inclusi
 - Double taps and lost create responses must not cause silent repeat POSTs: Task2 delayed/error fixtures.
 - Returning to dashboard must not silently discard drafts or leave a pending stock mutation: Task2 navigation guards.
 
-### Task1: Personal read model and landing routing
+### Task 1: Personal read model and landing routing
 
 **Files:** Create `custom/grocy_AI/src/GrocyAiCaptureDashboardService.php`, `custom/grocy_AI/tests/capture_dashboard.php`. Modify `custom/grocy_AI/src/GrocyAiCaptureController.php`, `custom/grocy_AI/src/GrocyAiApiController.php`, `custom/grocy_AI/routes.php`.
 
@@ -56,7 +56,7 @@ The30-day window is rolling, based on committed_at: start inclusive, end inclusi
 - [ ] Run the PHP dashboard tests, `php8.5 custom/grocy_AI/tests/run.php`, PHP lint and diff check. Update obsolete resume-default tests to the new approved dashboard behavior while retaining explicit trip-resume assertions.
 - [ ] Commit `feat: add personal purchase session dashboard data` and obtain independent task review before Task2.
 
-### Task2: Dashboard UI, explicit creation and safe navigation
+### Task 2: Dashboard UI, explicit creation and safe navigation
 
 **Files:** Create `views/grocyai_capture_dashboard.blade.php`, `public/custom/grocy_AI/capture-dashboard.js`, `custom/grocy_AI/tests/browser/fixtures/capture-dashboard.html`, `custom/grocy_AI/tests/browser/specs/capture-dashboard.spec.js`. Modify capture/review Blade views and scripts for Back to dashboard, `public/custom/grocy_AI/grocy-ai.css`, matching capture fixtures/specs, `custom/grocy_AI/tests/browser/support/server.mjs` only if new assets need registering, module version marker/exact assertions, README/CUSTOMIZATIONS. Add verification document `docs/superpowers/plans/2026-10-13-capture-dashboard-verification.md`.
 
