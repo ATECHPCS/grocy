@@ -287,7 +287,7 @@ async function expectNoForbiddenWrites(page)
 
 test.describe('purchase capture — scan loop', function ()
 {
-	test('@cap @mob main capture resumes the saved nonempty trip when the URL has no trip query', async function ({ page })
+	test('@cap @mob scanner fixture preserves a server-supplied explicit trip ID', async function ({ page })
 	{
 		const state = await installScanApi(page);
 		await page.goto('/fixtures/capture.html?saved=12');
@@ -1406,7 +1406,7 @@ for (const outcome of ['committed', 'partial', 'checksum_mismatch', 'receipt_rev
   await expect(page.locator('#grocyai-purchase-summary')).toContainText('Purchase committed');
   await expect(button).toHaveCount(0);
   await expect(page.getByRole('link', { name: 'View inventory' })).toHaveAttribute('href', '/stockoverview');
-  await expect(page.getByRole('link', { name: 'Start new trip', exact: true })).toHaveAttribute('href', '/grocyai/capture');
+  await expect(page.locator('#grocyai-purchase-summary').getByRole('link', { name: 'Back to dashboard', exact: true })).toHaveAttribute('href', '/grocyai/capture');
  } else {
   await expect(result).toContainText(outcome === 'partial' ? 'unresolved items remain' : outcome === 'checksum_mismatch' ? 'trip changed' : outcome === 'receipt_review_required' ? 'Receipt review is required' : 'Reload');
   await expect(page.locator('#grocyai-purchase-summary')).toBeVisible();
@@ -1690,4 +1690,279 @@ test('@flowsummary @fixwave already_committed response restores confirmed succes
  await expect(page.locator('#grocyai-capture-review-commit')).toHaveCount(0);
  await expect(page.getByRole('link', { name: 'View inventory' })).toBeVisible();
  expect(state.commits).toBe(1);
+});
+
+for(const dirty of ['research','receipt']) test('@dashboardnav cancelling dirty '+dirty+' leave retains draft without writes',async({page})=>{
+ const state=await unitReview(page,true);
+ await page.route('**/receipt-readiness',route=>json(route,{ready:true,reasons:[],receipts:[{receipt:{id:1,status:'finished',merchant:'Market'},lines:[{id:1,kind:'item',description:'Milk',decision:'include',quantity:1,line_total:2,paired_capture_line_id:31,allocations:[]}],totals:{entered_total:2,printed_total:2,difference:0},issues:[]}]}));
+ await page.locator('#grocyai-capture-review-trips button').first().click();
+ const field=dirty==='research'?page.getByLabel('Proposed name'):page.getByLabel('Line total',{exact:true});await field.fill(dirty==='research'?'Unsaved milk':'8');
+ let dialogs=0;page.on('dialog',dialog=>{dialogs++;dialog.dismiss();});await page.locator('#grocyai-capture-review-dashboard-link').click();expect(dialogs).toBe(1);await expect(field).toHaveValue(dirty==='research'?'Unsaved milk':'8');expect(state.writes).toEqual([]);
+ page.removeAllListeners('dialog');page.on('dialog',dialog=>dialog.accept());await page.locator('#grocyai-capture-review-dashboard-link').click();await expect(page).toHaveURL(/\/grocyai\/capture$/);expect(state.writes).toEqual([]);
+});
+test('@dashboardnav pending direct mutation blocks Back without confirmation',async({page})=>{await installReviewApi(page);let release;await page.route('**/trips/7/lines/1',async route=>{await new Promise(resolve=>release=resolve);return json(route,makeLine({id:101,status:'known',resolved_product_id:101}));});await page.goto('/fixtures/capture-review.html');await page.locator('#grocyai-capture-review-trips button').first().click();await expect(page.locator('#grocyai-review-summary-button')).toBeVisible();await page.locator('#grocyai-capture-review-selected-1').uncheck();await expect.poll(()=>typeof release).toBe('function');await page.locator('#grocyai-capture-review-dashboard-link').click();await expect(page).toHaveURL(/capture-review\.html$/);await expect(page.locator('#grocyai-dashboard-leave-status')).toContainText('Wait');release();});
+test('@dashboardnav pending commit blocks Back and completed return creates no trip',async({page})=>{const state=await installReviewApi(page);let release;await page.route('**/trips/7/commit',async route=>{state.commits++;await new Promise(resolve=>release=resolve);state.committed=true;return json(route,{outcome:'committed',transaction_id:'txn-1001',applied:1});});page.on('dialog',dialog=>dialog.accept());await openSummary(page);await page.locator('#grocyai-capture-review-commit').click();await expect.poll(()=>typeof release).toBe('function');await page.locator('#grocyai-capture-review-dashboard-link').click();await expect(page).toHaveURL(/capture-review\.html/);await expect(page.locator('#grocyai-dashboard-leave-status')).toContainText('Wait');release();await expect(page.getByText('Purchase committed',{exact:false}).first()).toBeVisible();await page.locator('#grocyai-capture-review-dashboard-link').click();await expect(page).toHaveURL(/\/grocyai\/capture$/);expect(state.commits).toBe(1);expect(await page.locator('script').evaluateAll(els=>els.map(el=>el.src))).not.toContain(expect.stringMatching(/\/capture\.js/));});
+test('@dashboardnav capture pending and ambiguous camera save block Back',async({page})=>{const state=await installScanApi(page,{holdScan:true});await page.goto('/fixtures/capture.html?trip=12');await expect(page.locator('#grocyai-capture-trip-summary')).toContainText('#12');await page.evaluate(()=>Grocy.BarcodeScanned('012345678905','grocyai-capture-barcode'));await page.locator('#grocyai-capture-camera-save-button').click();await expect.poll(()=>typeof state.releaseScan).toBe('function');await page.locator('#grocyai-capture-dashboard-link').click();await expect(page).toHaveURL(/capture\.html\?trip=12$/);state.releaseScan();await expect(page.locator('#grocyai-capture-status')).toContainText('could not be verified');await page.locator('#grocyai-capture-dashboard-link').click();await expect(page).toHaveURL(/capture\.html\?trip=12$/);expect(state.tripCreations).toBe(0);});
+
+async function dashboardLeaveBlocked(page) {
+ return page.locator('#grocyai-capture-review-dashboard-link').evaluate(el => {
+  var blocked;
+  el.addEventListener('click', event => { blocked = event.defaultPrevented; event.preventDefault(); }, { once: true });
+  el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+  return blocked;
+ });
+}
+
+for (const outcome of ['success', 'http', 'invalid']) test('@dashboardnav @reviewfix trip cancellation blocks Back until ' + outcome + ' settles', async ({ page }) => {
+ const state = await installReviewApi(page, { open: true });
+ let release, cancelled = false, calls = 0;
+ await page.route('**/capture/trips', route => json(route, { trips: cancelled ? [] : [makeTrip({ status: 'open' })] }));
+ await page.route('**/trips/7/cancel', async route => {
+  calls++; await new Promise(resolve => release = resolve);
+  if (outcome === 'http') return json(route, {}, 503);
+  if (outcome === 'invalid') return json(route, { canceled: true, trip_id: 8 });
+  cancelled = true; return json(route, { canceled: true, trip_id: 7 });
+ });
+ await page.goto('/fixtures/capture-review.html?trip=7');
+ await page.locator('#grocyai-capture-review-trips button').first().click();
+ await expect(page.locator('#grocyai-capture-review-delete-trip')).toBeVisible();
+ let dialogs = 0; page.on('dialog', dialog => { dialogs++; dialog.accept(); });
+ await page.locator('#grocyai-capture-review-delete-trip').click();
+ await expect.poll(() => typeof release).toBe('function');
+ await expect(page.locator('#grocyai-capture-review-delete-trip')).toBeDisabled();
+ await expect(page.locator('#grocyai-capture-review-commit')).toBeDisabled();
+ await page.locator('#grocyai-capture-review-dashboard-link').click();
+ await expect(page).toHaveURL(/capture-review\.html\?trip=7$/);
+ await expect(page.locator('#grocyai-dashboard-leave-status')).toContainText('Wait');
+ expect(dialogs).toBe(2); expect(calls).toBe(1);
+ release();
+ if (outcome === 'success') await expect(page.locator('#grocyai-capture-review-trips button')).toHaveCount(0);
+ else await expect(page.locator('#grocyai-capture-review-error')).toContainText('could not be deleted');
+ await page.locator('#grocyai-capture-review-dashboard-link').click();
+ await expect(page).toHaveURL(/\/grocyai\/capture$/);
+ expect(state.commits).toBe(0); expect(calls).toBe(1); expect(dialogs).toBe(2);
+});
+for (const outcome of ['success', 'http']) test('@dashboardnav @reviewfix pending cancellation retains other trip ownership after ' + outcome, async ({ page }) => {
+ await installReviewApi(page, { open: true });
+ let release;
+ await page.route('**/capture/trips', route => json(route, { trips: [makeTrip({ status: 'open' }), makeTrip({ id: 8, status: 'open' })] }));
+ await page.route('**/trips/8', route => json(route, { trip: makeTrip({ id: 8, status: 'open' }), lines: [], checksum: CHECKSUM }));
+ await page.route('**/trips/8/receipt-readiness', route => json(route, { ready: false, reasons: [], receipts: [] }));
+ await page.route('**/trips/7/cancel', async route => { await new Promise(resolve => release = resolve); return json(route, outcome === 'http' ? {} : { canceled: true, trip_id: 7 }, outcome === 'http' ? 503 : 200); });
+ await page.goto('/fixtures/capture-review.html?trip=7');
+ await page.locator('#grocyai-capture-review-trips button').first().click();
+ await expect(page.locator('#grocyai-capture-review-delete-trip')).toBeVisible();
+ page.on('dialog', dialog => dialog.accept());
+ await page.locator('#grocyai-capture-review-delete-trip').click();
+ await expect.poll(() => typeof release).toBe('function');
+ await page.locator('#grocyai-capture-review-trips button[data-trip-id="8"]').click();
+ await expect(page.locator('#grocyai-capture-review-trips button[data-trip-id="8"]')).toHaveClass(/active/);
+ await page.locator('#grocyai-capture-review-dashboard-link').click();
+ await expect(page).toHaveURL(/capture-review\.html/);
+ release();
+ await expect.poll(() => dashboardLeaveBlocked(page)).toBe(false);
+ await expect(page.locator('#grocyai-capture-review-trips button[data-trip-id="8"]')).toHaveClass(/active/);
+ await expect(page.locator('#grocyai-capture-review-error')).not.toContainText('could not be deleted');
+ await page.locator('#grocyai-capture-review-dashboard-link').click();
+ await expect(page).toHaveURL(/\/grocyai\/capture$/);
+});
+test('@dashboardnav @reviewfix cancellation cannot erase a requested trip while its read is pending', async ({ page }) => {
+ await installReviewApi(page, { open: true });
+ let cancelRelease, readRelease;
+ await page.route('**/capture/trips', route => json(route, { trips: [makeTrip({ status: 'open' }), makeTrip({ id: 8, status: 'open' })] }));
+ await page.route('**/trips/8', async route => { await new Promise(resolve => readRelease = resolve); return json(route, { trip: makeTrip({ id: 8, status: 'open' }), lines: [], checksum: CHECKSUM }); });
+ await page.route('**/trips/8/receipt-readiness', route => json(route, { ready: false, reasons: [], receipts: [] }));
+ await page.route('**/trips/7/cancel', async route => { await new Promise(resolve => cancelRelease = resolve); return json(route, { canceled: true, trip_id: 7 }); });
+ await page.goto('/fixtures/capture-review.html?trip=7');
+ await page.locator('#grocyai-capture-review-trips button').first().click();
+ await expect(page.locator('#grocyai-capture-review-delete-trip')).toBeVisible();
+ page.on('dialog', dialog => dialog.accept());
+ await page.locator('#grocyai-capture-review-delete-trip').click();
+ await expect.poll(() => typeof cancelRelease).toBe('function');
+ await page.locator('#grocyai-capture-review-trips button[data-trip-id="8"]').click();
+ await expect.poll(() => typeof readRelease).toBe('function');
+ cancelRelease();
+ await expect.poll(() => dashboardLeaveBlocked(page)).toBe(false);
+ readRelease();
+ await expect(page.locator('#grocyai-capture-review-trips button[data-trip-id="8"]')).toHaveClass(/active/);
+ await expect(page.locator('#grocyai-capture-review-detail')).not.toContainText('could not be deleted');
+ await page.locator('#grocyai-review-summary-button').click();
+ await expect(page.locator('#grocyai-purchase-summary')).toContainText('Trip #8');
+});
+const leavePhoto = { name: 'receipt.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64') };
+for (const failed of [false, true]) test('@dashboardnav @reviewfix actual photo upload has correct discard warning after failed=' + failed, async ({ page }) => {
+ await installReviewApi(page);
+ let reads = 0, writes = 0;
+ await page.route('**/trips/7/receipt-readiness', route => { reads++; return json(route, { ready: false, reasons: [], receipts: [] }); });
+ await page.route('**/trips/7/receipts', route => { writes++; return json(route, failed ? { error_message: 'Upload unavailable' } : { id: 1 }, failed ? 503 : 200); });
+ await page.goto('/fixtures/capture-review.html?trip=7');
+ await page.locator('#grocyai-capture-review-trips button').first().click();
+ await expect(page.getByLabel('Add receipt photos')).toHaveCount(1);
+ const initialReads = reads;
+ await page.getByLabel('Add receipt photos').setInputFiles(leavePhoto);
+ await expect.poll(() => reads).toBeGreaterThan(initialReads);
+ await expect(page.getByText(failed ? 'Photo 1: failed — Upload unavailable' : 'Photo 1: uploaded', { exact: true })).toHaveCount(1);
+ let dialogs = 0; page.on('dialog', dialog => { dialogs++; dialog.dismiss(); });
+ await page.locator('#grocyai-capture-review-dashboard-link').click();
+ if (failed) { await expect(page).toHaveURL(/capture-review\.html\?trip=7$/); expect(dialogs).toBe(1); }
+ else { await expect(page).toHaveURL(/\/grocyai\/capture$/); expect(dialogs).toBe(0); }
+ expect(writes).toBe(1);
+});
+
+test('@dashboardnav @reviewfix queued photo still warns after earlier upload settles', async ({ page }) => {
+ await installReviewApi(page);
+ let release, writes = 0;
+ await page.route('**/trips/7/receipts', async route => { writes++; await new Promise(resolve => release = resolve); return json(route, { id: 1 }); });
+ await page.goto('/fixtures/capture-review.html?trip=7');
+ await page.locator('#grocyai-capture-review-trips button').first().click();
+ await expect(page.getByLabel('Add receipt photos')).toHaveCount(1);
+ await page.getByLabel('Add receipt photos').setInputFiles(leavePhoto);
+ await expect.poll(() => typeof release).toBe('function');
+ await page.getByLabel('Add receipt photos').setInputFiles({ ...leavePhoto, name: 'queued.png' });
+ await page.locator('#grocyai-capture-review-dashboard-link').click();
+ await expect(page.locator('#grocyai-dashboard-leave-status')).toContainText('Wait');
+ release();
+ await expect(page.getByText('Photo 1: uploaded', { exact: true })).toHaveCount(1);
+ await expect(page.getByText('Photo 2: pending', { exact: true })).toHaveCount(1);
+ let dialogs = 0; page.on('dialog', dialog => { dialogs++; dialog.dismiss(); });
+ await page.locator('#grocyai-capture-review-dashboard-link').click();
+ await expect(page).toHaveURL(/capture-review\.html\?trip=7$/);
+ expect(dialogs).toBe(1); expect(writes).toBe(1);
+});
+
+for (const outcome of ['lost', 'http', 'malformed']) test('@dashboardnav @commitnav unconfirmed ' + outcome + ' commit requires authoritative recheck before Back', async ({ page }) => {
+ const state = await installReviewApi(page);
+ let failRead = false;
+ await page.route('**/trips/7', route => failRead ? route.abort('failed') : json(route, { trip: makeTrip({ status: state.committed ? 'committed' : 'reviewing', transaction_id: state.committed ? 'txn-recovered' : null }), lines: state.lines, checksum: CHECKSUM }));
+ await page.route('**/trips/7/commit', route => {
+  state.commits++; state.committed = true;
+  if (outcome === 'lost') return route.abort('timedout');
+  return json(route, {}, outcome === 'http' ? 503 : 200);
+ });
+ page.on('dialog', dialog => dialog.accept());
+ await openSummary(page);
+ await page.locator('#grocyai-capture-review-commit').click();
+ await expect(page.locator('#grocyai-capture-review-commit-result')).toContainText('could not be confirmed');
+ await page.locator('#grocyai-capture-review-dashboard-link').click();
+ await expect(page).toHaveURL(/capture-review\.html$/);
+ await expect(page.locator('#grocyai-dashboard-leave-status')).toContainText('recheck');
+ failRead = true;
+ await page.getByRole('button', { name: 'Reload and recheck purchase' }).click();
+ await expect(page.locator('#grocyai-capture-review-detail')).toHaveJSProperty('inert', false);
+ await page.locator('#grocyai-capture-review-dashboard-link').click();
+ await expect(page).toHaveURL(/capture-review\.html$/);
+ failRead = false;
+ await page.getByRole('button', { name: 'Reload and recheck purchase' }).click();
+ await expect(page.locator('#grocyai-purchase-summary')).toContainText('Purchase committed');
+ await expect.poll(() => dashboardLeaveBlocked(page)).toBe(false);
+ await page.locator('#grocyai-capture-review-dashboard-link').click();
+ await expect(page).toHaveURL(/\/grocyai\/capture$/);
+ expect(state.commits).toBe(1);
+});
+test('@dashboardnav @commitnav failed readiness reconciliation cannot clear ambiguous commit', async ({ page }) => {
+ const state = await installReviewApi(page);
+ let failReadiness = false;
+ await page.route('**/trips/7/receipt-readiness', route => failReadiness ? route.abort('failed') : json(route, { ready: true, reasons: [], receipts: [] }));
+ await page.route('**/trips/7/commit', route => { state.commits++; return json(route, {}); });
+ page.on('dialog', dialog => dialog.accept());
+ await openSummary(page);
+ await page.locator('#grocyai-capture-review-commit').click();
+ await expect(page.locator('#grocyai-capture-review-commit-result')).toContainText('could not be confirmed');
+ failReadiness = true;
+ await page.getByRole('button', { name: 'Reload and recheck purchase' }).click();
+ await expect(page.locator('#grocyai-receipt-readiness')).toContainText('Could not check');
+ await page.locator('#grocyai-capture-review-dashboard-link').click();
+ await expect(page).toHaveURL(/capture-review\.html$/);
+ failReadiness = false;
+ await page.getByRole('button', { name: 'Reload and recheck purchase' }).click();
+ await expect.poll(() => dashboardLeaveBlocked(page)).toBe(false);
+ await page.locator('#grocyai-capture-review-dashboard-link').click();
+ await expect(page).toHaveURL(/\/grocyai\/capture$/);
+ expect(state.commits).toBe(1);
+});
+for (const earlySwitch of [false, true]) test('@dashboardnav @commitnav another trip cannot bypass unresolved commit earlySwitch=' + earlySwitch, async ({ page }) => {
+ const state = await installReviewApi(page);
+ let release;
+ await page.route('**/capture/trips', route => json(route, { trips: [makeTrip(), makeTrip({ id: 8 })] }));
+ await page.route('**/trips/8', route => json(route, { trip: makeTrip({ id: 8, status: 'reviewing' }), lines: [], checksum: CHECKSUM }));
+ await page.route('**/trips/8/receipt-readiness', route => json(route, { ready: true, reasons: [], receipts: [] }));
+ await page.route('**/trips/7/commit', async route => { state.commits++; await new Promise(resolve => release = resolve); return json(route, {}); });
+ page.on('dialog', dialog => dialog.accept());
+ await openSummary(page);
+ await page.locator('#grocyai-capture-review-commit').click();
+ await expect.poll(() => typeof release).toBe('function');
+ if (earlySwitch) await page.locator('#grocyai-capture-review-trips button[data-trip-id="8"]').click();
+ release();
+ if (earlySwitch) await page.locator('#grocyai-capture-review-trips button[data-trip-id="7"]').click();
+ await expect(page.locator('#grocyai-capture-review-commit-result')).toContainText('could not be confirmed');
+ await page.locator('#grocyai-capture-review-trips button[data-trip-id="8"]').click();
+ await expect(page.locator('#grocyai-capture-review-trips button[data-trip-id="8"]')).toHaveClass(/active/);
+ await page.locator('#grocyai-capture-review-dashboard-link').click();
+ await expect(page).toHaveURL(/capture-review\.html$/);
+ await page.locator('#grocyai-capture-review-trips button[data-trip-id="7"]').click();
+ await page.locator('#grocyai-review-summary-button').click();
+ await expect(page.getByRole('button', { name: 'Reload and recheck purchase' })).toBeVisible();
+ await expect(await dashboardLeaveBlocked(page)).toBe(true);
+ await page.getByRole('button', { name: 'Reload and recheck purchase' }).click();
+ await expect.poll(() => dashboardLeaveBlocked(page)).toBe(false);
+ await page.locator('#grocyai-capture-review-dashboard-link').click();
+ await expect(page).toHaveURL(/\/grocyai\/capture$/);
+ expect(state.commits).toBe(1);
+});
+for (const outcome of ['committed', 'already_committed']) test('@dashboardnav @commitnav confirmed ' + outcome + ' with failed follow-up read permits Back', async ({ page }) => {
+ const state = await installReviewApi(page);
+ await page.route('**/trips/7', route => state.committed ? route.abort('failed') : json(route, { trip: makeTrip({ status: 'reviewing' }), lines: state.lines, checksum: CHECKSUM }));
+ await page.route('**/trips/7/commit', route => { state.commits++; state.committed = true; return json(route, { outcome, transaction_id: 'txn-confirmed', applied: 1 }, outcome === 'already_committed' ? 409 : 200); });
+ page.on('dialog', dialog => dialog.accept());
+ await openSummary(page);
+ await page.locator('#grocyai-capture-review-commit').click();
+ await expect(page.locator('#grocyai-purchase-summary')).toContainText('Purchase committed');
+ await expect(page.getByRole('button', { name: 'Reload and recheck purchase' })).toBeVisible();
+ await page.locator('#grocyai-capture-review-dashboard-link').click();
+ await expect(page).toHaveURL(/\/grocyai\/capture$/);
+ expect(state.commits).toBe(1);
+});
+
+for (const outcome of ['commit_failed', 'checksum_mismatch']) test('@cancelrecovery validated cancellation clears ' + outcome + ' recovery before Back', async ({ page }) => {
+ const state = await installReviewApi(page);
+ let cancelled = false, cancellations = 0;
+ await page.route('**/capture/trips', route => json(route, { trips: cancelled ? [] : [makeTrip({ status: 'reviewing' })] }));
+ await page.route('**/trips/7/commit', route => { state.commits++; return json(route, { outcome, applied: 0, transaction_id: null }, outcome === 'checksum_mismatch' ? 409 : 200); });
+ await page.route('**/trips/7/cancel', route => { cancellations++; cancelled = true; return json(route, { canceled: true, trip_id: 7 }); });
+ page.on('dialog', dialog => dialog.accept());
+ await openSummary(page);
+ await page.locator('#grocyai-capture-review-commit').click();
+ await expect(page.getByRole('button', { name: 'Reload and recheck purchase' })).toBeVisible();
+ await expect(await dashboardLeaveBlocked(page)).toBe(true);
+ await page.locator('#grocyai-purchase-summary-back').click();
+ await page.locator('#grocyai-capture-review-delete-trip').click();
+ await expect(page.locator('#grocyai-capture-review-trips button')).toHaveCount(0);
+ await page.locator('#grocyai-capture-review-dashboard-link').click();
+ await expect(page).toHaveURL(/\/grocyai\/capture$/);
+ expect(state.commits).toBe(1); expect(cancellations).toBe(1);
+});
+test('@cancelrecovery validated cancellation clears original commit recovery across trip switch', async ({ page }) => {
+ const state = await installReviewApi(page);
+ let release, cancellations = 0;
+ await page.route('**/capture/trips', route => json(route, { trips: [makeTrip({ status: 'reviewing' }), makeTrip({ id: 8 })] }));
+ await page.route('**/trips/8', route => json(route, { trip: makeTrip({ id: 8 }), lines: [], checksum: CHECKSUM }));
+ await page.route('**/trips/8/receipt-readiness', route => json(route, { ready: false, reasons: [], receipts: [] }));
+ await page.route('**/trips/7/commit', route => { state.commits++; return json(route, { outcome: 'commit_failed', applied: 0, transaction_id: null }); });
+ await page.route('**/trips/7/cancel', async route => { cancellations++; await new Promise(resolve => release = resolve); return json(route, { canceled: true, trip_id: 7 }); });
+ page.on('dialog', dialog => dialog.accept());
+ await openSummary(page);
+ await page.locator('#grocyai-capture-review-commit').click();
+ await expect(page.getByRole('button', { name: 'Reload and recheck purchase' })).toBeVisible();
+ await page.locator('#grocyai-purchase-summary-back').click();
+ await page.locator('#grocyai-capture-review-delete-trip').click();
+ await expect.poll(() => typeof release).toBe('function');
+ await page.locator('#grocyai-capture-review-trips button[data-trip-id="8"]').click();
+ await expect(page.locator('#grocyai-capture-review-trips button[data-trip-id="8"]')).toHaveClass(/active/);
+ await expect(await dashboardLeaveBlocked(page)).toBe(true);
+ release();
+ await expect.poll(() => dashboardLeaveBlocked(page)).toBe(false);
+ await expect(page.locator('#grocyai-capture-review-trips button[data-trip-id="8"]')).toHaveClass(/active/);
+ await page.locator('#grocyai-capture-review-dashboard-link').click();
+ await expect(page).toHaveURL(/\/grocyai\/capture$/);
+ expect(state.commits).toBe(1); expect(cancellations).toBe(1);
 });

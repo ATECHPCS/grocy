@@ -30,6 +30,7 @@ require_once __DIR__ . '/src/GrocyAiCaptureResearchMigration.php';
 require_once __DIR__ . '/src/GrocyAiCaptureResearchService.php';
 require_once __DIR__ . '/src/GrocyAiCaptureProductService.php';
 require_once __DIR__ . '/src/GrocyAiCaptureService.php';
+require_once __DIR__ . '/src/GrocyAiCaptureDashboardService.php';
 require_once __DIR__ . '/src/GrocyAiApiController.php';
 require_once __DIR__ . '/src/GrocyAiConversionController.php';
 require_once __DIR__ . '/src/GrocyAiBulkController.php';
@@ -57,6 +58,7 @@ $app->group('/api/grocy-ai', function (RouteCollectorProxy $group)
 	$group->post('/bulk/plans/{planId}/rollback', [GrocyAiApiController::class, 'BulkPlanRollback']);
 	$group->get('/bulk/plans/{planId}/export', [GrocyAiApiController::class, 'ExportBulkPlan']);
 	$group->get('/bulk/conversion-audit', [GrocyAiApiController::class, 'BulkConversionAudit']);
+	$group->get('/capture/dashboard', [GrocyAiApiController::class, 'DashboardCapture']);
 	$group->get('/capture/trips', [GrocyAiApiController::class, 'ListCaptureTrips']);
 	$group->post('/capture/trips', [GrocyAiApiController::class, 'StartCaptureTrip']);
 	$group->post('/capture/trips/{tripId}/scan', [GrocyAiApiController::class, 'ScanCaptureTrip']);

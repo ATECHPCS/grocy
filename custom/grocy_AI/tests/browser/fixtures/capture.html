@@ -32,7 +32,7 @@
 		.mb-2 { margin-bottom: 8px; }
 		.status-unknown, .status-conflict { color: #856404; }
 	</style>
-	<link rel="stylesheet" href="/assets/grocy-ai.css?v=2.6.21">
+	<link rel="stylesheet" href="/assets/grocy-ai.css?v=2.6.22">
 </head>
 <body>
 	<main>
@@ -69,7 +69,8 @@
 			data-label-deleted="Trip deleted. Start a new trip to scan more items."
 			data-label-quantity="Quantity">
 			<div class="col">
-				<section class="grocy-ai-flow-card">
+				<div class="grocy-ai-flow-actions"><a class="btn btn-outline-primary" id="grocyai-capture-dashboard-link" href="/grocyai/capture">Back to dashboard</a></div><p id="grocyai-dashboard-leave-status" role="status" aria-live="polite"></p>
+<section class="grocy-ai-flow-card">
 					<h3>Current trip</h3>
 					<div id="grocyai-capture-trip-summary" role="status" aria-live="polite"></div>
 					<a class="btn btn-outline-primary" id="grocyai-capture-header-review-link" href="/grocyai/capture/review">Review trip</a>
@@ -144,7 +145,7 @@
 			document.getElementById('grocyai-capture').setAttribute('data-default-trip-id', '12');
 		}
 	</script>
-	<script src="/assets/capture.js?v=2.6.21">
+	<script src="/assets/capture.js?v=2.6.22">
 			</script>
 </body>
 </html>

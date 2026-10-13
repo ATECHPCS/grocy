@@ -169,6 +169,7 @@
 		var receiptNotice = '';
 		var receiptStates = {};
 		var receiptPendingByTrip = {};
+		var cancellationPendingByTrip = {};
 		var directPendingByTrip = {};
 		var directRefreshRequiredByTrip = {};
 		var directMutationVersions = {};
@@ -192,6 +193,23 @@
 		var quantityUnits = [];
 		var locations = [];
 		var shoppingLocations = [];
+
+		function leavingUnsettled() {
+			return commitInFlight || Object.keys(commitStates).some(function (tripId) { var state = commitStates[tripId]; return state.needsRecheck && state.outcome !== 'committed'; }) || [directPendingByTrip, receiptPendingByTrip, researchBusyByTrip, cancellationPendingByTrip].some(function (map) { return Object.keys(map).some(function (key) { return map[key] > 0; }); }) || Object.keys(directRefreshRequiredByTrip).some(function (key) { return directRefreshRequiredByTrip[key]; });
+		}
+		function leavingDirty() {
+			return Object.keys(researchStates).some(function (trip) { return Object.keys(researchStates[trip] || {}).some(function (line) { return Object.keys(researchStates[trip][line] || {}).length > 0; }); }) || Object.keys(receiptStates).some(function (trip) { return Object.keys(receiptStates[trip].drafts || {}).length > 0 || (receiptStates[trip].uploads || []).some(function (job) { return job.status !== 'uploaded'; }); }) || receiptComponent && receiptComponent.hasUnsavedEdits();
+		}
+		var dashboardLink = document.getElementById('grocyai-capture-review-dashboard-link');
+		if (dashboardLink) dashboardLink.addEventListener('click', function (event) {
+			if (leavingUnsettled()) {
+				event.preventDefault();
+				var leaveStatus = document.getElementById('grocyai-dashboard-leave-status');
+				if (leaveStatus) leaveStatus.textContent = root.getAttribute('data-label-leave-pending') || 'Wait for pending changes or purchase commit to finish. Reload and recheck any unconfirmed change before leaving.';
+				return;
+			}
+			if (leavingDirty() && !window.confirm(root.getAttribute('data-label-leave-confirm') || 'Discard unsaved research and receipt edits and return to dashboard?')) event.preventDefault();
+		});
 
 		function fetchJson(url, requestOptions)
 		{
@@ -488,16 +506,19 @@
 
 		function cancelTrip()
 		{
-			if (currentTripId === null || receiptBusy) return;
+			if (currentTripId === null || receiptBusy || commitInFlight || cancellationPendingByTrip[currentTripId] > 0) return;
 			var tripId = currentTripId;
 			if (!window.confirm('Delete trip #' + tripId + ' from the active list? Receipt and scan history will be kept for audit.')) return;
 			if (!window.confirm('Final confirmation: delete trip #' + tripId + '? This cannot be undone from this screen.')) return;
 			var button = document.getElementById('grocyai-capture-review-delete-trip');
 			if (button) button.disabled = true;
+			cancellationPendingByTrip[tripId] = (cancellationPendingByTrip[tripId] || 0) + 1;
+			updateReviewState();
 			return fetchJson(tripUrl(tripId) + '/cancel', { method: 'POST', body: '{}' }).then(function (result)
 			{
 				if (!result || result.canceled !== true || Number(result.trip_id) !== Number(tripId)) throw new Error('invalid_cancel_response');
-				if (currentTripId !== tripId) return;
+				delete commitStates[tripId];
+				if (currentTripId !== tripId || requestedTripId !== tripId) return;
 				++loadRevision;
 				currentTripId = null;
 				currentTrip = null;
@@ -513,8 +534,17 @@
 				return loadTripList();
 			}).catch(function ()
 			{
-				if (button) button.disabled = false;
+				if (currentTripId !== tripId || requestedTripId !== tripId) return;
 				flashError('The trip could not be deleted. Reload it and try again.');
+			}).finally(function ()
+			{
+				cancellationPendingByTrip[tripId]--;
+				if (currentTripId === tripId && requestedTripId === tripId)
+				{
+					var currentButton = document.getElementById('grocyai-capture-review-delete-trip');
+					if (currentButton) currentButton.disabled = false;
+				}
+				updateReviewState();
 			});
 		}
 
@@ -725,6 +755,7 @@
 			{
 				var deleteTripButton = element('button', 'btn btn-outline-danger grocy-ai-capture-delete-trip', copy.deleteTrip);
 				deleteTripButton.id = 'grocyai-capture-review-delete-trip';
+				deleteTripButton.disabled = cancellationPendingByTrip[currentTripId] > 0;
 				deleteTripButton.type = 'button';
 				deleteTripButton.addEventListener('click', cancelTrip);
 				statusRow.appendChild(deleteTripButton);
@@ -976,7 +1007,7 @@
 				var transaction = state.transactionId || currentTrip.transaction_id;
 				if (transaction) commitSection.appendChild(element('p', null, copy.committed.replace('%s', String(transaction))));
 				var inventory = element('a', 'btn btn-primary', 'View inventory'); inventory.href = root.getAttribute('data-inventory-url') || '/stockoverview'; commitSection.appendChild(inventory);
-				var start = element('a', 'btn btn-outline-primary', 'Start new trip'); start.href = captureUrl; commitSection.appendChild(start);
+				var start = element('a', 'btn btn-outline-primary', root.getAttribute('data-label-dashboard') || 'Back to dashboard'); start.href = captureUrl; start.addEventListener('click', function (event) { event.preventDefault(); if (dashboardLink) dashboardLink.click(); }); commitSection.appendChild(start);
 			}
 			else
 			{
@@ -1026,7 +1057,7 @@
 		function canCommit()
 		{
 			var state = commitStates[currentTripId] || {};
-			return !loadingTrip && !(directPendingByTrip[currentTripId] > 0) && !directRefreshRequiredByTrip[currentTripId] && !(receiptPendingByTrip[currentTripId] > 0) && !(researchBusyByTrip[currentTripId] > 0) && !commitInFlight && !state.needsRecheck && state.outcome !== 'committed' && currentTrip && currentTrip.status !== 'committed' && !hasResearchEdits() && !(receiptComponent && receiptComponent.hasUnsavedEdits()) && !receiptBusy && receiptReadiness && receiptReadiness.ready === true && currentTripId !== null && typeof currentChecksum === 'string' && currentChecksum.length > 0;
+			return !loadingTrip && !(cancellationPendingByTrip[currentTripId] > 0) && !(directPendingByTrip[currentTripId] > 0) && !directRefreshRequiredByTrip[currentTripId] && !(receiptPendingByTrip[currentTripId] > 0) && !(researchBusyByTrip[currentTripId] > 0) && !commitInFlight && !state.needsRecheck && state.outcome !== 'committed' && currentTrip && currentTrip.status !== 'committed' && !hasResearchEdits() && !(receiptComponent && receiptComponent.hasUnsavedEdits()) && !receiptBusy && receiptReadiness && receiptReadiness.ready === true && currentTripId !== null && typeof currentChecksum === 'string' && currentChecksum.length > 0;
 		}
 
 		function focusCommitResult()
