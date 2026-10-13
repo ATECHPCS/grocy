@@ -1,7 +1,7 @@
 @extends('layout.default')
 
 @php
-$grocyAiAssetVersion = '2.6.21';
+$grocyAiAssetVersion = '2.6.22';
 @endphp
 @push('pageStyles')
 <link rel="stylesheet"
@@ -41,6 +41,9 @@ $grocyAiAssetVersion = '2.6.21';
 	data-inventory-url="{{ $U('/stockoverview', true) }}"
 	data-capture-url="{{ $U('/grocyai/capture', true) }}"
 	data-trip-id="{{ $tripId !== null ? $tripId : '' }}"
+	data-label-dashboard="{{ $__t('Back to dashboard') }}"
+	data-label-leave-confirm="{{ $__t('Discard unsaved research and receipt edits and return to dashboard?') }}"
+	data-label-leave-pending="{{ $__t('Wait for pending changes or purchase commit to finish. Reload and recheck any unconfirmed change before leaving.') }}"
 	data-label-known="{{ $__t('Known') }}"
 	data-label-unknown="{{ $__t('Unknown — needs product') }}"
 	data-label-product-fallback="{{ $__t('Product #%s', '%s') }}"
@@ -70,6 +73,7 @@ $grocyAiAssetVersion = '2.6.21';
 	data-label-commit-mismatch="{{ $__t('The trip changed since it was loaded. Reload and commit again.') }}"
 	data-label-commit-confirm="{{ $__t('Commit the selected known items to stock as one purchase?') }}">
 
+	<div class="col-12"><div class="grocy-ai-flow-actions"><a class="btn btn-outline-primary" id="grocyai-capture-review-dashboard-link" href="{{ $U('/grocyai/capture', true) }}">{{ $__t('Back to dashboard') }}</a></div><p id="grocyai-dashboard-leave-status" role="status" aria-live="polite"></p></div>
 	<div class="col-12 col-md-4">
 		<h3>{{ $__t('Trips') }}</h3>
 		<div class="list-group grocy-ai-capture-review-trips"

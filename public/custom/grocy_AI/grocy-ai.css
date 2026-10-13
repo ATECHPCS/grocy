@@ -1084,3 +1084,18 @@ details.grocy-ai-diagnostics:not([open]) > .grocy-ai-diagnostic-body {
 .grocy-ai-purchase-flow .grocy-ai-purchase-summary h3:focus { outline: 3px solid var(--grocy-ai-flow-primary); outline-offset: 3px; }
 
 .grocy-ai-purchase-flow .btn:disabled { opacity: .65; cursor: not-allowed; }
+
+/* Personal session dashboard shares the capture and review theme tokens. */
+#grocyai-capture-dashboard { min-width: 0; color: var(--grocy-ai-flow-text); }
+#grocyai-capture-dashboard .grocy-ai-dashboard-stats { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px; margin: 16px 0; }
+#grocyai-capture-dashboard .grocy-ai-dashboard-stats .grocy-ai-flow-card { margin: 0; }
+#grocyai-capture-dashboard .grocy-ai-dashboard-stats h3 { font-size: 1rem; font-weight: 500; }
+#grocyai-capture-dashboard .grocy-ai-dashboard-stat-value { font-size: 1.5rem; font-weight: 700; margin-bottom: 0; }
+#grocyai-capture-dashboard .grocy-ai-dashboard-list { list-style: none; padding: 0; }
+#grocyai-capture-dashboard .grocy-ai-dashboard-session { padding: 16px 0; }
+#grocyai-capture-dashboard .grocy-ai-dashboard-session + li { border-top: 1px solid var(--grocy-ai-flow-border); }
+#grocyai-capture-dashboard :is(h2,h3,h4,p,li) { overflow-wrap: anywhere; }
+#grocyai-capture-dashboard :is(button,.btn) { min-height: 44px; max-width: 100%; white-space: normal; }
+#grocyai-capture-dashboard .grocy-ai-dashboard-session h4 { font-size: 1.15rem; }
+@media(min-width: 992px) { #grocyai-capture-dashboard .grocy-ai-dashboard-stats { grid-template-columns:repeat(4,minmax(0,1fr)); } }
+@media(max-width: 359px) { #grocyai-capture-dashboard .grocy-ai-dashboard-stats { grid-template-columns:minmax(0,1fr); } }

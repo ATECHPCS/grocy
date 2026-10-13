@@ -200,6 +200,16 @@
 		var cameraSubmitting = false;
 		var cameraLocked = false;
 
+		var dashboardLink = document.getElementById('grocyai-capture-dashboard-link');
+		if (dashboardLink) dashboardLink.addEventListener('click', function (event) {
+			if (pendingScans > 0 || finishing || cameraSubmitting || cameraLocked) {
+				event.preventDefault();
+				setStatus(cameraLocked ? copy.cameraUnverified : copy.finishPending);
+				return;
+			}
+			if ((pendingCameraReads.length > 0 || input && input.value.trim()) && !window.confirm(root.getAttribute('data-label-leave-confirm') || 'Discard unsaved capture input and return to dashboard?')) event.preventDefault();
+		});
+
 		function setReviewUrl(url)
 		{
 			if (reviewLink) reviewLink.setAttribute('href', url);

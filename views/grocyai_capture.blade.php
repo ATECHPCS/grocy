@@ -1,7 +1,7 @@
 @extends('layout.default')
 
 @php
-$grocyAiAssetVersion = '2.6.21';
+$grocyAiAssetVersion = '2.6.22';
 @endphp
 @push('pageStyles')
 <link rel="stylesheet"
@@ -70,8 +70,10 @@ $grocyAiAssetVersion = '2.6.21';
 	data-label-delete-second="{{ $__t('Final confirmation: delete this trip? This cannot be undone from this screen.') }}"
 	data-label-delete-error="{{ $__t('The trip could not be deleted. Reload it and try again.') }}"
 	data-label-deleted="{{ $__t('Trip deleted. Start a new trip to scan more items.') }}"
+	data-label-leave-confirm="{{ $__t('Discard unsaved capture input and return to dashboard?') }}"
 	data-label-quantity="{{ $__t('Quantity') }}">
 	<div class="col">
+		<div class="grocy-ai-flow-actions"><a class="btn btn-outline-primary" id="grocyai-capture-dashboard-link" href="{{ $U('/grocyai/capture', true) }}">{{ $__t('Back to dashboard') }}</a></div><p id="grocyai-dashboard-leave-status" role="status" aria-live="polite"></p>
 		<section class="grocy-ai-flow-card">
 			<h3>{{ $__t('Current trip') }}</h3>
 			<div id="grocyai-capture-trip-summary" role="status" aria-live="polite"></div>

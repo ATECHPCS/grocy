@@ -193,6 +193,23 @@
 		var locations = [];
 		var shoppingLocations = [];
 
+		function leavingUnsettled() {
+			return commitInFlight || [directPendingByTrip, receiptPendingByTrip, researchBusyByTrip].some(function (map) { return Object.keys(map).some(function (key) { return map[key] > 0; }); }) || Object.keys(directRefreshRequiredByTrip).some(function (key) { return directRefreshRequiredByTrip[key]; });
+		}
+		function leavingDirty() {
+			return Object.keys(researchStates).some(function (trip) { return Object.keys(researchStates[trip] || {}).some(function (line) { return Object.keys(researchStates[trip][line] || {}).length > 0; }); }) || Object.keys(receiptStates).some(function (trip) { return Object.keys(receiptStates[trip].drafts || {}).length > 0 || (receiptStates[trip].uploads || []).length > 0; }) || receiptComponent && receiptComponent.hasUnsavedEdits();
+		}
+		var dashboardLink = document.getElementById('grocyai-capture-review-dashboard-link');
+		if (dashboardLink) dashboardLink.addEventListener('click', function (event) {
+			if (leavingUnsettled()) {
+				event.preventDefault();
+				var leaveStatus = document.getElementById('grocyai-dashboard-leave-status');
+				if (leaveStatus) leaveStatus.textContent = root.getAttribute('data-label-leave-pending') || 'Wait for pending changes or purchase commit to finish. Reload and recheck any unconfirmed change before leaving.';
+				return;
+			}
+			if (leavingDirty() && !window.confirm(root.getAttribute('data-label-leave-confirm') || 'Discard unsaved research and receipt edits and return to dashboard?')) event.preventDefault();
+		});
+
 		function fetchJson(url, requestOptions)
 		{
 			return fetch(url, Object.assign({
@@ -976,7 +993,7 @@
 				var transaction = state.transactionId || currentTrip.transaction_id;
 				if (transaction) commitSection.appendChild(element('p', null, copy.committed.replace('%s', String(transaction))));
 				var inventory = element('a', 'btn btn-primary', 'View inventory'); inventory.href = root.getAttribute('data-inventory-url') || '/stockoverview'; commitSection.appendChild(inventory);
-				var start = element('a', 'btn btn-outline-primary', 'Start new trip'); start.href = captureUrl; commitSection.appendChild(start);
+				var start = element('a', 'btn btn-outline-primary', root.getAttribute('data-label-dashboard') || 'Back to dashboard'); start.href = captureUrl; start.addEventListener('click', function (event) { event.preventDefault(); if (dashboardLink) dashboardLink.click(); }); commitSection.appendChild(start);
 			}
 			else
 			{

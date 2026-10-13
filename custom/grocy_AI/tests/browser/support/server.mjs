@@ -124,6 +124,8 @@ const mediaCapabilities = new Map([
 ]);
 
 const allowlistedFiles = new Map([
+ ['/fixtures/capture-dashboard.html', {path: resolve(browserRoot, 'fixtures/capture-dashboard.html'), contentType:'text/html; charset=utf-8'}],
+ ['/assets/capture-dashboard.js', {path: resolve(repositoryRoot, 'public/custom/grocy_AI/capture-dashboard.js'), contentType:'text/javascript; charset=utf-8'}],
 	['/fixtures/productform.html', {
 		path: resolve(browserRoot, 'fixtures/productform.html'),
 		contentType: 'text/html; charset=utf-8'
@@ -400,7 +402,7 @@ const server = createServer(async function (request, response)
 		return;
 	}
 
-	const allowed = allowlistedFiles.get(pathname);
+	const allowed = allowlistedFiles.get(pathname === '/grocyai/capture' ? (new URL(rawUrl, `http://${host}:${port}`).searchParams.has('trip') ? '/fixtures/capture.html' : '/fixtures/capture-dashboard.html') : pathname === '/grocyai/capture/review' ? '/fixtures/capture-review.html' : pathname);
 	if (!allowed)
 	{
 		// Default-deny counter for unclassified conversion, activation, projection, and cache surfaces.
@@ -413,7 +415,7 @@ const server = createServer(async function (request, response)
 		return;
 	}
 
-	const allowedRoot = allowed.root || (pathname.startsWith('/fixtures/')
+	const allowedRoot = allowed.root || ((pathname.startsWith('/fixtures/') || pathname.startsWith('/grocyai/'))
 		? resolve(browserRoot, 'fixtures')
 		: resolve(repositoryRoot, 'public/custom/grocy_AI'));
 	if (!isInsideRoot(allowed.path, allowedRoot))

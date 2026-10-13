@@ -287,7 +287,7 @@ async function expectNoForbiddenWrites(page)
 
 test.describe('purchase capture — scan loop', function ()
 {
-	test('@cap @mob main capture resumes the saved nonempty trip when the URL has no trip query', async function ({ page })
+	test('@cap @mob scanner fixture preserves a server-supplied explicit trip ID', async function ({ page })
 	{
 		const state = await installScanApi(page);
 		await page.goto('/fixtures/capture.html?saved=12');
@@ -1406,7 +1406,7 @@ for (const outcome of ['committed', 'partial', 'checksum_mismatch', 'receipt_rev
   await expect(page.locator('#grocyai-purchase-summary')).toContainText('Purchase committed');
   await expect(button).toHaveCount(0);
   await expect(page.getByRole('link', { name: 'View inventory' })).toHaveAttribute('href', '/stockoverview');
-  await expect(page.getByRole('link', { name: 'Start new trip', exact: true })).toHaveAttribute('href', '/grocyai/capture');
+  await expect(page.locator('#grocyai-purchase-summary').getByRole('link', { name: 'Back to dashboard', exact: true })).toHaveAttribute('href', '/grocyai/capture');
  } else {
   await expect(result).toContainText(outcome === 'partial' ? 'unresolved items remain' : outcome === 'checksum_mismatch' ? 'trip changed' : outcome === 'receipt_review_required' ? 'Receipt review is required' : 'Reload');
   await expect(page.locator('#grocyai-purchase-summary')).toBeVisible();
@@ -1691,3 +1691,15 @@ test('@flowsummary @fixwave already_committed response restores confirmed succes
  await expect(page.getByRole('link', { name: 'View inventory' })).toBeVisible();
  expect(state.commits).toBe(1);
 });
+
+for(const dirty of ['research','receipt']) test('@dashboardnav cancelling dirty '+dirty+' leave retains draft without writes',async({page})=>{
+ const state=await unitReview(page,true);
+ await page.route('**/receipt-readiness',route=>json(route,{ready:true,reasons:[],receipts:[{receipt:{id:1,status:'finished',merchant:'Market'},lines:[{id:1,kind:'item',description:'Milk',decision:'include',quantity:1,line_total:2,paired_capture_line_id:31,allocations:[]}],totals:{entered_total:2,printed_total:2,difference:0},issues:[]}]}));
+ await page.locator('#grocyai-capture-review-trips button').first().click();
+ const field=dirty==='research'?page.getByLabel('Proposed name'):page.getByLabel('Line total',{exact:true});await field.fill(dirty==='research'?'Unsaved milk':'8');
+ let dialogs=0;page.on('dialog',dialog=>{dialogs++;dialog.dismiss();});await page.locator('#grocyai-capture-review-dashboard-link').click();expect(dialogs).toBe(1);await expect(field).toHaveValue(dirty==='research'?'Unsaved milk':'8');expect(state.writes).toEqual([]);
+ page.removeAllListeners('dialog');page.on('dialog',dialog=>dialog.accept());await page.locator('#grocyai-capture-review-dashboard-link').click();await expect(page).toHaveURL(/\/grocyai\/capture$/);expect(state.writes).toEqual([]);
+});
+test('@dashboardnav pending direct mutation blocks Back without confirmation',async({page})=>{await installReviewApi(page);let release;await page.route('**/trips/7/lines/1',async route=>{await new Promise(resolve=>release=resolve);return json(route,makeLine({id:101,status:'known',resolved_product_id:101}));});await page.goto('/fixtures/capture-review.html');await page.locator('#grocyai-capture-review-trips button').first().click();await expect(page.locator('#grocyai-review-summary-button')).toBeVisible();await page.locator('#grocyai-capture-review-selected-1').uncheck();await expect.poll(()=>typeof release).toBe('function');await page.locator('#grocyai-capture-review-dashboard-link').click();await expect(page).toHaveURL(/capture-review\.html$/);await expect(page.locator('#grocyai-dashboard-leave-status')).toContainText('Wait');release();});
+test('@dashboardnav pending commit blocks Back and completed return creates no trip',async({page})=>{const state=await installReviewApi(page);let release;await page.route('**/trips/7/commit',async route=>{state.commits++;await new Promise(resolve=>release=resolve);state.committed=true;return json(route,{outcome:'committed',transaction_id:'txn-1001',applied:1});});page.on('dialog',dialog=>dialog.accept());await openSummary(page);await page.locator('#grocyai-capture-review-commit').click();await expect.poll(()=>typeof release).toBe('function');await page.locator('#grocyai-capture-review-dashboard-link').click();await expect(page).toHaveURL(/capture-review\.html/);await expect(page.locator('#grocyai-dashboard-leave-status')).toContainText('Wait');release();await expect(page.getByText('Purchase committed',{exact:false}).first()).toBeVisible();await page.locator('#grocyai-capture-review-dashboard-link').click();await expect(page).toHaveURL(/\/grocyai\/capture$/);expect(state.commits).toBe(1);expect(await page.locator('script').evaluateAll(els=>els.map(el=>el.src))).not.toContain(expect.stringMatching(/\/capture\.js/));});
+test('@dashboardnav capture pending and ambiguous camera save block Back',async({page})=>{const state=await installScanApi(page,{holdScan:true});await page.goto('/fixtures/capture.html?trip=12');await expect(page.locator('#grocyai-capture-trip-summary')).toContainText('#12');await page.evaluate(()=>Grocy.BarcodeScanned('012345678905','grocyai-capture-barcode'));await page.locator('#grocyai-capture-camera-save-button').click();await expect.poll(()=>typeof state.releaseScan).toBe('function');await page.locator('#grocyai-capture-dashboard-link').click();await expect(page).toHaveURL(/capture\.html\?trip=12$/);state.releaseScan();await expect(page.locator('#grocyai-capture-status')).toContainText('could not be verified');await page.locator('#grocyai-capture-dashboard-link').click();await expect(page).toHaveURL(/capture\.html\?trip=12$/);expect(state.tripCreations).toBe(0);});
