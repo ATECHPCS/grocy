@@ -40,7 +40,7 @@ require dirname(__DIR__, 3) . '/config-dist.php';
 $database = Grocy\Services\DatabaseService::GetInstance();
 $database->GetDbConnection();
 $db = $database->GetDbConnectionRaw();
-$db->exec("INSERT INTO quantity_units(id,name,active) VALUES(901,'Fixture can',1);INSERT INTO products(id,name,location_id,qu_id_purchase,qu_id_stock,qu_id_consume,qu_id_price,parent_product_id) VALUES(10001,'Generic fixture milk',1,901,901,901,901,NULL),(10002,'Branded fixture milk',1,901,901,901,901,10001);INSERT INTO product_barcodes(product_id,barcode) VALUES(10002,'4006381333931');INSERT INTO shopping_lists(id,name) VALUES(770,'Fixture list');INSERT INTO shopping_list(id,shopping_list_id,product_id,amount,qu_id) VALUES(770,770,10001,3,901)");
+$db->exec("INSERT OR IGNORE INTO locations(id,name,active) VALUES(1,'Fixture shelf',1); UPDATE locations SET active=1 WHERE id=1; INSERT INTO quantity_units(id,name,active) VALUES(901,'Fixture can',1);INSERT INTO products(id,name,location_id,qu_id_purchase,qu_id_stock,qu_id_consume,qu_id_price,parent_product_id) VALUES(10001,'Generic fixture milk',1,901,901,901,901,NULL),(10002,'Branded fixture milk',1,901,901,901,901,10001);INSERT INTO product_barcodes(product_id,barcode) VALUES(10002,'4006381333931');INSERT INTO shopping_lists(id,name) VALUES(770,'Fixture list');INSERT INTO shopping_list(id,shopping_list_id,product_id,amount,qu_id) VALUES(770,770,10001,3,901)");
 $before = [];
 foreach (['stock', 'stock_log'] as $t)
 {
