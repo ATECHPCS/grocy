@@ -317,6 +317,7 @@ test('@shopping branded child approval requires explicit reviewed fields', async
 	await scan(page);
 	await page.getByRole('button', { name: 'Curate UPC', exact: true }).click();
 	await page.getByLabel('Curation action').selectOption('create');
+	await page.getByLabel('Inventory location').selectOption('1');
 	await page
 		.getByLabel('Product name', { exact: true })
 		.fill('New branded milk');
@@ -422,6 +423,7 @@ test('@shopping failed approval retains edited product fields', async ({
 	await scan(page);
 	await page.getByRole('button', { name: 'Curate UPC', exact: true }).click();
 	await page.getByLabel('Curation action').selectOption('create');
+	await page.getByLabel('Inventory location').selectOption('1');
 	await page
 		.getByLabel('Product name', { exact: true })
 		.fill('Keep my edited name');
@@ -621,6 +623,7 @@ test('@shopping uncommitted approval recovery preserves the confirmation body', 
 	await scan(page);
 	await page.getByRole('button', { name: 'Curate UPC', exact: true }).click();
 	await page.getByLabel('Curation action').selectOption('create');
+	await page.getByLabel('Inventory location').selectOption('1');
 	await page
 		.getByLabel('Product name', { exact: true })
 		.fill('Preserve this new child');
@@ -714,4 +717,46 @@ test('@shopping uncommitted settlement is not reported as saved', async ({
 			exact: true,
 		}),
 	).toHaveCount(0);
+});
+
+test('@shopping safe camera rejection retains queued UPC and curation draft', async ({ page }) => {
+ const { calls } = await setup(page, { unknown: true });
+ await page.getByRole('button', { name: 'Scan for Milk', exact: true }).click();
+ await scan(page);
+ await page.getByRole('button', { name: 'Curate UPC', exact: true }).click();
+ await page.getByLabel('Curation action').selectOption('create');
+	await page.getByLabel('Inventory location').selectOption('1');
+ await page.getByLabel('Product name', { exact: true }).fill('Keep draft');
+ await page.evaluate(() => window.Grocy.BarcodeScanned('036000291452', 'grocyai-capture-barcode'));
+ await page.locator('#grocyai-capture-camera-save-button').click();
+ await expect(page.locator('#grocyai-capture-status')).toContainText('Finish or verify');
+ await expect(page.locator('#grocyai-capture-camera-barcode')).toHaveValue('036000291452');
+ await expect(page.getByLabel('Product name', { exact: true })).toHaveValue('Keep draft');
+ await page.getByRole('button', { name: 'Cancel curation', exact: true }).click();
+ await expect(page.locator('#grocyai-capture-add-button')).toBeEnabled();
+ expect(calls.filter(x => x.path.endsWith('/shopping/scan'))).toHaveLength(1);
+});
+test('@shopping definitive rejected camera scan can be corrected without reload', async ({ page }) => {
+ await setup(page);
+ await page.route('**/shopping/scan', route => route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({error_message: 'Shopping entry not found'}) }));
+ await page.evaluate(() => window.Grocy.BarcodeScanned('036000291452', 'grocyai-capture-barcode'));
+ await page.locator('#grocyai-capture-camera-save-button').click();
+ await expect(page.locator('#grocyai-capture-status')).toContainText('Shopping entry not found');
+ await expect(page.locator('#grocyai-capture-camera-save-button')).toBeEnabled();
+ await expect(page.locator('#grocyai-capture-camera-barcode')).toHaveValue('036000291452');
+});
+test('@shopping multiple brands require explicit selection before permanent approval', async ({ page }) => {
+ const { calls } = await setup(page, { unknown: true });
+ await page.route('**/options', route => route.fulfill({contentType:'application/json',body:JSON.stringify({revision:1,products:[{id:2,name:'Alpha milk',parent_product_id:1},{id:3,name:'Zeta milk',parent_product_id:1}],locations:[{id:1,name:'Pantry'}],quantity_units:[{id:1,name:'can'}]})}));
+ await page.getByRole('button', { name: 'Scan for Milk', exact: true }).click();
+ await scan(page);
+ await page.getByRole('button', { name: 'Curate UPC', exact: true }).click();
+ await expect(page.getByLabel('Existing product')).toHaveValue('');
+ await page.getByRole('button', {name:'Confirm permanent UPC link',exact:true}).click();
+ await expect(page.getByRole('alert')).toContainText('Choose an existing product');
+ expect(calls.filter(x=>x.path.endsWith('/curate'))).toHaveLength(0);
+ await page.getByLabel('Existing product').selectOption('3');
+ await expect(page.locator('.grocy-ai-shopping-curation')).toContainText('Zeta milk');
+ await page.getByLabel('Curation action').selectOption('create');
+ await expect(page.getByLabel('Inventory location')).toHaveValue('');
 });

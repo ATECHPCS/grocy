@@ -438,7 +438,7 @@
 				return line;
 			}).catch(function (error)
 			{
-				setStatus(copy.scanError);
+				setStatus(error.safeToRetry ? error.message : copy.scanError);
 				if (failClosed) throw error;
 				return null;
 			}).finally(function ()
@@ -514,7 +514,7 @@
 					pendingCameraReads.shift();
 					showNextCameraRead();
 				}
-			}).catch(function () { lockCameraAfterFailedScan(); }).finally(function ()
+			}).catch(function (error) { if (!error.safeToRetry) lockCameraAfterFailedScan(); }).finally(function ()
 			{
 				cameraSubmitting = false;
 				configureScanner();

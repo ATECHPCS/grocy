@@ -67,6 +67,7 @@
 									'Shopping list request failed.',
 							);
 							error.status = response.status;
+							error.safeToRetry = response.status >= 400 && response.status < 500;
 							throw error;
 						}
 						return data;
@@ -400,10 +401,11 @@
 			return Promise.resolve(loading).then(function () {
 				if (denied || (model && model.selected_list_id === null))
 					return options.fallbackScan(barcode);
-				if (!model || busy || pending || form)
-					throw new Error(
-						'Finish or verify the shopping list operation before scanning.',
-					);
+				if (!model || busy || pending || form) {
+					var rejection = new Error('Finish or verify the shopping list operation before scanning.');
+					rejection.safeToRetry = true;
+					throw rejection;
+				}
 				var row = rowFor(target),
 					id = uuid();
 				return change(
@@ -510,6 +512,8 @@
 			)
 				choice(mode, 'create', 'Create a branded child');
 			var existing = field(box, 'Existing product', 'select');
+			var candidates = catalog.products.filter(function (p) { return !row.has_children || p.parent_product_id === row.product_id; });
+			if (candidates.length !== 1) choice(existing, '', 'Choose a product');
 			catalog.products
 				.filter(function (p) {
 					return (
@@ -526,6 +530,7 @@
 			name.maxLength = 200;
 			function select(label, values) {
 				var s = field(createFields, label, 'select');
+				if (label === 'Inventory location') choice(s, '', 'Choose a location');
 				values.forEach(function (v) {
 					choice(s, v.id, v.name);
 				});
@@ -555,6 +560,14 @@
 			submit.type = 'submit';
 			submit.className = 'btn btn-primary';
 			submit.disabled = busy || !!pending;
+			var summary = node('p', '', box);
+			function summarize() {
+				var selected = existing.options[existing.selectedIndex];
+				summary.textContent = 'Permanent UPC ' + op.line.scanned_barcode + ' → ' + (mode.value === 'create' ? (name.value || 'Choose a product name') : (existing.value && selected ? selected.textContent : 'Choose a product'));
+			}
+			box.addEventListener('change', summarize);
+			box.addEventListener('input', summarize);
+			summarize();
 			var error = node('p', '', box);
 			error.setAttribute('role', 'alert');
 			mode.addEventListener('change', function () {
@@ -611,6 +624,7 @@
 					}
 					body.product_id = Number(existing.value);
 				} else {
+					if (!location.value) { error.textContent = 'Choose an inventory location.'; return; }
 					body.fields = {
 						name: name.value.trim(),
 						location_id: Number(location.value),
