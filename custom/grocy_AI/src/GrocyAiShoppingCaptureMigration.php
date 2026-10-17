@@ -9,6 +9,10 @@ final class GrocyAiShoppingCaptureMigration
 	public static function Bootstrap(PDO $db): void
 	{
 		GrocyAiCaptureResearchMigration::Bootstrap($db);
+		if ($db->query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='grocy_ai_shopping_migrations'")->fetchColumn() && $db->query('SELECT 1 FROM grocy_ai_shopping_migrations WHERE version=1')->fetchColumn())
+		{
+			return;
+		}
 		$db->beginTransaction();
 		try
 		{
@@ -28,6 +32,8 @@ final class GrocyAiShoppingCaptureMigration
 				$db->exec('CREATE TRIGGER IF NOT EXISTS grocy_ai_shopping_audit_no_' . strtolower($event) . " BEFORE $event ON grocy_ai_shopping_audit BEGIN SELECT RAISE(ABORT,'shopping audit is append-only'); END");
 			}
 			$db->exec("CREATE TRIGGER IF NOT EXISTS grocy_ai_shopping_request_immutable BEFORE UPDATE OF request_json,operation_id,trip_id,kind ON grocy_ai_shopping_operations BEGIN SELECT RAISE(ABORT,'shopping operation identity is immutable'); END");
+			$db->exec('CREATE TABLE IF NOT EXISTS grocy_ai_shopping_migrations(version INTEGER PRIMARY KEY)');
+			$db->exec('INSERT OR IGNORE INTO grocy_ai_shopping_migrations VALUES(1)');
 			$db->commit();
 		}
 		catch (\Throwable $e)

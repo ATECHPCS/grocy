@@ -93,9 +93,47 @@ final class GrocyAiShoppingCaptureService
 		return $amount !== null && is_finite($amount) && $amount > 0 ? $amount : null;
 	}
 
+	private function sameIdentity(?string $shape, array $row): bool
+	{
+		if ($shape === null)
+		{
+			return false;
+		}
+		$stored = json_decode($shape, true, 512, JSON_THROW_ON_ERROR);
+		$current = json_decode($this->shape($row), true, 512, JSON_THROW_ON_ERROR);
+		// Existing operations retain their original requested amount for history.
+		unset($stored[3], $current[3]);
+		return $stored === $current;
+	}
+
 	private function total(int $trip, array $row, ?string $except = null): float
 	{
-		return (float)$this->query("SELECT COALESCE(SUM(amount),0) FROM grocy_ai_shopping_operations WHERE trip_id=? AND row_id=? AND row_shape=? AND state='settled' AND kind='scan' AND operation_id != ?", [$trip, $row['id'], $this->shape($row), $except ?? ''])->fetchColumn();
+		$total = 0.0;
+		foreach ($this->query("SELECT row_shape,amount FROM grocy_ai_shopping_operations WHERE trip_id=? AND row_id=? AND state='settled' AND kind='scan' AND operation_id != ?", [$trip, $row['id'], $except ?? ''])->fetchAll(PDO::FETCH_ASSOC) as $op)
+		{
+			if ($this->sameIdentity($op['row_shape'], $row))
+			{
+				$total += (float)$op['amount'];
+			}
+		}
+		return $total;
+	}
+
+	private function fulfilled(int $trip, array $row, string $except): bool
+	{
+		$target = $this->targetAmount($row);
+		if ($target !== null)
+		{
+			return $this->total($trip, $row, $except) + 1e-9 >= $target;
+		}
+		foreach ($this->query("SELECT * FROM grocy_ai_shopping_operations WHERE trip_id=? AND row_id=? AND state='settled' AND operation_id!=?", [$trip, $row['id'], $except])->fetchAll(PDO::FETCH_ASSOC) as $other)
+		{
+			if ($this->sameIdentity($other['row_shape'], $row) && (float)$other['amount'] > 0)
+			{
+				return true;
+			}
+		}
+		return false;
 	}
 
 	public function Read(int $tripId, string $actor): array
@@ -421,7 +459,7 @@ final class GrocyAiShoppingCaptureService
 			{
 				$this->query('UPDATE shopping_list SET done=? WHERE id=?', [(int)$done, $rowId]);
 			}
-			$this->change($tripId, $operationId, ['state' => 'settled', 'row_id' => $rowId, 'list_id' => (int)$r['shopping_list_id'], 'observed_version' => $expectedVersion, 'write_version' => $changed ? (string)$this->row($rowId)['version'] : null, 'changed_done' => (int)$changed, 'amount' => $done ? 1 : 0]);
+			$this->change($tripId, $operationId, ['state' => 'settled', 'row_id' => $rowId, 'list_id' => (int)$r['shopping_list_id'], 'observed_version' => $expectedVersion, 'write_version' => $changed ? (string)$this->row($rowId)['version'] : null, 'changed_done' => (int)$changed, 'amount' => $done ? 1 : 0, 'row_shape' => $this->shape($r)]);
 			$this->audit($tripId, $operationId, $actor, 'manual_done', [$rowId, $done]);
 		});
 		return $this->Operation($tripId, $actor, $operationId);
@@ -437,10 +475,20 @@ final class GrocyAiShoppingCaptureService
 			{
 				return;
 			}
-			$r = $op['row_id'] === null ? null : $this->row((int)$op['row_id']);
+			try
+			{
+				$r = $op['row_id'] === null ? null : $this->row((int)$op['row_id']);
+			}
+			catch (\OutOfBoundsException $e)
+			{
+				if ($op['kind'] !== 'scan')
+				{
+					throw $e;
+				} $r = null;
+			}
 			if ($r && $op['state'] === 'settled')
 			{
-				if ($op['row_shape'] !== null && $op['row_shape'] !== $this->shape($r))
+				if ($op['row_shape'] !== null && !$this->sameIdentity($op['row_shape'], $r))
 				{
 					throw new RuntimeException('Shopping entry was replaced or its quantity changed');
 				}
@@ -448,11 +496,7 @@ final class GrocyAiShoppingCaptureService
 				{
 					throw new RuntimeException('Shopping entry changed after manual collection');
 				}
-				$latest = (string)$this->query('SELECT MAX(CAST(COALESCE(write_version,observed_version) AS INTEGER)) FROM grocy_ai_shopping_operations WHERE trip_id=? AND row_id=? AND state IN (\'settled\',\'undone\')', [$tripId, $r['id']])->fetchColumn();
-				if ((string)$r['version'] !== $latest)
-				{
-					throw new RuntimeException('Shopping entry changed after collection; refresh before editing');
-				}
+
 			}
 			if ($op['kind'] === 'scan' && $op['line_id'] !== null)
 			{
@@ -464,7 +508,37 @@ final class GrocyAiShoppingCaptureService
 				}
 				(new GrocyAiCaptureService($this->Db, false))->UpdateLine($tripId, (int)$line['seq'], $count === 1 ? ['delete' => true] : ['quantity' => (float)$line['quantity'] - 1], $actor);
 			}
-			if ($r && (($op['kind'] === 'manual' && (bool)$op['changed_done'] && (!(bool)$op['amount'] || $this->targetAmount($r) === null || $this->total($tripId, $r) + 1e-9 < $this->targetAmount($r))) || ($op['kind'] === 'scan' && (bool)$r['done'] && ($this->targetAmount($r) === null || $this->total($tripId, $r, $operationId) + 1e-9 < $this->targetAmount($r)) && $this->query('SELECT 1 FROM grocy_ai_shopping_operations WHERE trip_id=? AND row_id=? AND changed_done=1 AND write_version=? AND (kind=\'scan\' OR (kind=\'manual\' AND state=\'undone\' AND amount=1)) LIMIT 1', [$tripId, $r['id'], (string)$r['version']])->fetchColumn())))
+			$reverse = false;
+			if ($r && $op['state'] === 'settled')
+			{
+				if ($op['kind'] === 'manual')
+				{
+					$reverse = (bool)$op['changed_done'] && (!(bool)$op['amount'] || !$this->fulfilled($tripId, $r, $operationId));
+				}
+				elseif ((bool)$r['done'] && !$this->fulfilled($tripId, $r, $operationId))
+				{
+					// Only this trip's own completion can be reversed, never an existing shared done.
+					$owners = $this->query("SELECT * FROM grocy_ai_shopping_operations WHERE trip_id=? AND row_id=? AND changed_done=1 AND (kind='scan' OR (kind='manual' AND state='undone' AND amount=1))", [$tripId, $r['id']])->fetchAll(PDO::FETCH_ASSOC);
+					foreach ($owners as $owner)
+					{
+						if (!$this->sameIdentity($owner['row_shape'], $r))
+						{
+							continue;
+						}
+						$reverse = true;
+						$ownerVersion = (string)$owner['write_version'];
+						if ((string)$owner['write_version'] === (string)$r['version'])
+						{
+							break;
+						}
+					}
+					if ($reverse && $ownerVersion !== (string)$r['version'])
+					{
+						throw new RuntimeException('Shared shopping entry changed; use purchase review controls and adjust the shopping list explicitly.');
+					}
+				}
+			}
+			if ($reverse)
 			{
 				$this->query('UPDATE shopping_list SET done=? WHERE id=?', [$op['kind'] === 'manual' ? (1 - (int)$op['amount']) : 0, $r['id']]);
 				$this->change($tripId, $operationId, ['write_version' => (string)$this->row((int)$r['id'])['version']]);

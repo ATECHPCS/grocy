@@ -111,9 +111,10 @@ shopCheck($auto['row_id'] === 10, 'exact match precedes parent');
 $d->exec('INSERT INTO shopping_list VALUES(11,1,2,10,1,NULL,0)');
 $amb = $s->Scan(1, '1', 'ambiguous', '4006381333931', null, null);
 shopCheck($amb['state'] === 'pending_selection', 'ambiguous candidates require choice');
-// Native changes prevent stale Undo; stock remains entirely untouched.
+// Native note changes permit capture-only Undo when no shared reversal is needed.
 $d->exec('UPDATE shopping_list SET note=\'another shopper\' WHERE id=10');
-shopReject(fn () => $s->Undo(1, '1', 'exact'));
+$s->Undo(1, '1', 'exact');
+shopCheck((int)$d->query('SELECT done FROM shopping_list WHERE id=10')->fetchColumn() === 0, 'capture-only Undo preserves native row');
 shopCheck((int)$d->query('SELECT count(*) FROM stock')->fetchColumn() === 0 && (int)$d->query('SELECT count(*) FROM stock_log')->fetchColumn() === 0, 'no stock writes');
 // Later scans can fulfill a row after the original completion operation is undone.
 $extra = shopFixture();
