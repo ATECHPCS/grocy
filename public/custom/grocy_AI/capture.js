@@ -200,15 +200,26 @@
 		var cameraSubmitting = false;
 		var cameraLocked = false;
 
+		var shopping = window.GrocyAiShoppingCapture ? window.GrocyAiShoppingCapture.attach(root, {
+			fallbackScan: function (barcode) { return fetchJson(tripsEndpoint + '/' + encodeURIComponent(String(currentTripId)) + '/scan', {method:'POST', body:JSON.stringify({barcode:barcode})}); },
+			onChanged: function () { var id=currentTripId; if(id===null)return; fetchJson(tripsEndpoint+'/'+encodeURIComponent(String(id)),{method:'GET'}).then(function(payload){if(String(currentTripId)!==String(id)||!payload||!Array.isArray(payload.lines))return;if(payload.lines.every(isLinePayload)){lines=payload.lines;render();}}).catch(function(){setStatus(copy.resumeError);}); }
+		}) : null;
+		function shoppingPending() { return shopping && shopping.hasPendingWrites(); }
+		function confirmShoppingDraft() { return !shopping || !shopping.hasUnsavedDrafts() || window.confirm('Discard unsaved UPC curation fields? The captured scan remains saved.'); }
+
 		var dashboardLink = document.getElementById('grocyai-capture-dashboard-link');
 		if (dashboardLink) dashboardLink.addEventListener('click', function (event) {
-			if (pendingScans > 0 || finishing || cameraSubmitting || cameraLocked) {
+			if (pendingScans > 0 || finishing || cameraSubmitting || cameraLocked || shoppingPending()) {
 				event.preventDefault();
 				setStatus(cameraLocked ? copy.cameraUnverified : copy.finishPending);
 				return;
 			}
+			if (!confirmShoppingDraft()) { event.preventDefault(); return; }
 			if ((pendingCameraReads.length > 0 || input && input.value.trim()) && !window.confirm(root.getAttribute('data-label-leave-confirm') || 'Discard unsaved capture input and return to dashboard?')) event.preventDefault();
 		});
+
+		[reviewLink, document.getElementById('grocyai-capture-header-review-link')].forEach(function(link){if(link)link.addEventListener('click',function(event){if(shoppingPending()||!confirmShoppingDraft()){event.preventDefault();setStatus(copy.finishPending);}});});
+		window.addEventListener('beforeunload',function(event){if(shoppingPending()||shopping&&shopping.hasUnsavedDrafts()){event.preventDefault();event.returnValue='';}});
 
 		function setReviewUrl(url)
 		{
@@ -243,6 +254,7 @@
 
 		function render()
 		{
+			if (shopping && shopping.tripId() !== (currentTripId === null ? null : String(currentTripId))) shopping.load(currentTripId);
 			if (!linesEl)
 			{
 				return;
@@ -330,7 +342,7 @@
 
 		function startTrip()
 		{
-			if (finishing || cameraLocked || cameraSubmitting || pendingScans > 0)
+			if (finishing || cameraLocked || cameraSubmitting || pendingScans > 0 || shoppingPending() || !confirmShoppingDraft())
 			{
 				return Promise.resolve(null);
 			}
@@ -408,7 +420,7 @@
 			}
 			pendingScans++;
 			var url = tripsEndpoint + '/' + encodeURIComponent(String(currentTripId)) + '/scan';
-			return fetchJson(url, { method: 'POST', body: JSON.stringify({ barcode: barcode }) }).then(function (line)
+			return (shopping ? shopping.scan(barcode) : fetchJson(url, { method: 'POST', body: JSON.stringify({ barcode: barcode }) })).then(function (line)
 			{
 				if (!isLinePayload(line))
 				{
@@ -529,7 +541,7 @@
 				setStatus(copy.cameraUnverified);
 				return Promise.resolve(null);
 			}
-			if (pendingScans > 0)
+			if (pendingScans > 0 || shoppingPending())
 			{
 				setStatus(copy.finishPending);
 				return Promise.resolve(null);
@@ -539,6 +551,7 @@
 				setStatus(copy.cameraPending);
 				return Promise.resolve(null);
 			}
+			if (!confirmShoppingDraft()) return Promise.resolve(null);
 			if (typeof window === 'undefined' || typeof window.confirm !== 'function'
 				|| !window.confirm(copy.finishFirst) || !window.confirm(copy.finishSecond))
 			{
@@ -573,7 +586,9 @@
 
 		function cancelTrip()
 		{
-			if (currentTripId === null || finishing || pendingScans > 0 || cameraLocked || cameraSubmitting || currentStatus === 'committed' || lines.some(function (line) { return line.applied_at !== null; })) return Promise.resolve(null);
+			if (currentTripId === null || finishing || pendingScans > 0 || shoppingPending() || cameraLocked || cameraSubmitting || currentStatus === 'committed' || lines.some(function (line) { return line.applied_at !== null; })) return Promise.resolve(null);
+			if (shopping && shopping.hasCollections() && !window.confirm('Deleting this session does not undo shared shopping-list collection or permanent UPC links. Continue?')) return Promise.resolve(null);
+			if (!confirmShoppingDraft()) return Promise.resolve(null);
 			if (!window.confirm(copy.deleteFirst) || !window.confirm(copy.deleteSecond)) return Promise.resolve(null);
 			var tripId = currentTripId; finishing = true; render();
 			return fetchJson(tripsEndpoint + '/' + encodeURIComponent(String(tripId)) + '/cancel', { method: 'POST', body: '{}' }).then(function (result) {

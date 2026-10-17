@@ -124,6 +124,8 @@ const mediaCapabilities = new Map([
 ]);
 
 const allowlistedFiles = new Map([
+ ['/fixtures/capture-shopping-list.html', {path: resolve(browserRoot, 'fixtures/capture-shopping-list.html'), contentType:'text/html; charset=utf-8'}],
+ ['/assets/capture-shopping-list.js', {path: resolve(repositoryRoot, 'public/custom/grocy_AI/capture-shopping-list.js'), contentType:'application/javascript; charset=utf-8'}],
  ['/fixtures/capture-dashboard.html', {path: resolve(browserRoot, 'fixtures/capture-dashboard.html'), contentType:'text/html; charset=utf-8'}],
  ['/assets/capture-dashboard.js', {path: resolve(repositoryRoot, 'public/custom/grocy_AI/capture-dashboard.js'), contentType:'text/javascript; charset=utf-8'}],
 	['/fixtures/productform.html', {

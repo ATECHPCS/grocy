@@ -663,3 +663,57 @@ Purchase capture opens a personal session dashboard. Opening, refreshing and fol
 The four cards show open sessions, sessions needing review, completed purchases during the rolling last 30 days, and **Printed receipt totals** for those purchases. Available printed totals include ignored receipt items and adjustments; they are independent of included stock amounts. Missing printed totals and purchases with no receipts are called out. No entered-total fallback or inferred spending is shown. Counts refer to distinct captured lines, not camera reads or unlike quantity units. Dates and money use the browser locale and Grocy's currency/price display settings.
 
 **Back to dashboard** saves nothing. Unsaved research and receipt drafts require discard confirmation; pending review mutations and stock commits block leaving. Capture also blocks pending or ambiguous camera saves and confirms discarding unsaved input. An explicit `?trip=12` bookmark remains GET-only, and failed resume cannot create a replacement. Dashboard loads no camera, capture or research script. Capture/review/dashboard assets use `2.6.22`, customization marker `ATECHPCS-grocy_AI-45`, with no portable module version change. See `docs/superpowers/plans/2026-10-13-capture-dashboard-verification.md` for automated evidence and remaining phone acceptance.
+
+
+## Shopping lists during purchase capture
+
+Choose a native Grocy shopping list in an open capture session. The selection is
+remembered on resume. Scan normally to match known products, or tap **Scan for**
+on a list row before scanning an unknown UPC. Confirm **Link an existing product**
+or **Create a branded child** to remember the UPC immediately. Product approval
+requires master-data permissions; scanning and list collection never add stock.
+
+Exact products take precedence over their generic parents. Verified unit
+conversions and barcode package amounts determine progress; otherwise enter the
+collected amount in the list's unit. A fulfilled row is checked off on the shared
+Grocy list without deleting it or reducing the requested amount. Free-text entries
+can be checked off manually, or linked explicitly to a real product for this
+session. Other shoppers see the native done state; partial progress is this
+session's contribution rather than a merged household quantity.
+
+**Collection actions and Undo** reverses an eligible scan contribution and its
+owned completion while the session is open. It retains approved products and UPC
+links. Receipt history, purchase-review edits, or another shopper's list change
+can prevent safe Undo; use explicit review/list controls instead. Canceling the
+session does not undo shared list or catalog changes.
+
+If a response is lost, use **Check saved operation** before scanning again. If no
+operation exists, **Retry same operation** reuses its durable identifier. A saved
+catalog link followed by failed collection is retried as list settlement, not as
+another product approval. Targeted unknown UPCs are kept local unless research is
+explicitly requested through the existing review flow; ordinary untargeted
+unknowns retain normal background research.
+
+The additive `grocy_ai_shopping_*` tables store selection, operation identity,
+contributions and append-only audit. Native shopping-list insert/update/delete
+triggers maintain monotonic row versions and incarnation tombstones, including
+edits made through Grocy's original screens. Preserve these tables and triggers
+with the entire database during backup/restore. No native list or product schema
+is replaced. List reads require `SHOPPINGLIST`; collection edits also require
+`SHOPPINGLIST_ITEMS_ADD`, in addition to `STOCK_PURCHASE`. Catalog writes retain
+`MASTER_DATA_EDIT`.
+
+Run the isolated feature gates with:
+
+```sh
+php8.5 custom/grocy_AI/tests/run.php shopping-capture
+php8.5 custom/grocy_AI/tests/run.php shopping-capture-api
+php8.5 custom/grocy_AI/tests/run.php shopping-capture-native
+env -u NO_COLOR -u FORCE_COLOR npm --prefix custom/grocy_AI/tests/browser run test -- capture-shopping-list.spec.js --workers=1
+```
+
+The native gate creates and removes a private temporary database with the full
+repository Grocy migrations. It verifies collection, Undo, integrity and unchanged
+stock. It never uses production data, providers or credentials. See the
+[design](../../docs/superpowers/specs/2026-10-16-shopping-list-capture-design.md)
+for lifecycle, concurrent-edit and recovery rules.
