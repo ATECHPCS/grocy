@@ -1110,3 +1110,14 @@ details.grocy-ai-diagnostics:not([open]) > .grocy-ai-diagnostic-body {
 #grocyai-shopping-panel :focus-visible { outline: 3px solid #1685d1; outline-offset: 2px; }
 
 #grocyai-shopping-panel .grocy-ai-shopping-rows { max-height: min(45vh, 24rem); overflow-y: auto; overscroll-behavior: contain; }
+/* Match the review controls: native select painting can hide night-mode text. */
+#grocyai-shopping-panel select.form-control {
+ -webkit-appearance: none;
+ appearance: none;
+ padding-right: 32px;
+ background-image: linear-gradient(45deg, transparent 50%, var(--grocy-ai-flow-text) 50%), linear-gradient(135deg, var(--grocy-ai-flow-text) 50%, transparent 50%);
+ background-position: calc(100% - 18px) 50%, calc(100% - 13px) 50%;
+ background-size: 5px 5px;
+ background-repeat: no-repeat;
+}
+.night-mode #grocyai-shopping-panel { color-scheme: dark; }
