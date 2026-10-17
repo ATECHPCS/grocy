@@ -28,7 +28,7 @@ Current passing gates:
 - Focused browser gate: 42 passed across Chromium and WebKit. It covers quantity progress, explicit linking/creation, permissions, manual text entries, normal no-list scans, remembered selection, explicit amount, failed/ambiguous responses, reload recovery, navigation, late refresh ownership, restricted recovery endpoints, 320px layout and touch targets.
 - Fourteen affected standalone capture/research/receipt scripts passed, including the isolated full native purchase rehearsal with idempotent commit retry.
 
-The full serial browser release gate is running; its final count and independent branch review result will be added before completion. Asset token is `2.6.23`, customization marker `ATECHPCS-grocy_AI-46`; the portable module version is unchanged. Existing Docker directory copies include the new classes and script.
+The final full serial browser release gate passed **707/707** in 23.4 minutes, after the review corrections. Chromium mobile/desktop and WebKit mobile completed with zero failures. Both populated light/night screenshots were inspected. The combined release gate also reran the module, focused core/API/native, 14 affected PHP suites, JavaScript unit tests, syntax checks and diff checks successfully. Asset token is `2.6.23`, customization marker `ATECHPCS-grocy_AI-46`; the portable module version is unchanged. Existing Docker directory copies include the new classes and script.
 
 ## Existing legacy failures
 
