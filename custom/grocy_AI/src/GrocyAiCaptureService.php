@@ -64,7 +64,7 @@ class GrocyAiCaptureService
 	 *
 	 * @return array<string, mixed>
 	 */
-	public function ScanIntoTrip(int $tripId, string $barcode, ?string $actor = null): array
+	public function ScanIntoTrip(int $tripId, string $barcode, ?string $actor = null, bool $localResearch = false): array
 	{
 		$started = !$this->Db->inTransaction();
 		if ($started) $this->Db->exec('BEGIN IMMEDIATE');
@@ -88,7 +88,7 @@ class GrocyAiCaptureService
 				$this->WriteAudit($tripId, (int)$line['id'], $actor, 'scan_coalesce', $existingRow, $line);
 				if ($resolution['status'] === 'unknown' && $existingRow['status'] === 'unknown' && $resolution['canonical_gtin'] !== null)
 				{
-					(new GrocyAiCaptureResearchService($this->Db, false))->EnqueueUnknown($tripId, (int)$line['id'], (string)$line['scanned_barcode']);
+					(new GrocyAiCaptureResearchService($this->Db, false))->EnqueueUnknown($tripId, (int)$line['id'], (string)$line['scanned_barcode'], $localResearch);
 				}
 			}
 			else
@@ -100,7 +100,7 @@ class GrocyAiCaptureService
 				$this->WriteAudit($tripId, (int)$line['id'], $actor, 'scan_new_line', null, $line);
 				if ($resolution['status'] === 'unknown' && $resolution['canonical_gtin'] !== null)
 				{
-					(new GrocyAiCaptureResearchService($this->Db, false))->EnqueueUnknown($tripId, (int)$line['id'], $barcode);
+					(new GrocyAiCaptureResearchService($this->Db, false))->EnqueueUnknown($tripId, (int)$line['id'], $barcode, $localResearch);
 				}
 			}
 			if ($started) $this->Db->commit();

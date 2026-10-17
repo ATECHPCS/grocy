@@ -16,7 +16,7 @@ class GrocyAiCaptureResearchService
 	}
 
 	/** @return array<string, mixed>|null */
-	public function EnqueueUnknown(int $tripId, int $lineId, string $scannedBarcode): ?array
+	public function EnqueueUnknown(int $tripId, int $lineId, string $scannedBarcode, bool $localOnly = false): ?array
 	{
 		$canonical = GrocyAiGtin::CanonicalOrNull($scannedBarcode);
 		if ($canonical === null) return null;
@@ -33,7 +33,7 @@ class GrocyAiCaptureResearchService
 				return null;
 			}
 
-			$this->Db->prepare('INSERT OR IGNORE INTO grocy_ai_capture_research_jobs (canonical_gtin) VALUES (?)')->execute([$canonical]);
+			$this->Db->prepare('INSERT OR IGNORE INTO grocy_ai_capture_research_jobs (canonical_gtin, state) VALUES (?, ?)')->execute([$canonical, $localOnly ? 'needs_input' : 'queued']);
 			$jobQuery = $this->Db->prepare('SELECT id FROM grocy_ai_capture_research_jobs WHERE canonical_gtin = ?');
 			$jobQuery->execute([$canonical]);
 			$jobId = (int)$jobQuery->fetchColumn();
