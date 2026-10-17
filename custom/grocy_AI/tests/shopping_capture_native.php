@@ -76,7 +76,10 @@ $fields = ['name' => 'New fixture branded milk', 'location_id' => 1, 'qu_id_purc
 $result = $s->Curate($id, '1', 'native-create', $row['version'], 'create', $options['revision'], null, $fields);
 $s->Settle($id, '1', 'native-create', 770, $row['version']);
 $replay = $s->Curate($id, '1', 'native-create', $row['version'], 'create', $options['revision'], null, $fields);
-if ($result['catalog']['product_id'] !== $replay['catalog']['product_id']) throw new RuntimeException('Native product approval replay failed');
+if ($result['catalog']['product_id'] !== $replay['catalog']['product_id'])
+{
+	throw new RuntimeException('Native product approval replay failed');
+}
 foreach (['stock', 'stock_log'] as $t)
 {
 	if ($before[$t] !== $db->query('SELECT * FROM ' . $t)->fetchAll(PDO::FETCH_ASSOC))
@@ -88,4 +91,23 @@ if ($db->query('PRAGMA integrity_check')->fetchColumn() !== 'ok')
 {
 	throw new RuntimeException('Native DB integrity failed');
 }
+
+
+$db->exec("INSERT INTO quantity_units(id,name,active) VALUES(902,'Fixture six-pack',1); INSERT INTO quantity_unit_conversions(from_qu_id,to_qu_id,factor) VALUES(901,902,1.0/6); UPDATE shopping_list SET amount=6,qu_id=902,done=0 WHERE id=770; UPDATE product_barcodes SET amount=6 WHERE product_id=10002");
+$row = $s->Read($id, '1')['items'][0];
+if (abs($row['amount'] - 1) > 1e-9)
+{
+	throw new RuntimeException('Native stock target must display one six-pack');
+}
+$s->Scan($id, '1', 'native-six-pack', '4006381333931', 770, $row['version']);
+if (!(bool)$db->query('SELECT done FROM shopping_list WHERE id=770')->fetchColumn())
+{
+	throw new RuntimeException('One native six-pack completes list');
+}
+$s->Undo($id, '1', 'native-six-pack');
+if ((bool)$db->query('SELECT done FROM shopping_list WHERE id=770')->fetchColumn())
+{
+	throw new RuntimeException('Six-pack Undo uses converted threshold');
+}
+
 echo "shopping_capture_native: full Grocy schema, collection/Undo, integrity and zero stock writes passed\n";

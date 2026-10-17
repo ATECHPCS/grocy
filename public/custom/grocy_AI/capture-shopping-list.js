@@ -11,6 +11,7 @@
 			target = null,
 			targetVersion = null,
 			busy = false;
+		var editingCollection = false;
 		var pending = null,
 			form = null,
 			status = '',
@@ -142,7 +143,7 @@
 					return (
 						Number.isInteger(r.id) &&
 						typeof r.version === 'string' &&
-						Number.isFinite(r.amount) &&
+						(r.amount === null || Number.isFinite(r.amount)) &&
 						Number.isFinite(r.collected_amount) &&
 						typeof r.done === 'boolean'
 					);
@@ -224,6 +225,7 @@
 			model = null;
 			target = null;
 			form = null;
+			editingCollection = false;
 			pending = null;
 			denied = false;
 			status = '';
@@ -281,6 +283,7 @@
 							'Operation response could not be verified.',
 						);
 					savePending(null);
+					editingCollection = false;
 					status =
 						kind === 'curate'
 							? 'Permanent product link saved. Confirm collection below.'
@@ -354,6 +357,24 @@
 						throw new Error(
 							'Recovery response could not be verified.',
 						);
+
+					var verified =
+						saved.kind === 'curate'
+							? !!op.product_id
+							: saved.kind === 'settle' || saved.kind === 'done'
+								? op.state === 'settled'
+								: saved.kind === 'undo'
+									? op.state === 'undone'
+									: saved.kind === 'selection'
+										? data.selected_list_id ===
+											saved.body.list_id
+										: true;
+					if (!verified) {
+						status =
+							'This action is not yet verified. Retry the same operation safely; your confirmation is preserved.';
+						render();
+						return;
+					}
 					savePending(null);
 					form = null;
 					status =
@@ -370,6 +391,7 @@
 				.finally(function () {
 					if (owner === generation) {
 						busy = false;
+						if (pending) render();
 						refresh();
 					}
 				});
@@ -690,6 +712,24 @@
 					amount.min = '0.000001';
 					amount.step = 'any';
 				}
+
+				select.addEventListener('change', function () {
+					editingCollection = true;
+					if (amount) {
+						var chosen = rowFor(select.value);
+						var label =
+							'Collected amount in ' +
+							((chosen && chosen.unit) || 'list units');
+						amount.parentNode.querySelector('span').textContent =
+							label;
+						amount.setAttribute('aria-label', label);
+						amount.value = '';
+					}
+				});
+				if (amount)
+					amount.addEventListener('input', function () {
+						editingCollection = true;
+					});
 				button(box, 'Apply to list', function () {
 					var r = rowFor(select.value);
 					var value = amount ? Number(amount.value) : undefined;
@@ -835,7 +875,9 @@
 					'p',
 					r.collected_amount +
 						' of ' +
-						r.amount +
+						(r.amount === null
+							? 'quantity needing confirmation'
+							: r.amount) +
 						' ' +
 						(r.unit || 'list units') +
 						' · ' +
@@ -899,7 +941,9 @@
 				!document.hidden &&
 				!busy &&
 				!pending &&
-				!form
+				!form &&
+				!editingCollection &&
+				!content.contains(document.activeElement)
 			)
 				refresh();
 		}, 15000);
@@ -913,7 +957,7 @@
 				return busy || !!pending;
 			},
 			hasUnsavedDrafts: function () {
-				return !!form;
+				return !!form || editingCollection;
 			},
 			hasCollections: function () {
 				return !!(model && model.operations.length);

@@ -149,5 +149,40 @@ $rs->Scan(1, '1', 'local-research', '012345678905', 1, $rr['version']);
 $capture = new GrocyAI\Services\GrocyAiCaptureService($researchDb);
 $newTrip = $capture->StartTrip('1');
 $capture->ScanIntoTrip((int)$newTrip['id'], '012345678905', '1');
-shopCheck(count((new GrocyAI\Services\GrocyAiCaptureResearchService($researchDb))->ClaimJobs(1,'fixture-worker')) === 1, 'normal untargeted capture can research a local-only UPC');
+shopCheck(count((new GrocyAI\Services\GrocyAiCaptureResearchService($researchDb))->ClaimJobs(1, 'fixture-worker')) === 1, 'normal untargeted capture can research a local-only UPC');
+
+
+// Review regressions: manual completion must not override independently fulfilled scans.
+foreach ([2, 3] as $count)
+{
+	$db = shopFixture();
+	$svc = new GrocyAiShoppingCaptureService($db);
+	$svc->SelectList(1, 1, '1');
+	$row = array_values(array_filter($svc->Read(1, '1')['items'], fn ($r) => $r['id'] === 1))[0];
+	$svc->SetDone(1, '1', 'manual-first', 1, $row['version'], true);
+	for ($i = 0;$i < $count;$i++)
+	{
+		$row = array_values(array_filter($svc->Read(1, '1')['items'], fn ($r) => $r['id'] === 1))[0];
+		$svc->Scan(1, '1', 'after-' . $i, '4006381333931', 1, $row['version']);
+	}
+	$svc->Undo(1, '1', 'manual-first');
+	$svc->Undo(1, '1', 'manual-first');
+	shopCheck((bool)$db->query('SELECT done FROM shopping_list WHERE id=1')->fetchColumn() === ($count === 3), 'manual Undo respects later scan fulfillment');
+	if ($count === 3)
+	{
+		$svc->Undo(1, '1', 'after-2');
+		shopCheck(!(bool)$db->query('SELECT done FROM shopping_list WHERE id=1')->fetchColumn(), 'undo later scan reopens transferred manual completion');
+	}
+}
+$db = shopFixture();
+$svc = new GrocyAiShoppingCaptureService($db);
+$svc->SelectList(1, 1, '1');
+$db->exec('UPDATE shopping_list SET amount=1e999 WHERE id=1');
+$row = array_values(array_filter($svc->Read(1, '1')['items'], fn ($r) => $r['id'] === 1))[0];
+shopCheck($row['amount'] === null, 'nonfinite target remains readable with confirmation');
+$op = $svc->Scan(1, '1', 'invalid-target', '4006381333931', 1, $row['version']);
+shopCheck($op['needs_amount'], 'invalid target requires explicit quantity');
+$svc->Settle(1, '1', 'invalid-target', 1, $row['version'], 1);
+shopCheck((bool)$db->query('SELECT done FROM shopping_list WHERE id=1')->fetchColumn(), 'explicit invalid-target confirmation');
+
 echo "shopping_capture: all checks passed\n";

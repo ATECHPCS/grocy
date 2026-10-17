@@ -607,3 +607,111 @@ test('@shopping populated light and night layouts have touch targets', async ({
 		});
 	}
 });
+
+test('@shopping uncommitted approval recovery preserves the confirmation body', async ({
+	page,
+}) => {
+	const { calls } = await setup(page, { unknown: true });
+	await page.route('**/shopping/operations/*/curate', (route) =>
+		route.abort(),
+	);
+	await page
+		.getByRole('button', { name: 'Scan for Milk', exact: true })
+		.click();
+	await scan(page);
+	await page.getByRole('button', { name: 'Curate UPC', exact: true }).click();
+	await page.getByLabel('Curation action').selectOption('create');
+	await page
+		.getByLabel('Product name', { exact: true })
+		.fill('Preserve this new child');
+	await page
+		.getByRole('button', {
+			name: 'Approve branded product and UPC',
+			exact: true,
+		})
+		.click();
+	await page
+		.getByRole('button', { name: 'Check saved operation', exact: true })
+		.click();
+	await expect(
+		page.getByRole('button', { name: 'Retry same operation', exact: true }),
+	).toBeVisible();
+	const saved = await page.evaluate(() =>
+		JSON.parse(sessionStorage.getItem('grocy-shopping-pending-12')),
+	);
+	expect(saved.body.fields.name).toBe('Preserve this new child');
+	await expect(page.locator('#grocyai-shopping-status')).toContainText(
+		'not yet verified',
+	);
+	await expect(
+		page.getByRole('button', { name: 'Retry same operation', exact: true }),
+	).toBeEnabled();
+});
+test('@shopping changed amount target updates units and clears the quantity draft', async ({
+	page,
+}) => {
+	const { state } = await setup(page, { needsAmount: true });
+	state.items[1].unit = 'pack';
+	state.items[1].qu_id = 2;
+	await scan(page);
+	await page.getByLabel('Collected amount in can').fill('3');
+	await page.getByLabel('Match list item').selectOption('2');
+	await expect(page.getByLabel('Collected amount in pack')).toHaveValue('');
+	await page.getByLabel('Collected amount in pack').fill('0.5');
+	await page.clock.install();
+	await page.clock.fastForward(16000);
+	await expect(page.getByLabel('Collected amount in pack')).toHaveValue(
+		'0.5',
+	);
+});
+test('@shopping periodic refresh preserves an edited amount and navigation guard', async ({
+	page,
+}) => {
+	await page.clock.install();
+	await setup(page, { needsAmount: true });
+	await scan(page);
+	await page.getByLabel('Collected amount in can').fill('0.5');
+	await page.getByLabel('Collected amount in can').blur();
+	await page.clock.fastForward(16000);
+	await expect(page.getByLabel('Collected amount in can')).toHaveValue('0.5');
+	page.removeAllListeners('dialog');
+	page.on('dialog', (d) => d.dismiss());
+	await page.locator('#grocyai-capture-dashboard-link').click();
+	await expect(page).toHaveURL(/capture-shopping-list/);
+});
+test('@shopping uncommitted settlement is not reported as saved', async ({
+	page,
+}) => {
+	await setup(page, { needsAmount: true });
+	let lost = true;
+	await page.route('**/shopping/operations/*/settle', async (route) => {
+		if (lost) {
+			lost = false;
+			return route.abort();
+		}
+		return route.fallback();
+	});
+	await scan(page);
+	await page.getByLabel('Collected amount in can').fill('1');
+	await page
+		.getByRole('button', { name: 'Apply to list', exact: true })
+		.click();
+	await page
+		.getByRole('button', { name: 'Check saved operation', exact: true })
+		.click();
+	await expect(page.locator('#grocyai-shopping-status')).toContainText(
+		'not yet verified',
+	);
+	await page
+		.getByRole('button', { name: 'Retry same operation', exact: true })
+		.click();
+	await expect(page.locator('#grocyai-shopping-status')).toContainText(
+		'verified',
+	);
+	await expect(
+		page.getByRole('button', {
+			name: 'Check saved operation',
+			exact: true,
+		}),
+	).toHaveCount(0);
+});
