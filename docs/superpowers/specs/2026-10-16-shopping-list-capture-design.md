@@ -20,7 +20,7 @@ The server reads current native list rows rather than replacing the shared list 
 
 ## Scanning and matching
 
-The shopper can scan normally or tap a list row to choose it as the target for the next item. The target is clearly displayed and can be cleared. After a scan is settled, clear the target so it cannot accidentally curate the next unrelated item.
+The shopper can scan normally or tap a list row to choose it as the target for the next item. The target is clearly displayed and can be cleared. After a scan is settled, clear the target so it cannot accidentally curate the next unrelated item. A targeted unknown scan pauses for explicit curation: focus moves to Curate UPC, and the shopper completes curation or chooses Keep as normal capture/Undo before entering another UPC. Untargeted unknown and off-list scans retain input focus for continuous keyboard scanning.
 
 A known UPC uses its existing Grocy owner. Within the selected list, an exact product match takes precedence over a generic-parent match. A branded product can satisfy a row for its direct generic parent when the relationship and quantity conversion are valid. No fuzzy name match establishes identity. If multiple rows are eligible at the same priority, the shopper chooses one; one scan cannot count against several rows.
 
@@ -64,13 +64,13 @@ After a collection action, offer Undo with its effect stated. In an open trip, u
 
 UPC associations and approved catalog products survive collection Undo. They are independently confirmed catalog changes; Undo does not delete a product or detach its barcode.
 
-Undo is a compensating, audited operation rather than deletion of history. It is idempotent and cannot reduce capture quantities below valid values. If a line has receipt allocation history, the trip is reviewing/committed, or a later edit prevents a safe reversal, block scan Undo and direct the shopper to the existing review controls. Do not reverse stock through this feature.
+Undo is a compensating, audited operation rather than deletion of history. It is idempotent and cannot reduce capture quantities below valid values. If a native list edit prevents safe shared reversal, allow capture-only scan Undo while preserving the shared row and explicitly explaining that its current state was left unchanged. If the capture line itself was edited or has receipt allocation history, or the trip is reviewing/committed, block scan Undo and explain that collection history remains and any shared-list adjustment must be explicit. Do not reverse stock through this feature.
 
 Recompute remaining collection contributions before reopening a row: undoing an earlier scan must not uncheck an item still fulfilled by later scans. Editing purchase-review quantities or excluding a line does not imply that the shopper returned an item to the shelf; shared-list adjustments remain explicit rather than being inferred from receipt review.
 
 Detect changes to native shopping-list rows with a module-owned monotonic version ledger and SQLite triggers on native row insert/update/delete. Keep tombstones so deletion/recreation and a done/undone/done sequence cannot make a stale action appear current. The triggers record versions only; they do not change native list behavior. Reads expose opaque row versions, and collection/Undo transactions compare the expected version with the current row before writing.
 
-If another shopper changes the row after an action, a stale Undo must not overwrite that change. Return a conflict with the current state and allow refresh or ordinary manual editing. Do not silently retry a stale write using a newly fetched version. Editing list amount, unit or product similarly requires recalculating eligibility and progress before another completion attempt.
+If another shopper changes the row after an action, a stale Undo must not overwrite that change. For scan Undo, remove the capture contribution without modifying the shared row when safe capture-only removal is possible. Manual check-off Undo still requires its original current version; a stale manual reversal returns a conflict and leaves ordinary manual list editing available. Do not silently retry a stale shared write using a newly fetched version. Editing list amount, unit or product similarly requires recalculating eligibility and progress before another completion attempt.
 
 Deleting or canceling a capture session does not automatically undo shared-list collection or confirmed catalog changes. Explain this in the cancellation confirmation when the trip has such actions; remaining list adjustments are explicit. Switching sessions or returning to the dashboard has no collection side effects.
 
