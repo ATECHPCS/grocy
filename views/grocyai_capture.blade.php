@@ -8,6 +8,7 @@ $grocyAiAssetVersion = '2.6.22';
 	href="{{ $U('/custom/grocy_AI/grocy-ai.css?v=', true) }}{{ $grocyAiAssetVersion }}">
 @endpush
 @push('pageScripts')
+<script src="{{ $U('/custom/grocy_AI/capture-shopping-list.js?v=', true) }}{{ $grocyAiAssetVersion }}"></script>
 <script src="{{ $U('/custom/grocy_AI/capture.js?v=', true) }}{{ $grocyAiAssetVersion }}">
 			</script>
 @endpush
@@ -90,6 +91,7 @@ $grocyAiAssetVersion = '2.6.22';
 				</div>
 			</details>
 		</section>
+		<details id="grocyai-shopping-panel" class="grocy-ai-flow-card" open><summary>{{ $__t('Shopping list') }}</summary><div id="grocyai-shopping-content"></div></details>
 		<section class="grocy-ai-capture-scan-section grocy-ai-flow-card"
 			aria-labelledby="grocyai-capture-scan-heading">
 			<h3 id="grocyai-capture-scan-heading">{{ $__t('Scan') }}</h3>

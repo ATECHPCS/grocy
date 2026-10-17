@@ -33,7 +33,8 @@ class GrocyAiCaptureResearchService
 				return null;
 			}
 
-			$this->Db->prepare('INSERT OR IGNORE INTO grocy_ai_capture_research_jobs (canonical_gtin, state) VALUES (?, ?)')->execute([$canonical, $localOnly ? 'needs_input' : 'queued']);
+			$this->Db->prepare('INSERT OR IGNORE INTO grocy_ai_capture_research_jobs (canonical_gtin, state, safe_error_code) VALUES (?, ?, ?)')->execute([$canonical, $localOnly ? 'needs_input' : 'queued', $localOnly ? 'local_curation' : null]);
+			if (!$localOnly) $this->Db->prepare("UPDATE grocy_ai_capture_research_jobs SET state = 'queued', safe_error_code = NULL WHERE canonical_gtin = ? AND state = 'needs_input' AND attempts = 0 AND safe_error_code = 'local_curation'")->execute([$canonical]);
 			$jobQuery = $this->Db->prepare('SELECT id FROM grocy_ai_capture_research_jobs WHERE canonical_gtin = ?');
 			$jobQuery->execute([$canonical]);
 			$jobId = (int)$jobQuery->fetchColumn();

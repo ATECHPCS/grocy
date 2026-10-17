@@ -1099,3 +1099,12 @@ details.grocy-ai-diagnostics:not([open]) > .grocy-ai-diagnostic-body {
 #grocyai-capture-dashboard .grocy-ai-dashboard-session h4 { font-size: 1.15rem; }
 @media(min-width: 992px) { #grocyai-capture-dashboard .grocy-ai-dashboard-stats { grid-template-columns:repeat(4,minmax(0,1fr)); } }
 @media(max-width: 359px) { #grocyai-capture-dashboard .grocy-ai-dashboard-stats { grid-template-columns:minmax(0,1fr); } }
+
+/* Shopping list collection stays inside the capture surface. */
+#grocyai-shopping-panel { overflow-wrap: anywhere; }
+#grocyai-shopping-panel label { display: block; margin: 8px 0; }
+#grocyai-shopping-panel input, #grocyai-shopping-panel select { width: 100%; max-width: 100%; min-height: 44px; }
+#grocyai-shopping-panel button { min-height: 44px; margin: 4px; white-space: normal; }
+#grocyai-shopping-panel h4 { font-size: 1.1rem; }
+#grocyai-shopping-panel .grocy-ai-shopping-row, #grocyai-shopping-panel .grocy-ai-shopping-operation { border-top: 1px solid currentColor; padding: 12px 0; }
+#grocyai-shopping-panel :focus-visible { outline: 3px solid #1685d1; outline-offset: 2px; }
