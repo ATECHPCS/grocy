@@ -166,3 +166,23 @@ The isolated capture research service stores optional parent mode/name in existi
 The bare capture URL now opens a personal dashboard with explicit New session, active session Resume/Review, completed history and separately paged 25-session lists. A strict private GET DTO supplies statistics and counts; dashboard reads and navigation never create trips or stock. One explicit creation request navigates only after validating the returned open trip ID. An ambiguous response locks creation and asks the user to refresh and review recoverable empty sessions. Printed receipt totals during the last 30 days include available printed amounts once, with missing receipt/total guidance and no entered-total fallback. Grocy currency and price-display settings format money; browser locale formats dates.
 
 Capture and review add guarded Back to dashboard actions: dirty draft discard needs confirmation, pending mutations/commits block leaving, and capture retains pending/ambiguous save protection. The dashboard Blade uses the existing U helper and scoped purchase flow tokens without loading camera, capture, receipt or research scripts. Capture/review/dashboard assets and mirrored fixtures use `2.6.22`; customization marker `ATECHPCS-grocy_AI-45` invalidates cached Blade views. The portable module version, schema and provider integration are unchanged. Automated verification and separate physical-phone acceptance are recorded in `docs/superpowers/plans/2026-10-13-capture-dashboard-verification.md`.
+
+
+## ATECHPCS-grocy_AI-46 — shopping list capture
+
+Capture asset token `2.6.23` adds a native shopping-list panel, durable collection
+operations, explicit UPC linking and branded-child curation, verified quantity
+progress, shared check-off and guarded Undo. The portable module version remains
+unchanged. `views/grocyai_capture.blade.php`, its dashboard/review asset tokens,
+`public/custom/grocy_AI/capture.js`, the new `capture-shopping-list.js` and scoped
+`grocy-ai.css` are the frontend integration surface. Existing product approval has
+an optional in-transaction precondition for concurrent shopping-list validation.
+All other PHP behavior remains under `custom/grocy_AI/`.
+
+The module adds native-list version tracking triggers plus namespaced selection,
+operation and audit tables. Restore the whole Grocy data path and its runtime
+settings together. Dockerfile.atech already copies the complete module and public
+asset directories; no separate image COPY is needed. Stock remains unchanged until
+explicit purchase commit. Read-only deployment smoke must not scan or approve a
+real product. Feature-specific PHP, native-schema and browser gates are documented
+in `custom/grocy_AI/README.md`.

@@ -1108,3 +1108,5 @@ details.grocy-ai-diagnostics:not([open]) > .grocy-ai-diagnostic-body {
 #grocyai-shopping-panel h4 { font-size: 1.1rem; }
 #grocyai-shopping-panel .grocy-ai-shopping-row, #grocyai-shopping-panel .grocy-ai-shopping-operation { border-top: 1px solid currentColor; padding: 12px 0; }
 #grocyai-shopping-panel :focus-visible { outline: 3px solid #1685d1; outline-offset: 2px; }
+
+#grocyai-shopping-panel .grocy-ai-shopping-rows { max-height: min(45vh, 24rem); overflow-y: auto; overscroll-behavior: contain; }

@@ -1,6 +1,6 @@
 @extends('layout.default')
 @php
-$grocyAiAssetVersion = '2.6.22';
+$grocyAiAssetVersion = '2.6.23';
 @endphp
 @push('pageStyles')
 <link rel="stylesheet" href="{{ $U('/custom/grocy_AI/grocy-ai.css?v=', true) }}{{ $grocyAiAssetVersion }}">

@@ -9,6 +9,7 @@
 			readSequence = 0,
 			model = null,
 			target = null,
+			targetVersion = null,
 			busy = false;
 		var pending = null,
 			form = null,
@@ -16,6 +17,14 @@
 			denied = false,
 			loading = null;
 		var base = root.getAttribute('data-trips-endpoint');
+		var targetBanner = document.createElement('p');
+		targetBanner.setAttribute('role', 'status');
+		targetBanner.setAttribute('aria-live', 'polite');
+		var scanHeading = document.getElementById(
+			'grocyai-capture-scan-heading',
+		);
+		if (scanHeading)
+			scanHeading.insertAdjacentElement('afterend', targetBanner);
 		function endpoint() {
 			return base + '/' + encodeURIComponent(trip) + '/shopping';
 		}
@@ -381,7 +390,7 @@
 						operation_id: id,
 						barcode: barcode,
 						row_id: row ? row.id : null,
-						expected_version: row ? row.version : null,
+						expected_version: row ? targetVersion : null,
 					},
 					id,
 					'scan',
@@ -699,6 +708,11 @@
 				);
 		}
 		function render() {
+			targetBanner.textContent =
+				target && rowFor(target)
+					? 'Next scan: ' + rowFor(target).name
+					: '';
+			targetBanner.hidden = !target;
 			content.textContent = '';
 			var message = node('p', status, content);
 			message.id = 'grocyai-shopping-status';
@@ -810,8 +824,10 @@
 					target = null;
 					render();
 				});
+			var rows = node('div', undefined, content);
+			rows.className = 'grocy-ai-shopping-rows';
 			model.items.forEach(function (r) {
-				var item = node('section', undefined, content);
+				var item = node('section', undefined, rows);
 				item.className = 'grocy-ai-shopping-row';
 				item.setAttribute('data-shopping-row', String(r.id));
 				node('h4', r.name, item);
@@ -832,7 +848,18 @@
 					'Scan for ' + r.name,
 					function () {
 						target = r.id;
+						targetVersion = r.version;
 						render();
+						var scanHeading = document.getElementById(
+							'grocyai-capture-scan-heading',
+						);
+						if (scanHeading)
+							scanHeading.scrollIntoView({ block: 'start' });
+						var scanButton = document.getElementById(
+							'camerabarcodescanner-start-button',
+						);
+						if (scanButton)
+							scanButton.focus({ preventScroll: true });
 					},
 					model.permissions && !model.permissions.collect,
 				);
