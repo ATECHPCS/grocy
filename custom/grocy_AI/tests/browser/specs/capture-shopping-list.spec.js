@@ -223,6 +223,9 @@ async function setup(
 				operation_id: body.operation_id,
 				state: 'settled',
 				line_id: null,
+				kind: 'manual',
+				manual_done: body.done,
+				row_name: r.name,
 				row_id: r.id,
 				product_id: null,
 				needs_amount: false,
@@ -967,4 +970,105 @@ test('@shopping targeted unknown scan focuses explicit curation control', async 
 	await expect(
 		page.getByRole('button', { name: 'Curate UPC', exact: true }),
 	).toBeFocused();
+});
+
+for (const [label, options] of [
+	['unknown', { unknown: true }],
+	['off list', { scanState: 'pending_selection', errorCode: 'not_on_list' }],
+]) {
+	test(
+		'@shopping ' +
+			label +
+			' leaves wedge focus on scanner and Enter scans again',
+		async ({ page }) => {
+			const { calls } = await setup(page, options);
+			await scan(page);
+			await expect(
+				page.locator('#grocyai-capture-barcode'),
+			).toBeFocused();
+			await page.keyboard.type('036000291452');
+			await page.keyboard.press('Enter');
+			await expect
+				.poll(
+					() =>
+						calls.filter((x) => x.path.endsWith('/shopping/scan'))
+							.length,
+				)
+				.toBe(2);
+			expect(calls.filter((x) => x.path.endsWith('/undo'))).toHaveLength(
+				0,
+			);
+		},
+	);
+}
+
+test('@shopping manual actions name the row without claiming a scan', async ({
+	page,
+}) => {
+	await setup(page);
+	await page
+		.getByRole('button', {
+			name: 'Mark collected: Paper towels',
+			exact: true,
+		})
+		.click();
+	await expect(page.locator('#grocyai-shopping-status')).toContainText(
+		'Checked off Paper towels',
+	);
+	await expect(
+		page.locator('.grocy-ai-shopping-operation'),
+	).not.toContainText('Unknown product');
+});
+test('@shopping no compatible entries hides unusable match controls', async ({
+	page,
+}) => {
+	const { state } = await setup(page, {
+		scanState: 'pending_selection',
+		errorCode: 'not_on_list',
+	});
+	await scan(page);
+	state.operations[0].compatible_row_ids = [];
+	await page
+		.getByRole('button', { name: 'Refresh shopping list', exact: true })
+		.click();
+	await expect(page.getByLabel('Match list item')).toHaveCount(0);
+	await expect(
+		page.getByRole('button', {
+			name: 'Keep as normal capture',
+			exact: true,
+		}),
+	).toBeVisible();
+});
+test('@shopping catalog success survives row removal before collection', async ({
+	page,
+}) => {
+	const { state } = await setup(page, { unknown: true });
+	await page
+		.getByRole('button', { name: 'Scan for Milk', exact: true })
+		.click();
+	await scan(page);
+	await page.getByRole('button', { name: 'Curate UPC', exact: true }).click();
+	await page.route('**/curate', (route) => {
+		state.items = [];
+		state.operations[0].product_id = 2;
+		return route.fulfill({
+			contentType: 'application/json',
+			body: JSON.stringify({
+				catalog: { product_id: 2 },
+				operation: state.operations[0],
+			}),
+		});
+	});
+	await page
+		.getByRole('button', {
+			name: 'Confirm permanent UPC link',
+			exact: true,
+		})
+		.click();
+	await expect(page.locator('#grocyai-shopping-status')).toContainText(
+		'Permanent product link saved',
+	);
+	await expect(page.locator('#grocyai-shopping-status')).toContainText(
+		'Choose an available entry',
+	);
 });

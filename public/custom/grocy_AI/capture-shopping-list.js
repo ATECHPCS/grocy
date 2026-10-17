@@ -265,7 +265,19 @@
 						.join('-');
 		}
 		function operationMessage(op) {
+			if (op.kind === 'manual')
+				return op.state === 'undone'
+					? 'Undid the list check-off for ' +
+							(op.row_name || 'this entry') +
+							'.'
+					: (op.manual_done === false
+							? 'Marked remaining: '
+							: 'Checked off ') +
+							(op.row_name || 'this entry') +
+							'.';
 			var reasons = {
+				shared_completion_preserved:
+					'Removed from this trip. The shared list was left unchanged; mark the entry remaining explicitly if needed.',
 				product_mismatch:
 					'This UPC belongs to a different product. Choose a compatible entry or keep it as normal capture.',
 				not_on_list:
@@ -463,34 +475,42 @@
 					},
 					id,
 					'scan',
-				).then(function (op) {
-					target = null;
-					status = operationMessage(op);
-					refresh().then(function () {
-						if (op.state !== 'settled') {
-							var box = content.querySelector(
-								'[data-operation-id="' + op.operation_id + '"]',
-							);
-							var control =
-								box &&
-								(box.querySelector('[data-curation-action]') ||
-									box.querySelector('select') ||
-									box.querySelector('button'));
-							if (control) {
-								control.scrollIntoView({ block: 'center' });
-								control.focus({ preventScroll: true });
+				)
+					.then(function (op) {
+						target = null;
+						status = operationMessage(op);
+						refresh().then(function () {
+							if (row && op.state === 'awaiting_curation') {
+								var box = content.querySelector(
+									'[data-operation-id="' +
+										op.operation_id +
+										'"]',
+								);
+								var control =
+									box &&
+									box.querySelector('[data-curation-action]');
+								if (control) {
+									control.scrollIntoView({ block: 'center' });
+									control.focus({ preventScroll: true });
+								}
 							}
+						});
+						return op.line;
+					})
+					.catch(function (error) {
+						if (error.safeToRetry) {
+							target = null;
+							refresh();
 						}
+						throw error;
 					});
-					return op.line;
-				});
 			});
 		}
 		function settle(op, row, amount) {
 			if (!row) {
 				status = 'Choose an available entry from the original list.';
 				render();
-				return;
+				return Promise.resolve();
 			}
 			var body = { row_id: row.id, expected_version: row.version };
 			if (amount !== undefined) body.amount = amount;
@@ -624,6 +644,7 @@
 			submit.className = 'btn btn-primary';
 			submit.disabled = busy || !!pending;
 			var summary = node('p', '', box);
+			box.insertBefore(summary, submit);
 			function summarize() {
 				var selected = existing.options[existing.selectedIndex];
 				summary.textContent =
@@ -753,12 +774,18 @@
 			var row = rowFor(op.row_id);
 			node(
 				'p',
-				(op.line ? 'UPC ' + op.line.scanned_barcode : 'List entry') +
+				(op.kind === 'manual'
+					? op.row_name || 'List entry'
+					: op.line
+						? 'UPC ' + op.line.scanned_barcode
+						: 'List entry') +
 					' · ' +
-					(op.product_name ||
-						(op.product_id
-							? 'Product #' + op.product_id
-							: 'Unknown product')) +
+					(op.kind === 'manual'
+						? 'Manual list action'
+						: op.product_name ||
+							(op.product_id
+								? 'Product #' + op.product_id
+								: 'Unknown product')) +
 					' · ' +
 					operationMessage(op),
 				box,
@@ -810,7 +837,15 @@
 				!model.permissions.curate
 			)
 				node('p', 'An authorized reviewer must approve this UPC.', box);
-			if (op.product_id) {
+			if (
+				op.product_id &&
+				model.items.some(function (r) {
+					return (
+						!Array.isArray(op.compatible_row_ids) ||
+						op.compatible_row_ids.indexOf(r.id) !== -1
+					);
+				})
+			) {
 				var select = field(box, 'Match list item', 'select');
 				choice(select, '', 'Choose an entry');
 				model.items

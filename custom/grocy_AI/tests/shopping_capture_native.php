@@ -146,8 +146,8 @@ $db->exec("INSERT INTO shopping_list(id,shopping_list_id,product_id,amount,qu_id
 $t4=(int)$capture->StartTrip('1')['id'];$s->SelectList($t4,770,'1');$r=$s->Read($t4,'1')['items'][0];
 $s->Scan($t4,'1','stale-done','4006381333931',771,$r['version']);
 $db->exec("UPDATE shopping_list SET note='Another shopper' WHERE id=771");
-$rejected=false;try {$s->Undo($t4,'1','stale-done');} catch(RuntimeException $e) {$rejected=true;}
-if (!$rejected || !(bool)$db->query('SELECT done FROM shopping_list WHERE id=771')->fetchColumn()) throw new RuntimeException('Stale shared completion reversal must be rejected');
+$undo=$s->Undo($t4,'1','stale-done');
+if ($undo['state'] !== 'undone' || $undo['error_code'] !== 'shared_completion_preserved' || !(bool)$db->query('SELECT done FROM shopping_list WHERE id=771')->fetchColumn()) throw new RuntimeException('Stale completion must allow capture-only Undo and preserve shared done');
 // A reader must not request a write lock once migrations are installed.
 $file=$db->query('PRAGMA database_list')->fetch(PDO::FETCH_ASSOC)['file'];
 $db->exec('PRAGMA busy_timeout=0');
@@ -168,6 +168,17 @@ if (!(bool)$db->query('SELECT done FROM shopping_list WHERE id=772')->fetchColum
 $s->Undo($t5,'1','null-manual-confirm');
 if ((bool)$db->query('SELECT done FROM shopping_list WHERE id=772')->fetchColumn()) throw new RuntimeException('Last manual null confirmation must reverse owned completion');
 
+
+$db->exec('INSERT INTO shopping_list(id,shopping_list_id,product_id,amount,qu_id) VALUES(773,770,10001,3,901)');
+$t6=(int)$capture->StartTrip('1')['id'];$s->SelectList($t6,770,'1');
+$current=fn()=>array_values(array_filter($s->Read($t6,'1')['items'],fn($r)=>$r['id']===773))[0];
+for($i=1;$i<=3;$i++) $s->Scan($t6,'1','completed-'.$i,'4006381333931',773,$current()['version']);
+$db->exec('UPDATE shopping_list SET amount=amount+1 WHERE id=773');
+$s->Scan($t6,'1','completed-extra','4006381333931',773,$current()['version']);
+$removed=$s->Undo($t6,'1','completed-extra');$progress=$current();
+if($removed['error_code']!=='shared_completion_preserved' || $progress['collected_amount']!==3.0 || $progress['remaining_amount']!==1.0 || !$progress['done']) throw new RuntimeException('Native amount increment must allow extra scan Undo and preserve shared done');
+$s->Undo($t6,'1','completed-1');
+if($current()['collected_amount']!==2.0 || !$current()['done']) throw new RuntimeException('Earlier scan Undo must preserve native completion after amount edit');
 foreach (['stock','stock_log'] as $table) {
  if ($before[$table] !== $db->query('SELECT * FROM '.$table)->fetchAll(PDO::FETCH_ASSOC)) throw new RuntimeException('Follow-up operations changed stock');
 }
