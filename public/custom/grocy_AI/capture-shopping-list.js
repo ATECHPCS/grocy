@@ -67,6 +67,8 @@
 									'Shopping list request failed.',
 							);
 							error.status = response.status;
+							error.safeToRetry =
+								response.status >= 400 && response.status < 500;
 							throw error;
 						}
 						return data;
@@ -121,6 +123,7 @@
 					'pending_selection',
 					'pending_amount',
 					'settled',
+					'captured',
 					'conflicted',
 					'undone',
 				].indexOf(op.state) !== -1 &&
@@ -204,12 +207,16 @@
 					? '/scan'
 					: record.kind === 'done'
 						? '/done'
-						: ['curate', 'settle', 'undo'].includes(record.kind)
+						: record.kind === 'keepCapture'
 							? '/operations/' +
 								encodeURIComponent(record.operation_id) +
-								'/' +
-								record.kind
-							: null;
+								'/keep-capture'
+							: ['curate', 'settle', 'undo'].includes(record.kind)
+								? '/operations/' +
+									encodeURIComponent(record.operation_id) +
+									'/' +
+									record.kind
+								: null;
 			return (
 				path !== null &&
 				record.url === endpoint() + path &&
@@ -257,6 +264,51 @@
 						})
 						.join('-');
 		}
+		function operationMessage(op) {
+			if (op.kind === 'manual')
+				return op.state === 'undone'
+					? 'Undid the list check-off for ' +
+							(op.row_name || 'this entry') +
+							'.'
+					: (op.manual_done === false
+							? 'Marked remaining: '
+							: 'Checked off ') +
+							(op.row_name || 'this entry') +
+							'.';
+			var reasons = {
+				shared_completion_preserved:
+					'Removed from this trip. The shared list was left unchanged; mark the entry remaining explicitly if needed.',
+				product_mismatch:
+					'This UPC belongs to a different product. Choose a compatible entry or keep it as normal capture.',
+				not_on_list:
+					'Not on this shopping list. The item is saved in capture.',
+				choose_entry: 'Choose one compatible shopping list entry.',
+				entry_changed:
+					'The shared shopping entry changed. Review the current entry before applying this scan.',
+				stale_row:
+					'The shared shopping entry changed. Review the current entry before applying this scan.',
+				confirm_amount:
+					'Confirm the collected amount in the displayed list unit.',
+				needs_curation:
+					'Confirm the permanent UPC product link before collection.',
+			};
+			return (
+				reasons[op.error_code] ||
+				(op.state === 'settled'
+					? 'Scan saved and shopping list updated.'
+					: op.state === 'captured'
+						? 'Normal capture saved; no shopping list association.'
+						: op.state === 'awaiting_curation'
+							? 'Scan saved. Review this UPC below.'
+							: op.state === 'undone'
+								? 'Scan undone. Permanent catalog links remain saved.'
+								: 'Scan saved. Review its shopping list association below.')
+			);
+		}
+		function quantity(value) {
+			return Number(value.toPrecision(12)).toString();
+		}
+
 		function change(path, body, operationId, kind) {
 			if (busy || pending)
 				return Promise.reject(
@@ -287,7 +339,9 @@
 					status =
 						kind === 'curate'
 							? 'Permanent product link saved. Confirm collection below.'
-							: 'Saved.';
+							: kind === 'selection'
+								? 'Shopping list selected.'
+								: operationMessage(op);
 					if (kind !== 'scan' && options.onChanged)
 						options.onChanged();
 					return data;
@@ -363,12 +417,14 @@
 							? !!op.product_id
 							: saved.kind === 'settle' || saved.kind === 'done'
 								? op.state === 'settled'
-								: saved.kind === 'undo'
-									? op.state === 'undone'
-									: saved.kind === 'selection'
-										? data.selected_list_id ===
-											saved.body.list_id
-										: true;
+								: saved.kind === 'keepCapture'
+									? op.state === 'captured'
+									: saved.kind === 'undo'
+										? op.state === 'undone'
+										: saved.kind === 'selection'
+											? data.selected_list_id ===
+												saved.body.list_id
+											: true;
 					if (!verified) {
 						status =
 							'This action is not yet verified. Retry the same operation safely; your confirmation is preserved.';
@@ -400,10 +456,13 @@
 			return Promise.resolve(loading).then(function () {
 				if (denied || (model && model.selected_list_id === null))
 					return options.fallbackScan(barcode);
-				if (!model || busy || pending || form)
-					throw new Error(
+				if (!model || busy || pending || form) {
+					var rejection = new Error(
 						'Finish or verify the shopping list operation before scanning.',
 					);
+					rejection.safeToRetry = true;
+					throw rejection;
+				}
 				var row = rowFor(target),
 					id = uuid();
 				return change(
@@ -416,22 +475,42 @@
 					},
 					id,
 					'scan',
-				).then(function (op) {
-					target = null;
-					status =
-						op.state === 'settled'
-							? 'Scan saved and shopping list updated.'
-							: 'Scan saved. Complete its list match below.';
-					refresh();
-					return op.line;
-				});
+				)
+					.then(function (op) {
+						target = null;
+						status = operationMessage(op);
+						refresh().then(function () {
+							if (row && op.state === 'awaiting_curation') {
+								var box = content.querySelector(
+									'[data-operation-id="' +
+										op.operation_id +
+										'"]',
+								);
+								var control =
+									box &&
+									box.querySelector('[data-curation-action]');
+								if (control) {
+									control.scrollIntoView({ block: 'center' });
+									control.focus({ preventScroll: true });
+								}
+							}
+						});
+						return op.line;
+					})
+					.catch(function (error) {
+						if (error.safeToRetry) {
+							target = null;
+							refresh();
+						}
+						throw error;
+					});
 			});
 		}
 		function settle(op, row, amount) {
 			if (!row) {
 				status = 'Choose an available entry from the original list.';
 				render();
-				return;
+				return Promise.resolve();
 			}
 			var body = { row_id: row.id, expected_version: row.version };
 			if (amount !== undefined) body.amount = amount;
@@ -510,6 +589,13 @@
 			)
 				choice(mode, 'create', 'Create a branded child');
 			var existing = field(box, 'Existing product', 'select');
+			var candidates = catalog.products.filter(function (p) {
+				return (
+					!row.has_children || p.parent_product_id === row.product_id
+				);
+			});
+			if (candidates.length !== 1)
+				choice(existing, '', 'Choose a product');
 			catalog.products
 				.filter(function (p) {
 					return (
@@ -526,6 +612,8 @@
 			name.maxLength = 200;
 			function select(label, values) {
 				var s = field(createFields, label, 'select');
+				if (label === 'Inventory location')
+					choice(s, '', 'Choose a location');
 				values.forEach(function (v) {
 					choice(s, v.id, v.name);
 				});
@@ -555,6 +643,23 @@
 			submit.type = 'submit';
 			submit.className = 'btn btn-primary';
 			submit.disabled = busy || !!pending;
+			var summary = node('p', '', box);
+			box.insertBefore(summary, submit);
+			function summarize() {
+				var selected = existing.options[existing.selectedIndex];
+				summary.textContent =
+					'Permanent UPC ' +
+					op.line.scanned_barcode +
+					' → ' +
+					(mode.value === 'create'
+						? name.value || 'Choose a product name'
+						: existing.value && selected
+							? selected.textContent
+							: 'Choose a product');
+			}
+			box.addEventListener('change', summarize);
+			box.addEventListener('input', summarize);
+			summarize();
 			var error = node('p', '', box);
 			error.setAttribute('role', 'alert');
 			mode.addEventListener('change', function () {
@@ -611,6 +716,10 @@
 					}
 					body.product_id = Number(existing.value);
 				} else {
+					if (!location.value) {
+						error.textContent = 'Choose an inventory location.';
+						return;
+					}
 					body.fields = {
 						name: name.value.trim(),
 						location_id: Number(location.value),
@@ -636,7 +745,13 @@
 					.then(function (data) {
 						form = null;
 						return refresh().then(function () {
-							return settle(data.operation, rowFor(op.row_id));
+							return settle(
+								data.operation,
+								rowFor(op.row_id),
+							).then(function () {
+								status =
+									'Permanent product link saved. ' + status;
+							});
 						});
 					})
 					.catch(function (e) {
@@ -655,29 +770,57 @@
 			if (op.state === 'undone') return;
 			var box = node('div', undefined, parent);
 			box.className = 'grocy-ai-shopping-operation';
+			box.setAttribute('data-operation-id', op.operation_id);
 			var row = rowFor(op.row_id);
 			node(
 				'p',
-				(op.line ? 'UPC ' + op.line.scanned_barcode : 'List entry') +
+				(op.kind === 'manual'
+					? op.row_name || 'List entry'
+					: op.line
+						? 'UPC ' + op.line.scanned_barcode
+						: 'List entry') +
 					' · ' +
-					op.state.replaceAll('_', ' '),
+					(op.kind === 'manual'
+						? 'Manual list action'
+						: op.product_name ||
+							(op.product_id
+								? 'Product #' + op.product_id
+								: 'Unknown product')) +
+					' · ' +
+					operationMessage(op),
 				box,
 			);
-			if (op.state === 'settled') {
-				button(box, 'Undo collection', function () {
-					action(function () {
-						return change(
-							'/operations/' +
-								encodeURIComponent(op.operation_id) +
-								'/undo',
-							{},
-							op.operation_id,
-							'undo',
-						);
-					});
-				});
-				return;
+			if (op.line || op.state === 'settled') {
+				button(
+					box,
+					op.state === 'settled' ? 'Undo collection' : 'Undo scan',
+					function () {
+						action(function () {
+							return change(
+								'/operations/' +
+									encodeURIComponent(op.operation_id) +
+									'/undo',
+								{},
+								op.operation_id,
+								'undo',
+							);
+						});
+					},
+				);
 			}
+			if (op.state === 'settled' || op.state === 'captured') return;
+			button(box, 'Keep as normal capture', function () {
+				action(function () {
+					return change(
+						'/operations/' +
+							encodeURIComponent(op.operation_id) +
+							'/keep-capture',
+						{},
+						op.operation_id,
+						'keepCapture',
+					);
+				});
+			});
 			if (
 				op.state === 'awaiting_curation' &&
 				!op.product_id &&
@@ -686,7 +829,7 @@
 			)
 				button(box, 'Curate UPC', function () {
 					curation(op);
-				});
+				}).setAttribute('data-curation-action', '');
 			else if (
 				op.state === 'awaiting_curation' &&
 				!op.product_id &&
@@ -694,12 +837,27 @@
 				!model.permissions.curate
 			)
 				node('p', 'An authorized reviewer must approve this UPC.', box);
-			if (op.product_id) {
+			if (
+				op.product_id &&
+				model.items.some(function (r) {
+					return (
+						!Array.isArray(op.compatible_row_ids) ||
+						op.compatible_row_ids.indexOf(r.id) !== -1
+					);
+				})
+			) {
 				var select = field(box, 'Match list item', 'select');
 				choice(select, '', 'Choose an entry');
-				model.items.forEach(function (r) {
-					choice(select, r.id, r.name);
-				});
+				model.items
+					.filter(function (r) {
+						return (
+							!Array.isArray(op.compatible_row_ids) ||
+							op.compatible_row_ids.indexOf(r.id) !== -1
+						);
+					})
+					.forEach(function (r) {
+						choice(select, r.id, r.name);
+					});
 				if (row) select.value = String(row.id);
 				var amount = null;
 				if (op.needs_amount) {
@@ -873,15 +1031,18 @@
 				node('h4', r.name, item);
 				node(
 					'p',
-					r.collected_amount +
+					'This trip: ' +
+						quantity(r.collected_amount) +
 						' of ' +
 						(r.amount === null
 							? 'quantity needing confirmation'
-							: r.amount) +
+							: quantity(r.amount)) +
 						' ' +
 						(r.unit || 'list units') +
 						' · ' +
-						(r.done ? 'Collected' : 'Remaining'),
+						(r.done
+							? 'Collected on shared list'
+							: 'Remaining on shared list'),
 					item,
 				);
 				if (r.note && r.note !== r.name) node('p', r.note, item);

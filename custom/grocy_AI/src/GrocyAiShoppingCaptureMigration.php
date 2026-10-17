@@ -9,11 +9,22 @@ final class GrocyAiShoppingCaptureMigration
 	public static function Bootstrap(PDO $db): void
 	{
 		GrocyAiCaptureResearchMigration::Bootstrap($db);
+		$installed = (bool)$db->query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='grocy_ai_shopping_migrations'")->fetchColumn();
+		$triggers = (int)$db->query("SELECT count(*) FROM sqlite_master WHERE type='trigger' AND tbl_name='shopping_list' AND name IN ('grocy_ai_shopping_version_insert','grocy_ai_shopping_version_update','grocy_ai_shopping_version_delete')")->fetchColumn();
+		if ($installed && $triggers === 3 && $db->query('SELECT 1 FROM grocy_ai_shopping_migrations WHERE version=1')->fetchColumn())
+		{
+			return;
+		}
 		$db->beginTransaction();
 		try
 		{
 			$db->exec('CREATE TABLE IF NOT EXISTS grocy_ai_shopping_selection(trip_id INTEGER PRIMARY KEY REFERENCES grocy_ai_capture_trips(id),list_id INTEGER)');
 			$db->exec('CREATE TABLE IF NOT EXISTS grocy_ai_shopping_versions(row_id INTEGER PRIMARY KEY,version INTEGER NOT NULL DEFAULT 1,incarnation INTEGER NOT NULL DEFAULT 1)');
+			// Missing triggers mean native changes may have gone unobserved.
+			if ($installed && $triggers !== 3)
+			{
+				$db->exec('UPDATE grocy_ai_shopping_versions SET version=version+1,incarnation=version+1');
+			}
 			$db->exec('INSERT OR IGNORE INTO grocy_ai_shopping_versions(row_id) SELECT id FROM shopping_list');
 			foreach (['INSERT' => 'NEW', 'UPDATE' => 'NEW', 'DELETE' => 'OLD'] as $event => $row)
 			{
@@ -28,6 +39,8 @@ final class GrocyAiShoppingCaptureMigration
 				$db->exec('CREATE TRIGGER IF NOT EXISTS grocy_ai_shopping_audit_no_' . strtolower($event) . " BEFORE $event ON grocy_ai_shopping_audit BEGIN SELECT RAISE(ABORT,'shopping audit is append-only'); END");
 			}
 			$db->exec("CREATE TRIGGER IF NOT EXISTS grocy_ai_shopping_request_immutable BEFORE UPDATE OF request_json,operation_id,trip_id,kind ON grocy_ai_shopping_operations BEGIN SELECT RAISE(ABORT,'shopping operation identity is immutable'); END");
+			$db->exec('CREATE TABLE IF NOT EXISTS grocy_ai_shopping_migrations(version INTEGER PRIMARY KEY)');
+			$db->exec('INSERT OR IGNORE INTO grocy_ai_shopping_migrations VALUES(1)');
 			$db->commit();
 		}
 		catch (\Throwable $e)

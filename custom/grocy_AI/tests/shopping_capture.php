@@ -33,9 +33,9 @@ function shopReject(callable $f): void
 		return;
 	}throw new RuntimeException('Expected rejection');
 }
-function shopFixture(): PDO
+function shopFixture(?PDO $d = null): PDO
 {
-	$d = new PDO('sqlite::memory:');
+	$d ??= new PDO('sqlite::memory:');
 	$d->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 	$d->exec('CREATE TABLE products(id INTEGER PRIMARY KEY,name TEXT,active INTEGER DEFAULT 1,parent_product_id INTEGER,qu_id_purchase INTEGER DEFAULT 1,qu_id_stock INTEGER DEFAULT 1); CREATE TABLE product_barcodes(id INTEGER PRIMARY KEY,product_id INTEGER,barcode TEXT,amount REAL); CREATE TABLE shopping_lists(id INTEGER PRIMARY KEY,name TEXT); CREATE TABLE shopping_list(id INTEGER PRIMARY KEY,shopping_list_id INTEGER,product_id INTEGER,amount REAL,qu_id INTEGER,note TEXT,done INTEGER DEFAULT 0); CREATE TABLE quantity_units(id INTEGER PRIMARY KEY,name TEXT,active INTEGER DEFAULT 1); CREATE TABLE quantity_unit_conversions_resolved(product_id INTEGER,from_qu_id INTEGER,to_qu_id INTEGER,factor REAL); CREATE TABLE stock(id INTEGER PRIMARY KEY); CREATE TABLE stock_log(id INTEGER PRIMARY KEY)');
 	$d->exec("INSERT INTO products(id,name,parent_product_id) VALUES(1,'Milk',NULL),(2,'Brand milk',1),(3,'Bread',NULL); INSERT INTO product_barcodes(id,product_id,barcode) VALUES(1,2,'4006381333931'),(2,3,'96385074'); INSERT INTO shopping_lists VALUES(1,'Weekly'),(2,'Other'); INSERT INTO quantity_units VALUES(1,'can',1),(2,'kg',1); INSERT INTO shopping_list VALUES(1,1,1,3,1,'note',0),(2,1,3,1,1,NULL,0),(3,2,NULL,1,NULL,'Paper towels',0)");
@@ -111,9 +111,10 @@ shopCheck($auto['row_id'] === 10, 'exact match precedes parent');
 $d->exec('INSERT INTO shopping_list VALUES(11,1,2,10,1,NULL,0)');
 $amb = $s->Scan(1, '1', 'ambiguous', '4006381333931', null, null);
 shopCheck($amb['state'] === 'pending_selection', 'ambiguous candidates require choice');
-// Native changes prevent stale Undo; stock remains entirely untouched.
+// Native note changes permit capture-only Undo when no shared reversal is needed.
 $d->exec('UPDATE shopping_list SET note=\'another shopper\' WHERE id=10');
-shopReject(fn () => $s->Undo(1, '1', 'exact'));
+$s->Undo(1, '1', 'exact');
+shopCheck((int)$d->query('SELECT done FROM shopping_list WHERE id=10')->fetchColumn() === 0, 'capture-only Undo preserves native row');
 shopCheck((int)$d->query('SELECT count(*) FROM stock')->fetchColumn() === 0 && (int)$d->query('SELECT count(*) FROM stock_log')->fetchColumn() === 0, 'no stock writes');
 // Later scans can fulfill a row after the original completion operation is undone.
 $extra = shopFixture();
@@ -186,3 +187,62 @@ $svc->Settle(1, '1', 'invalid-target', 1, $row['version'], 1);
 shopCheck((bool)$db->query('SELECT done FROM shopping_list WHERE id=1')->fetchColumn(), 'explicit invalid-target confirmation');
 
 echo "shopping_capture: all checks passed\n";
+
+$follow=shopFixture();$fs=new GrocyAI\Services\GrocyAiShoppingCaptureService($follow);$fs->SelectList(1,1,'1');
+$rr=$fs->Read(1,'1')['items'][0];
+$mis=$fs->Scan(1,'1','follow-mismatch','96385074',1,$rr['version']);
+shopCheck($mis['state']==='conflicted' && $mis['error_code']==='product_mismatch','mismatch retains accepted scan');
+shopCheck(is_string($mis['product_name']) && $mis['product_name']!=='','actual product name supplied');
+shopCheck(!in_array(1,$mis['compatible_row_ids'],true),'mismatched target excluded from compatible choices');
+$normal=$fs->KeepCapture(1,'1','follow-mismatch');
+shopCheck($normal['state']==='captured' && $normal['row_id']===null,'keep normal capture detaches list association');
+$fs->KeepCapture(1,'1','follow-mismatch');
+shopReject(fn()=>$fs->Settle(1,'1','follow-mismatch',1,$rr['version']));
+shopCheck((float)$follow->query('SELECT quantity FROM grocy_ai_capture_lines')->fetchColumn()===1.0,'detach never scans again');
+$fs->Undo(1,'1','follow-mismatch');
+shopCheck((int)$follow->query('SELECT count(*) FROM grocy_ai_capture_lines')->fetchColumn()===0,'normal capture can Undo its scan');
+echo "shopping_capture: mismatch and detach passed\n";
+
+// Existing deployed manual records have no shape: current versions still prove ownership.
+foreach ([false,true] as $nullTarget) {
+ $old=shopFixture();$os=new GrocyAiShoppingCaptureService($old);$os->SelectList(1,1,'1');
+ if ($nullTarget) $old->exec('UPDATE shopping_list SET qu_id=2 WHERE id=1');
+ $row=fn()=>array_values(array_filter($os->Read(1,'1')['items'],fn($r)=>$r['id']===1))[0];
+ if ($nullTarget) { $r=$row();$os->Scan(1,'1','old-scan','4006381333931',1,$r['version']);$os->Settle(1,'1','old-scan',1,$r['version'],3.0); }
+ $os->SetDone(1,'1','old-manual',1,$row()['version'],true);
+ $old->exec("UPDATE grocy_ai_shopping_operations SET row_shape=NULL WHERE operation_id='old-manual'");
+ if ($nullTarget) {
+  $os->Undo(1,'1','old-scan');shopCheck((bool)$old->query('SELECT done FROM shopping_list WHERE id=1')->fetchColumn(),'legacy null manual confirmation retains completion');
+  $os->Undo(1,'1','old-manual');
+ } else {
+  for($i=1;$i<=3;$i++) $os->Scan(1,'1','old-later-'.$i,'4006381333931',1,$row()['version']);
+  $os->Undo(1,'1','old-manual');$os->Undo(1,'1','old-later-3');
+ }
+ shopCheck(!(bool)$old->query('SELECT done FROM shopping_list WHERE id=1')->fetchColumn(),'legacy manual ownership transfers safely');
+}
+$old=shopFixture();$os=new GrocyAiShoppingCaptureService($old);$os->SelectList(1,1,'1');$r=$os->Read(1,'1')['items'][0];
+$os->Scan(1,'1','unit-change','4006381333931',1,$r['version']);$old->exec('UPDATE shopping_list SET qu_id=2 WHERE id=1');
+shopCheck($os->Undo(1,'1','unit-change')['state']==='undone','unit change allows capture-only Undo');
+// A missing trigger is repaired without taking a write lock on ordinary reads.
+$old->exec('DROP TRIGGER grocy_ai_shopping_version_insert;INSERT INTO shopping_list VALUES(30,1,1,1,1,NULL,0)');
+new GrocyAiShoppingCaptureService($old);
+shopCheck((int)$old->query('SELECT count(*) FROM grocy_ai_shopping_versions WHERE row_id=30')->fetchColumn()===1,'missing native trigger repairs version backfill');
+$race=shopFixture();$rs=new GrocyAiShoppingCaptureService($race);$rs->SelectList(1,1,'1');$row=$rs->Read(1,'1')['items'][0];$rs->Scan(1,'1','race-mismatch','96385074',1,$row['version']);
+$race->exec('DROP TRIGGER grocy_ai_shopping_version_insert;INSERT INTO shopping_list VALUES(30,1,1,1,1,NULL,0)');
+shopCheck(count($rs->Read(1,'1')['items'])===2,'one unversioned candidate never breaks operation DTO or whole panel');
+
+class ShoppingCountingPdo extends PDO {
+ public int $prepares=0;
+ public function prepare(string $query,array $options=[]): PDOStatement|false { $this->prepares++;return parent::prepare($query,$options); }
+}
+$counting=new ShoppingCountingPdo('sqlite::memory:');shopFixture($counting);$cs=new GrocyAiShoppingCaptureService($counting);$cs->SelectList(1,1,'1');
+for($i=10;$i<30;$i++) $counting->exec("INSERT INTO shopping_list VALUES($i,1,1,100,1,NULL,0)");
+for($i=0;$i<20;$i++) $cs->Scan(1,'1','perf-'.$i,'96385074',1,'1');
+$counting->prepares=0;$cs->Read(1,'1');
+shopCheck($counting->prepares<200,'poll queries must not grow as operations times list rows');
+$repair=shopFixture();$ps=new GrocyAiShoppingCaptureService($repair);$ps->SelectList(1,1,'1');$pr=$ps->Read(1,'1')['items'][0];$ps->Scan(1,'1','before-rebuild','4006381333931',1,$pr['version']);
+$repair->exec('DROP TRIGGER grocy_ai_shopping_version_insert;DELETE FROM shopping_list WHERE id=1;INSERT INTO shopping_list VALUES(1,1,1,3,1,NULL,0)');
+$ps=new GrocyAiShoppingCaptureService($repair);$pr=array_values(array_filter($ps->Read(1,'1')['items'],fn($r)=>$r['id']===1))[0];
+shopCheck($pr['collected_amount']===0.0,'trigger repair invalidates unobservable row incarnations');
+$manual=shopFixture();$ms=new GrocyAiShoppingCaptureService($manual);$ms->SelectList(1,2,'1');$mr=$ms->Read(1,'1')['items'][0];$mo=$ms->SetDone(1,'1','manual-label',3,$mr['version'],true);
+shopCheck($mo['kind']==='manual' && $mo['row_name']==='Paper towels','manual operation DTO identifies action and row');

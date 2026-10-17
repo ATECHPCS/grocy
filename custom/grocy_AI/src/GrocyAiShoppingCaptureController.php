@@ -58,7 +58,7 @@ final class GrocyAiShoppingCaptureController extends BaseApiController
 				throw new \InvalidArgumentException('Invalid session');
 			}$id = (int)$id;
 			$op = $args['operationId'] ?? null;
-			if (in_array($action, ['operation', 'options', 'settle', 'undo', 'curate'], true) && (!is_string($op) || !preg_match('/^[A-Za-z0-9_-]{1,100}$/D', $op)))
+			if (in_array($action, ['operation', 'options', 'settle', 'undo', 'keepCapture', 'curate'], true) && (!is_string($op) || !preg_match('/^[A-Za-z0-9_-]{1,100}$/D', $op)))
 			{
 				throw new \InvalidArgumentException('Invalid operation');
 			}
@@ -96,6 +96,9 @@ final class GrocyAiShoppingCaptureController extends BaseApiController
 					{
 						throw new \InvalidArgumentException('Invalid amount');
 					}$result = $s->Settle($id, $actor, $op, $this->integer($b['row_id']), $this->string($b['expected_version']), $amount);
+					break;
+				case 'keepCapture':$this->fields($b, []);
+					$result = $s->KeepCapture($id, $actor, $op);
 					break;
 				case 'undo':$this->fields($b, []);
 					$result = $s->Undo($id, $actor, $op);
@@ -173,5 +176,10 @@ final class GrocyAiShoppingCaptureController extends BaseApiController
 	public function Curate(Request $r, Response $p, array $a): Response
 	{
 		return $this->handle($r, $p, $a, 'curate');
+	}
+
+	public function KeepCapture(Request $request, Response $response, array $args): Response
+	{
+		return $this->handle($request, $response, $args, 'keepCapture');
 	}
 }

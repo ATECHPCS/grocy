@@ -111,3 +111,76 @@ if ((bool)$db->query('SELECT done FROM shopping_list WHERE id=770')->fetchColumn
 }
 
 echo "shopping_capture_native: full Grocy schema, collection/Undo, integrity and zero stock writes passed\n";
+
+// Requested amount is a target, not the identity of this trip's contributions.
+$db->exec("UPDATE shopping_list SET amount=3,qu_id=901,done=0 WHERE id=770;UPDATE product_barcodes SET amount=1 WHERE product_id=10002");
+$t2 = (int)$capture->StartTrip('1')['id'];
+$s->SelectList($t2,770,'1');
+foreach (['edit-a','edit-b'] as $opid) { $r=$s->Read($t2,'1')['items'][0]; $s->Scan($t2,'1',$opid,'4006381333931',770,$r['version']); }
+$db->exec('UPDATE shopping_list SET amount=4 WHERE id=770');
+$r=$s->Read($t2,'1')['items'][0];
+if ($r['collected_amount'] !== 2.0 || $r['remaining_amount'] !== 2.0) throw new RuntimeException('Amount edit must retain two collected and two remaining');
+$s->Undo($t2,'1','edit-b');
+if ($s->Read($t2,'1')['items'][0]['collected_amount'] !== 1.0) throw new RuntimeException('Amount edit must permit capture-only Undo');
+$db->exec("UPDATE shopping_list SET note='Native note' WHERE id=770");
+$s->Undo($t2,'1','edit-a');
+if ($s->Read($t2,'1')['items'][0]['collected_amount'] !== 0.0) throw new RuntimeException('Note edit must permit capture-only Undo');
+
+// No verified conversion: remaining explicit confirmations still fulfill the row.
+$db->exec("INSERT INTO quantity_units(id,name,active) VALUES(903,'Fixture unknown unit',1);UPDATE shopping_list SET amount=2,qu_id=903,done=0 WHERE id=770");
+$t3=(int)$capture->StartTrip('1')['id']; $s->SelectList($t3,770,'1');
+foreach (['null-a'=>2,'null-b'=>1] as $opid=>$amount) { $r=$s->Read($t3,'1')['items'][0];$s->Scan($t3,'1',$opid,'4006381333931',770,$r['version']);$s->Settle($t3,'1',$opid,770,$r['version'],(float)$amount); }
+$s->Undo($t3,'1','null-b');
+if (!(bool)$db->query('SELECT done FROM shopping_list WHERE id=770')->fetchColumn()) throw new RuntimeException('Null target Undo must retain remaining confirmation');
+$s->Undo($t3,'1','null-a');
+if ((bool)$db->query('SELECT done FROM shopping_list WHERE id=770')->fetchColumn()) throw new RuntimeException('Last null confirmation Undo must reopen owned row');
+
+$r=$s->Read($t3,'1')['items'][0];$s->Scan($t3,'1','deleted-scan','4006381333931',770,$r['version']);
+$db->exec('DELETE FROM shopping_list WHERE id=770');
+$s->Undo($t3,'1','deleted-scan');
+if ($s->Operation($t3,'1','deleted-scan')['state'] !== 'undone') throw new RuntimeException('Deleted row must permit capture-only Undo');
+echo "shopping_capture_native: follow-up amount edits, null targets, note/deletion Undo passed\n";
+
+// A native edit after completion must never be overwritten by a stale reversal.
+$db->exec("INSERT INTO shopping_list(id,shopping_list_id,product_id,amount,qu_id) VALUES(771,770,10001,1,901)");
+$t4=(int)$capture->StartTrip('1')['id'];$s->SelectList($t4,770,'1');$r=$s->Read($t4,'1')['items'][0];
+$s->Scan($t4,'1','stale-done','4006381333931',771,$r['version']);
+$db->exec("UPDATE shopping_list SET note='Another shopper' WHERE id=771");
+$undo=$s->Undo($t4,'1','stale-done');
+if ($undo['state'] !== 'undone' || $undo['error_code'] !== 'shared_completion_preserved' || !(bool)$db->query('SELECT done FROM shopping_list WHERE id=771')->fetchColumn()) throw new RuntimeException('Stale completion must allow capture-only Undo and preserve shared done');
+// A reader must not request a write lock once migrations are installed.
+$file=$db->query('PRAGMA database_list')->fetch(PDO::FETCH_ASSOC)['file'];
+$db->exec('PRAGMA busy_timeout=0');
+$writer=new PDO('sqlite:'.$file);$writer->setAttribute(PDO::ATTR_ERRMODE,PDO::ERRMODE_EXCEPTION);$writer->exec('BEGIN IMMEDIATE');
+try { (new GrocyAI\Services\GrocyAiShoppingCaptureService($db))->Read($t4,'1'); }
+finally { $writer->exec('ROLLBACK'); }
+echo "shopping_capture_native: stale reversal and read-under-writer passed\n";
+
+
+$db->exec('INSERT INTO shopping_list(id,shopping_list_id,product_id,amount,qu_id) VALUES(772,770,10001,2,903)');
+$t5=(int)$capture->StartTrip('1')['id'];$s->SelectList($t5,770,'1');
+$r=array_values(array_filter($s->Read($t5,'1')['items'],fn($r)=>$r['id']===772))[0];
+$s->Scan($t5,'1','null-scan-owner','4006381333931',772,$r['version']);$s->Settle($t5,'1','null-scan-owner',772,$r['version'],2.0);
+$r=array_values(array_filter($s->Read($t5,'1')['items'],fn($r)=>$r['id']===772))[0];
+$s->SetDone($t5,'1','null-manual-confirm',772,$r['version'],true);
+$s->Undo($t5,'1','null-scan-owner');
+if (!(bool)$db->query('SELECT done FROM shopping_list WHERE id=772')->fetchColumn()) throw new RuntimeException('Manual null confirmation must retain fulfillment');
+$s->Undo($t5,'1','null-manual-confirm');
+if ((bool)$db->query('SELECT done FROM shopping_list WHERE id=772')->fetchColumn()) throw new RuntimeException('Last manual null confirmation must reverse owned completion');
+
+
+$db->exec('INSERT INTO shopping_list(id,shopping_list_id,product_id,amount,qu_id) VALUES(773,770,10001,3,901)');
+$t6=(int)$capture->StartTrip('1')['id'];$s->SelectList($t6,770,'1');
+$current=fn()=>array_values(array_filter($s->Read($t6,'1')['items'],fn($r)=>$r['id']===773))[0];
+for($i=1;$i<=3;$i++) $s->Scan($t6,'1','completed-'.$i,'4006381333931',773,$current()['version']);
+$db->exec('UPDATE shopping_list SET amount=amount+1 WHERE id=773');
+$s->Scan($t6,'1','completed-extra','4006381333931',773,$current()['version']);
+$removed=$s->Undo($t6,'1','completed-extra');$progress=$current();
+if($removed['error_code']!=='shared_completion_preserved' || $progress['collected_amount']!==3.0 || $progress['remaining_amount']!==1.0 || !$progress['done']) throw new RuntimeException('Native amount increment must allow extra scan Undo and preserve shared done');
+$s->Undo($t6,'1','completed-1');
+if($current()['collected_amount']!==2.0 || !$current()['done']) throw new RuntimeException('Earlier scan Undo must preserve native completion after amount edit');
+foreach (['stock','stock_log'] as $table) {
+ if ($before[$table] !== $db->query('SELECT * FROM '.$table)->fetchAll(PDO::FETCH_ASSOC)) throw new RuntimeException('Follow-up operations changed stock');
+}
+if ($db->query('PRAGMA integrity_check')->fetchColumn() !== 'ok') throw new RuntimeException('Follow-up database integrity failed');
+echo "shopping_capture_native: all follow-up regressions and stock isolation passed\n";

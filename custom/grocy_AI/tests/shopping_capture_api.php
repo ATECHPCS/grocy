@@ -79,6 +79,9 @@ $revision = (int)$db->query("SELECT revision FROM grocy_ai_capture_research_draf
 $db->exec('UPDATE shopping_list SET product_id=3 WHERE id=1');
 shopCheck(shopApi('Curate', ['mode' => 'link', 'revision' => $revision, 'expected_version' => $row['version'], 'product_id' => 2], ['operationId' => 'api-stale'])->getStatusCode() === 409, 'curation guards concurrent list edits inside approval lock');
 shopCheck((int)$db->query("SELECT count(*) FROM product_barcodes WHERE barcode='9780201379624'")->fetchColumn() === 0, 'stale approval writes no barcode');
+shopCheck(shopApi('KeepCapture', [], ['operationId' => 'api-stale'])->getStatusCode() === 200, 'normal capture detaches pending scan');
+shopCheck(shopApi('KeepCapture', [], ['operationId' => 'api-stale'])->getStatusCode() === 200, 'detach retry idempotent');
+shopCheck(shopApi('KeepCapture', ['actor'=>'2'], ['operationId' => 'api-stale'])->getStatusCode() === 400, 'detach rejects unknown fields');
 $db->exec("DELETE FROM user_permissions_resolved WHERE permission_name='MASTER_DATA_EDIT'");
 try
 {
@@ -91,7 +94,7 @@ catch (Grocy\Controllers\Users\PermissionMissingException $e)
 $db->exec("DELETE FROM user_permissions_resolved WHERE permission_name='SHOPPINGLIST_ITEMS_ADD'");
 try
 {
-	shopApi('Undo', [], ['operationId' => 'api-scan']);
+	shopApi('KeepCapture', [], ['operationId' => 'api-stale']);
 	throw new RuntimeException('List permission missing');
 }
 catch (Grocy\Controllers\Users\PermissionMissingException $e)
