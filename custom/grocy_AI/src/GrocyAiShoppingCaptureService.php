@@ -97,7 +97,7 @@ final class GrocyAiShoppingCaptureService
   if(!$line||!(bool)$line['selected'])throw new RuntimeException('Capture line changed');
   // Re-resolve through the service after catalog approval.
   $loaded=(new GrocyAiCaptureService($this->Db,false))->LoadTrip($trip);foreach($loaded['lines'] as $l)if($l['id']===(int)$op['line_id'])$line=$l;
-  $product=$line['resolved_product_id'];$code=(string)$r['version']!==$version?'entry_changed':(!$product?'needs_curation':(!$this->eligible($product,$r)?'product_mismatch':null));
+  $product=$line['resolved_product_id'];$code=(string)$r['version']!==$version?'entry_changed':(!$product?'needs_curation':($r['product_id']!==null&&!$this->eligible($product,$r)?'product_mismatch':null));
   $this->change($trip,$id,['row_id'=>$rowId,'product_id'=>$product,'needs_amount'=>0]);
   if($code!==null){$this->change($trip,$id,['state'=>$code==='needs_curation'?'awaiting_curation':'conflicted','error_code'=>$code]);return;}
   $purchase=(int)$this->query('SELECT qu_id_purchase FROM products WHERE id=? AND active=1',[$product])->fetchColumn();
@@ -132,4 +132,36 @@ final class GrocyAiShoppingCaptureService
    }
    $this->change($tripId,$operationId,['state'=>'undone']);$this->audit($tripId,$operationId,$actor,'undo',['state'=>'undone']);});return $this->Operation($tripId,$actor,$operationId);
  }
+ public function CurationOptions(int $tripId,string $actor,string $operationId):array {
+  $this->trip($tripId,$actor,true);$op=$this->raw($tripId,$operationId);$row=$op['row_id']===null?null:$this->row((int)$op['row_id']);
+  if(!$row||$op['kind']!=='scan'||$op['state']==='undone')throw new RuntimeException('Choose a target before curating');
+  $draft=$this->query('SELECT revision,outcome FROM grocy_ai_capture_research_drafts WHERE trip_id=? AND line_id=?',[$tripId,$op['line_id']])->fetch(PDO::FETCH_ASSOC);
+  if(!$draft)throw new RuntimeException('This scan has no curatable UPC');
+  $products=$this->query('SELECT id,name,parent_product_id,qu_id_purchase,qu_id_stock FROM products WHERE active=1 AND (? IS NULL OR id=? OR parent_product_id=?) ORDER BY name,id',[$row['product_id'],$row['product_id'],$row['product_id']])->fetchAll(PDO::FETCH_ASSOC);
+  foreach($products as &$p)foreach(['id','parent_product_id','qu_id_purchase','qu_id_stock'] as $k)$p[$k]=$p[$k]===null?null:(int)$p[$k];unset($p);
+  $catalog=(new GrocyAiCaptureResearchService($this->Db,false))->ReviewOptions();
+  $pairs=fn($table)=>array_map(fn($r)=>['id'=>(int)$r['id'],'name'=>$r['name']],$this->query('SELECT id,name FROM '.$table.' WHERE active=1 ORDER BY name,id')->fetchAll(PDO::FETCH_ASSOC));
+  return ['revision'=>(int)$draft['revision'],'products'=>$products,'locations'=>$pairs('locations'),'quantity_units'=>$pairs('quantity_units'),'product_groups'=>$catalog['product_groups'],'taxonomy_leaves'=>$catalog['taxonomy_leaves']];
+ }
+ public function Curate(int $tripId,string $actor,string $operationId,string $version,string $mode,int $revision,?int $productId,?array $fields):array {
+  $this->trip($tripId,$actor,true);$op=$this->raw($tripId,$operationId);
+  if($op['kind']!=='scan'||$op['row_id']===null||$op['line_id']===null||$op['state']==='undone')throw new RuntimeException('Choose a target before curating');
+  $guard=function()use($tripId,$actor,$operationId,$version,$mode,$productId,$fields){
+   $this->trip($tripId,$actor,true);$current=$this->raw($tripId,$operationId);
+   if($current['state']==='undone')throw new RuntimeException('Collection was undone');
+   $draft=$this->query('SELECT outcome FROM grocy_ai_capture_research_drafts WHERE trip_id=? AND line_id=?',[$tripId,$current['line_id']])->fetchColumn();
+   if(in_array($draft,['linked','approved'],true))return; // Finalize verifies the exact original confirmation on replay.
+   $row=$this->row((int)$current['row_id']);if((string)$row['version']!==$version||(int)$row['shopping_list_id']!==(int)$current['list_id'])throw new RuntimeException('Shopping entry changed; refresh before approving');
+   if($mode==='link'){
+    if(!$productId||($row['product_id']!==null&&!$this->eligible($productId,$row)))throw new InvalidArgumentException('Choose this product or one of its branded children');
+    if($row['product_id']!==null&&(int)$row['product_id']===$productId&&$this->query('SELECT 1 FROM products WHERE parent_product_id=? LIMIT 1',[$productId])->fetchColumn())throw new InvalidArgumentException('Choose a branded child of this generic product');
+   }elseif($mode==='create'){
+    if(!$row['product_id']||($fields['parent_product_id']??null)!==(int)$row['product_id']||($fields['parent_mode']??null)!=='existing')throw new InvalidArgumentException('New branded product must use the listed parent');
+   }else throw new InvalidArgumentException('Invalid curation mode');
+  };
+  $service=new GrocyAiCaptureProductService($this->Db,$guard);
+  $result=$mode==='link'?$service->LinkDraft($tripId,(int)$op['line_id'],$revision,$productId??0,$actor):$service->ApproveDraft($tripId,(int)$op['line_id'],$revision,$fields??[],$actor);
+  return ['catalog'=>$result,'operation'=>$this->Operation($tripId,$actor,$operationId)];
+ }
+
 }

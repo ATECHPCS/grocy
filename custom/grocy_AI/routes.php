@@ -7,6 +7,7 @@ use GrocyAI\Controllers\GrocyAiCaptureController;
 use GrocyAI\Controllers\Api\GrocyAiCaptureResearchController;
 use GrocyAI\Controllers\GrocyAiConversionController;
 use Slim\Routing\RouteCollectorProxy;
+use GrocyAI\Controllers\Api\GrocyAiShoppingCaptureController;
 
 require_once __DIR__ . '/src/GrocyAiDiagnostic.php';
 require_once __DIR__ . '/src/GrocyAiContract.php';
@@ -37,6 +38,8 @@ require_once __DIR__ . '/src/GrocyAiBulkController.php';
 require_once __DIR__ . '/src/GrocyAiCaptureController.php';
 require_once __DIR__ . '/src/GrocyAiCaptureResearchController.php';
 
+foreach (['GrocyAiShoppingCaptureMigration', 'GrocyAiShoppingCaptureService', 'GrocyAiShoppingCaptureController'] as $shoppingClass) require_once __DIR__ . '/src/' . $shoppingClass . '.php';
+
 $app->group('/api/grocy-ai', function (RouteCollectorProxy $group)
 {
 	$group->get('/status', [GrocyAiApiController::class, 'Status']);
@@ -58,6 +61,15 @@ $app->group('/api/grocy-ai', function (RouteCollectorProxy $group)
 	$group->post('/bulk/plans/{planId}/rollback', [GrocyAiApiController::class, 'BulkPlanRollback']);
 	$group->get('/bulk/plans/{planId}/export', [GrocyAiApiController::class, 'ExportBulkPlan']);
 	$group->get('/bulk/conversion-audit', [GrocyAiApiController::class, 'BulkConversionAudit']);
+	$group->get('/capture/trips/{tripId}/shopping', [GrocyAiShoppingCaptureController::class, 'Read']);
+	$group->post('/capture/trips/{tripId}/shopping/selection', [GrocyAiShoppingCaptureController::class, 'Select']);
+	$group->post('/capture/trips/{tripId}/shopping/scan', [GrocyAiShoppingCaptureController::class, 'Scan']);
+	$group->get('/capture/trips/{tripId}/shopping/operations/{operationId}', [GrocyAiShoppingCaptureController::class, 'Operation']);
+	$group->get('/capture/trips/{tripId}/shopping/operations/{operationId}/options', [GrocyAiShoppingCaptureController::class, 'Options']);
+	$group->post('/capture/trips/{tripId}/shopping/operations/{operationId}/settle', [GrocyAiShoppingCaptureController::class, 'Settle']);
+	$group->post('/capture/trips/{tripId}/shopping/operations/{operationId}/undo', [GrocyAiShoppingCaptureController::class, 'Undo']);
+	$group->post('/capture/trips/{tripId}/shopping/done', [GrocyAiShoppingCaptureController::class, 'Done']);
+	$group->post('/capture/trips/{tripId}/shopping/operations/{operationId}/curate', [GrocyAiShoppingCaptureController::class, 'Curate']);
 	$group->get('/capture/dashboard', [GrocyAiApiController::class, 'DashboardCapture']);
 	$group->get('/capture/trips', [GrocyAiApiController::class, 'ListCaptureTrips']);
 	$group->post('/capture/trips', [GrocyAiApiController::class, 'StartCaptureTrip']);

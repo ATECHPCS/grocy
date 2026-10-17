@@ -8,9 +8,11 @@ use PDO;
 class GrocyAiCaptureProductService
 {
 	private PDO $Db;
+	private $ApprovalGuard;
 
-	public function __construct(?PDO $pdo = null)
+	public function __construct(?PDO $pdo = null, ?callable $approvalGuard = null)
 	{
+		$this->ApprovalGuard = $approvalGuard;
 		$this->Db = $pdo ?? \Grocy\Services\DatabaseService::GetInstance()->GetDbConnectionRaw();
 		GrocyAiCaptureResearchMigration::Bootstrap($this->Db);
 	}
@@ -113,6 +115,7 @@ class GrocyAiCaptureProductService
 		$this->Db->exec('BEGIN IMMEDIATE');
 		try
 		{
+			if ($this->ApprovalGuard !== null) ($this->ApprovalGuard)();
 			$query = $this->Db->prepare('SELECT d.*, l.scanned_barcode AS original_barcode, l.canonical_gtin, l.status AS line_status, l.resolved_product_id, l.selected, t.status AS trip_status FROM grocy_ai_capture_research_drafts d JOIN grocy_ai_capture_lines l ON l.id = d.line_id AND l.trip_id = d.trip_id JOIN grocy_ai_capture_trips t ON t.id = d.trip_id WHERE d.trip_id = ? AND d.line_id = ? AND NOT EXISTS (SELECT 1 FROM grocy_ai_capture_trip_cancellations c WHERE c.trip_id = t.id)');
 			$query->execute([$tripId, $lineId]);
 			$draft = $query->fetch(PDO::FETCH_ASSOC);
