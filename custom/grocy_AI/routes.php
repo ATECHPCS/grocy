@@ -67,6 +67,7 @@ $app->group('/api/grocy-ai', function (RouteCollectorProxy $group)
 	$group->get('/capture/trips/{tripId}/shopping/operations/{operationId}', [GrocyAiShoppingCaptureController::class, 'Operation']);
 	$group->get('/capture/trips/{tripId}/shopping/operations/{operationId}/options', [GrocyAiShoppingCaptureController::class, 'Options']);
 	$group->post('/capture/trips/{tripId}/shopping/operations/{operationId}/settle', [GrocyAiShoppingCaptureController::class, 'Settle']);
+	$group->post('/capture/trips/{tripId}/shopping/operations/{operationId}/keep-capture', [GrocyAiShoppingCaptureController::class, 'KeepCapture']);
 	$group->post('/capture/trips/{tripId}/shopping/operations/{operationId}/undo', [GrocyAiShoppingCaptureController::class, 'Undo']);
 	$group->post('/capture/trips/{tripId}/shopping/done', [GrocyAiShoppingCaptureController::class, 'Done']);
 	$group->post('/capture/trips/{tripId}/shopping/operations/{operationId}/curate', [GrocyAiShoppingCaptureController::class, 'Curate']);

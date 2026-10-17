@@ -155,3 +155,21 @@ $writer=new PDO('sqlite:'.$file);$writer->setAttribute(PDO::ATTR_ERRMODE,PDO::ER
 try { (new GrocyAI\Services\GrocyAiShoppingCaptureService($db))->Read($t4,'1'); }
 finally { $writer->exec('ROLLBACK'); }
 echo "shopping_capture_native: stale reversal and read-under-writer passed\n";
+
+
+$db->exec('INSERT INTO shopping_list(id,shopping_list_id,product_id,amount,qu_id) VALUES(772,770,10001,2,903)');
+$t5=(int)$capture->StartTrip('1')['id'];$s->SelectList($t5,770,'1');
+$r=array_values(array_filter($s->Read($t5,'1')['items'],fn($r)=>$r['id']===772))[0];
+$s->Scan($t5,'1','null-scan-owner','4006381333931',772,$r['version']);$s->Settle($t5,'1','null-scan-owner',772,$r['version'],2.0);
+$r=array_values(array_filter($s->Read($t5,'1')['items'],fn($r)=>$r['id']===772))[0];
+$s->SetDone($t5,'1','null-manual-confirm',772,$r['version'],true);
+$s->Undo($t5,'1','null-scan-owner');
+if (!(bool)$db->query('SELECT done FROM shopping_list WHERE id=772')->fetchColumn()) throw new RuntimeException('Manual null confirmation must retain fulfillment');
+$s->Undo($t5,'1','null-manual-confirm');
+if ((bool)$db->query('SELECT done FROM shopping_list WHERE id=772')->fetchColumn()) throw new RuntimeException('Last manual null confirmation must reverse owned completion');
+
+foreach (['stock','stock_log'] as $table) {
+ if ($before[$table] !== $db->query('SELECT * FROM '.$table)->fetchAll(PDO::FETCH_ASSOC)) throw new RuntimeException('Follow-up operations changed stock');
+}
+if ($db->query('PRAGMA integrity_check')->fetchColumn() !== 'ok') throw new RuntimeException('Follow-up database integrity failed');
+echo "shopping_capture_native: all follow-up regressions and stock isolation passed\n";

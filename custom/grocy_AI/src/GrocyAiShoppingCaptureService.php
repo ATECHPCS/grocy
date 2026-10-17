@@ -205,7 +205,20 @@ final class GrocyAiShoppingCaptureService
 		{
 			$line = null;
 		}
-		return ['operation_id' => $r['operation_id'], 'state' => $r['state'], 'line_id' => $r['line_id'] === null ? null : (int)$r['line_id'], 'row_id' => $r['row_id'] === null ? null : (int)$r['row_id'], 'product_id' => $line['resolved_product_id'] ?? ($r['product_id'] === null ? null : (int)$r['product_id']), 'needs_amount' => (bool)$r['needs_amount'], 'error_code' => $r['error_code'], 'line' => $line];
+		$productId = $line['resolved_product_id'] ?? $r['product_id'];
+		$compatible = [];
+		if ($productId !== null)
+		{
+			foreach ($this->query('SELECT id FROM shopping_list WHERE shopping_list_id=?', [$r['list_id']])->fetchAll(PDO::FETCH_COLUMN) as $rowId)
+			{
+				$candidate = $this->row((int)$rowId);
+				if ($candidate['product_id'] === null || $this->eligible((int)$productId, $candidate))
+				{
+					$compatible[] = (int)$rowId;
+				}
+			}
+		}
+		return ['product_name' => $productId === null ? null : ($this->query('SELECT name FROM products WHERE id=?', [$productId])->fetchColumn() ?: null), 'compatible_row_ids' => $compatible, 'operation_id' => $r['operation_id'], 'state' => $r['state'], 'line_id' => $r['line_id'] === null ? null : (int)$r['line_id'], 'row_id' => $r['row_id'] === null ? null : (int)$r['row_id'], 'product_id' => $line['resolved_product_id'] ?? ($r['product_id'] === null ? null : (int)$r['product_id']), 'needs_amount' => (bool)$r['needs_amount'], 'error_code' => $r['error_code'], 'line' => $line];
 	}
 
 	public function Operation(int $tripId, string $actor, string $operationId): array
@@ -323,6 +336,26 @@ final class GrocyAiShoppingCaptureService
 		return $this->Operation($tripId, $actor, $operationId);
 	}
 
+	public function KeepCapture(int $tripId, string $actor, string $operationId): array
+	{
+		$this->transaction(function () use ($tripId, $actor, $operationId)
+		{
+			$this->trip($tripId, $actor, true);
+			$op = $this->raw($tripId, $operationId);
+			if ($op['state'] === 'captured')
+			{
+				return;
+			}
+			if ($op['kind'] !== 'scan' || in_array($op['state'], ['settled', 'undone'], true))
+			{
+				throw new RuntimeException('Only an unsettled scan can become normal capture');
+			}
+			$this->change($tripId, $operationId, ['state' => 'captured', 'row_id' => null, 'row_shape' => null, 'error_code' => null, 'needs_amount' => 0]);
+			$this->audit($tripId, $operationId, $actor, 'keep_capture', ['state' => 'captured']);
+		});
+		return $this->Operation($tripId, $actor, $operationId);
+	}
+
 	public function Settle(int $tripId, string $actor, string $operationId, int $rowId, string $expectedVersion, ?float $listAmount = null): array
 	{
 		if ($listAmount !== null && (!is_finite($listAmount) || $listAmount <= 0))
@@ -337,7 +370,7 @@ final class GrocyAiShoppingCaptureService
 			{
 				throw new InvalidArgumentException('Not a scan operation');
 			}
-			if ($op['state'] === 'undone')
+			if (in_array($op['state'], ['undone', 'captured'], true))
 			{
 				throw new RuntimeException('Collection was undone');
 			}
@@ -511,11 +544,11 @@ final class GrocyAiShoppingCaptureService
 			$reverse = false;
 			if ($r && $op['state'] === 'settled')
 			{
-				if ($op['kind'] === 'manual')
+				if ($op['kind'] === 'manual' && (bool)$op['changed_done'])
 				{
 					$reverse = (bool)$op['changed_done'] && (!(bool)$op['amount'] || !$this->fulfilled($tripId, $r, $operationId));
 				}
-				elseif ((bool)$r['done'] && !$this->fulfilled($tripId, $r, $operationId))
+				elseif (($op['kind'] === 'scan' || (bool)$op['amount']) && (bool)$r['done'] && !$this->fulfilled($tripId, $r, $operationId))
 				{
 					// Only this trip's own completion can be reversed, never an existing shared done.
 					$owners = $this->query("SELECT * FROM grocy_ai_shopping_operations WHERE trip_id=? AND row_id=? AND changed_done=1 AND (kind='scan' OR (kind='manual' AND state='undone' AND amount=1))", [$tripId, $r['id']])->fetchAll(PDO::FETCH_ASSOC);
@@ -554,7 +587,7 @@ final class GrocyAiShoppingCaptureService
 		$this->trip($tripId, $actor, true);
 		$op = $this->raw($tripId, $operationId);
 		$row = $op['row_id'] === null ? null : $this->row((int)$op['row_id']);
-		if (!$row || $op['kind'] !== 'scan' || $op['state'] === 'undone')
+		if (!$row || $op['kind'] !== 'scan' || in_array($op['state'], ['undone', 'captured'], true))
 		{
 			throw new RuntimeException('Choose a target before curating');
 		}
@@ -580,7 +613,7 @@ final class GrocyAiShoppingCaptureService
 	{
 		$this->trip($tripId, $actor, true);
 		$op = $this->raw($tripId, $operationId);
-		if ($op['kind'] !== 'scan' || $op['row_id'] === null || $op['line_id'] === null || $op['state'] === 'undone')
+		if ($op['kind'] !== 'scan' || $op['row_id'] === null || $op['line_id'] === null || in_array($op['state'], ['undone', 'captured'], true))
 		{
 			throw new RuntimeException('Choose a target before curating');
 		}
@@ -588,7 +621,7 @@ final class GrocyAiShoppingCaptureService
 		{
 			$this->trip($tripId, $actor, true);
 			$current = $this->raw($tripId, $operationId);
-			if ($current['state'] === 'undone')
+			if (in_array($current['state'], ['undone', 'captured'], true))
 			{
 				throw new RuntimeException('Collection was undone');
 			}

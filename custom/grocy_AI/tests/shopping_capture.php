@@ -187,3 +187,18 @@ $svc->Settle(1, '1', 'invalid-target', 1, $row['version'], 1);
 shopCheck((bool)$db->query('SELECT done FROM shopping_list WHERE id=1')->fetchColumn(), 'explicit invalid-target confirmation');
 
 echo "shopping_capture: all checks passed\n";
+
+$follow=shopFixture();$fs=new GrocyAI\Services\GrocyAiShoppingCaptureService($follow);$fs->SelectList(1,1,'1');
+$rr=$fs->Read(1,'1')['items'][0];
+$mis=$fs->Scan(1,'1','follow-mismatch','96385074',1,$rr['version']);
+shopCheck($mis['state']==='conflicted' && $mis['error_code']==='product_mismatch','mismatch retains accepted scan');
+shopCheck(is_string($mis['product_name']) && $mis['product_name']!=='','actual product name supplied');
+shopCheck(!in_array(1,$mis['compatible_row_ids'],true),'mismatched target excluded from compatible choices');
+$normal=$fs->KeepCapture(1,'1','follow-mismatch');
+shopCheck($normal['state']==='captured' && $normal['row_id']===null,'keep normal capture detaches list association');
+$fs->KeepCapture(1,'1','follow-mismatch');
+shopReject(fn()=>$fs->Settle(1,'1','follow-mismatch',1,$rr['version']));
+shopCheck((float)$follow->query('SELECT quantity FROM grocy_ai_capture_lines')->fetchColumn()===1.0,'detach never scans again');
+$fs->Undo(1,'1','follow-mismatch');
+shopCheck((int)$follow->query('SELECT count(*) FROM grocy_ai_capture_lines')->fetchColumn()===0,'normal capture can Undo its scan');
+echo "shopping_capture: mismatch and detach passed\n";
